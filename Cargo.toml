@@ -1,0 +1,22 @@
+[package]
+name = "keelson"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[[bin]]
+name = "keelson"
+path = "src/main.rs"
+
+[dependencies]
+keel-core = { path = "../Keel/crates/keel-core" }
+keel-policy = { path = "../Keel/crates/keel-policy" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+keel-runtime = { path = "../Keel/crates/keel-runtime" }
+keel-testkit = { path = "../Keel/crates/keel-testkit" }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }

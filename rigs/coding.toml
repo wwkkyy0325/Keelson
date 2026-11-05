@@ -1,0 +1,11 @@
+# The coding rig: the reference shell.
+#
+# The workspace comes from the launch directory, never from this file. An
+# `extra_root` is a scope beyond it: `ro` reads, `rw` reads and writes, and
+# execution stays confirm-only either way.
+
+name = "coding"
+title = "Coding"
+description = "Read, edit and verify a codebase."
+ui = "transcript"
+profile = "../profiles/coding.toml"
