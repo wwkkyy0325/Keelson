@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Default capability for the Keelson window",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:default"]
+}

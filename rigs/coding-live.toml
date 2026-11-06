@@ -1,0 +1,12 @@
+# The coding rig against the live Anthropic-compatible endpoint.
+#
+# The endpoint and the credential env var are in the profile. Run it from the
+# directory the agent should work in:
+#
+#   keelson run coding-live --session-id live
+
+name = "coding-live"
+title = "Coding (live)"
+description = "Read, edit and verify a codebase against the live model."
+ui = "transcript"
+profile = "../profiles/coding-live.toml"

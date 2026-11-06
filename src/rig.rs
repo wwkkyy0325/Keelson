@@ -195,6 +195,20 @@ pub fn state_dir() -> Option<PathBuf> {
     home_dir().map(|home| home.join(".keelson"))
 }
 
+/// A session id becomes a file name, so it stays a simple handle.
+pub fn validate_session_id(id: &str) -> Result<(), String> {
+    let valid = !id.is_empty()
+        && id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        });
+    if valid {
+        return Ok(());
+    }
+    Err(format!(
+        "session id `{id}` must be letters, digits, `-` and `_`"
+    ))
+}
+
 pub fn discover(dirs: &[PathBuf]) -> Discovery {
     let mut discovery = Discovery {
         rigs: Vec::new(),

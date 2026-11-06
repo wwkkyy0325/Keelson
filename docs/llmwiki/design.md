@@ -72,41 +72,58 @@ render/    ratatui, crossterm                       (the only terminal code)
 The kernel emits a typed event stream and streams tokens through a wrapped
 provider; a view consumes both. Concretely:
 
-- **Now**: terminal only. `transcript` is the ported Keel TUI, already covered
-  by `TestBackend` goldens. `oneshot` is plain stdout for scripts and pipes.
-- **Next**: `chat` for a second rig — answers only, tool lines behind one key.
-- **Later, only on a real limit**: `keelson serve` plus a browser view, reusing
-  the same engine and event stream. The trigger is a concrete failure of the
-  terminal (long tables, images, copy-paste, a second device), not ambition.
-- **Not planned**: native GUI, Electron, a second process for the UI.
+- **CLI faces**: `transcript` is the ported Keel TUI with `TestBackend`
+  goldens; `oneshot` is plain stdout for scripts and pipes.
+- **Desktop**: `desktop/` is a Tauri v2 shell with a Svelte 5 frontend (ADR
+  0003). The backend owns the session, serializes a view model and paginates
+  history by turn sequence; the frontend applies one reducer. The engine is a
+  library shared by both hosts. First launch is a four-page wizard (key →
+  endpoint → language → finish); the key goes to the OS keychain, the endpoint
+  becomes a `ModelOverride`, and the workspace is chosen inside the app, not
+  during setup. Later settings are a **single page**, not the wizard: a
+  slide-over with model/key, language and workspace information. Chinese is the
+  default interface; one dictionary and one `locale` store leave the `en`
+  switch available.
+- **Next**: `chat` for a second CLI rig — answers only, tool lines behind one
+  key; and the floating-window form of the desktop shell.
+- **Not planned**: Electron or a separate browser/UI server. The Tauri webview
+  is embedded, and no HTTP surface is exposed.
 
 The rule that keeps this honest is testable: no file under `src/engine/` may
-contain `ratatui` or `crossterm`. That test lands with the first engine
-module.
+contain `ratatui` or `crossterm`. `tests/engine_boundary.rs` enforces it.
 
 ## Sessions
 
 One run is one turn. A session is one JSON document at
-`<state>/sessions/<id>.json`, with `<state>` from `$KEELSON_HOME` (default
-`~/.keelson`). It holds the kernel snapshot, the task list and one row per
-turn with the turn's events. The workspace is recorded in the document, so a
-session id is refused against a different project instead of silently
-contaminating it.
+`<state>/sessions/<id>.json` (the CLI) or
+`<state>/sessions/<workspace-hash>/default.json` (the desktop), with `<state>`
+from `$KEELSON_HOME` (default `~/.keelson`). It holds the kernel snapshot, the
+task list and one row per turn with the turn's events. The workspace is
+recorded in the document, so a session id is refused against a different
+project instead of silently contaminating it; the desktop's workspace hash
+keeps separate projects from ever sharing a document.
 
-This is not the reference host's SQLite read model. Keelson has no reader that
-queries turns yet; when a view needs one, the table layer is added behind the
-same snapshot, so the kernel data stays the source of truth.
+This is not the reference host's SQLite read model. The desktop reads turns
+through `Engine::history`, a keyset page over the in-memory document; it never
+parses the kernel events. A table layer can still be added behind the same
+snapshot if a reader ever needs queries the page API cannot answer.
 
 ## Module layout
 
 ```
 src/
-  main.rs        argument parsing and command dispatch
+  lib.rs         the library both hosts link
+  main.rs        the CLI: argument parsing and command dispatch
   rig.rs         rig schema, discovery, validation
   doctor.rs      version handshakes and rig/profile checks
   engine/        turn execution, driver wiring, session store (M2)
   view/          oneshot, transcript, ui_text (M2–M3)
   render/        raw mode, alternate screen, key polling (M3)
+desktop/
+  src-tauri/     Tauri commands, config/keychain, events, interaction port
+  src/           controller + components: Wizard, Chat, AppHeader,
+                 Transcript, Turn, Composer, PermissionCard, SettingsPanel
+  src/lib/       one session reducer store and one i18n locale store
 ```
 
 The view owns the screen model, the key semantics and the layout; `render/`
@@ -156,9 +173,31 @@ M5 — A second rig
 - Starts only after M4, so the coding rig exposes what the engine actually
   needs.
 
+D1 — Basic desktop shell (done)
+
+- Tauri v2 + Svelte 5: setup screen, transcript, streamed answer, tool
+  details, permission card, cancel and keyset history pages. The engine is a
+  library; ADR 0003 records the desktop decision.
+- Verify: the reducer tests, `npm run check/build`, `cargo tauri build`, and a
+  launched window. A real-model turn through the window is the next manual
+  check.
+
+D2 — First-run onboarding (done)
+
+- Four-page wizard, key in the OS keychain, model override, Chinese-default
+  i18n with an English switch, and a workspace picker inside the app.
+- Verify: reducer and Rust tests, `npm run check/build`, and a UI-automation
+  walkthrough from a clean config to a streamed mock turn.
+
+D3 — Floating window
+
+- Frameless, always-on-top, tray and a global shortcut on Windows and macOS.
+- Starts after D2 proves the connect/send/history loop.
+
 ## Non-goals
 
 - An in-app settings screen, theme picker, keybinding editor.
+- Electron, a separate UI server, or a browser-process frontend.
 - A plugin marketplace; MCP is the extension surface and the kernel already
   speaks it.
 - Embeddings, a vector store, a graph database, an index of the workspace.

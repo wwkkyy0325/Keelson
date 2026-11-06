@@ -12,24 +12,25 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
-    AccessKind, ArgValue, CancelToken, InteractionPort, KernelError, ModelChunk, ModelError,
+    AccessKind, ArgValue, CancelToken, Event, InteractionPort, KernelError, ModelChunk, ModelError,
     ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList, ToolArgs, TurnState,
 };
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort,
-    DeleteFileTool, EchoTool, EventLog, HistoryStage, InteractionBroker, InterjectionPush,
-    KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalTrashStore, MakeDirTool,
-    MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine, ReadFileTool,
+    DeleteFileTool, EchoTool, EventLog, EventRecord, HistoryStage, InteractionBroker,
+    InterjectionPush, KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalTrashStore,
+    MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine, ReadFileTool,
     RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool,
     ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use crate::rig::{self, Rig};
 
-pub use store::{Store, StoredEvent, StoredSession, StoredTurn};
+pub use store::{Store, StoredEvent, StoredSession, StoredTurn, ToolLine};
 
 /// Everything a one-shot run needs. The host resolves the paths; the engine
 /// does not read environment variables.
@@ -53,6 +54,19 @@ pub struct OpenRequest {
     pub store_path: PathBuf,
     pub interactions: Arc<dyn InteractionPort>,
     pub deltas: Option<mpsc::Sender<String>>,
+    /// A host-supplied model, used by the desktop onboarding. `None` keeps the
+    /// profile's provider and the environment-variable key.
+    pub model: Option<ModelOverride>,
+}
+
+/// Explicit model settings from the desktop. The key never comes from a
+/// profile or an environment variable in this path.
+#[derive(Debug, Clone)]
+pub struct ModelOverride {
+    pub provider: String,
+    pub model: String,
+    pub base_url: Option<String>,
+    pub api_key: String,
 }
 
 /// What a one-shot view needs after a turn.
@@ -60,6 +74,43 @@ pub struct TurnReport {
     pub state: TurnState,
     pub answer: String,
     pub error: Option<String>,
+}
+
+/// One finished turn as a read model. It carries the compact transcript, not
+/// the kernel event stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnView {
+    pub seq: u32,
+    pub input: String,
+    pub answer: String,
+    pub state: String,
+    pub error: Option<String>,
+    pub duration_ms: u64,
+    pub tools: Vec<ToolLine>,
+}
+
+impl From<&StoredTurn> for TurnView {
+    fn from(turn: &StoredTurn) -> Self {
+        Self {
+            seq: turn.seq,
+            input: turn.input.clone(),
+            answer: turn.answer.clone(),
+            state: turn.state.clone(),
+            error: turn.error.clone(),
+            duration_ms: turn.duration_ms,
+            tools: turn.tools.clone(),
+        }
+    }
+}
+
+/// A keyset page of turns, oldest first. `next_before` is the cursor for the
+/// page above this one, or `None` when the transcript start is reached.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnPage {
+    pub turns: Vec<TurnView>,
+    pub next_before: Option<u32>,
 }
 
 /// A long-lived host: one driver, one event log, one session document, many
@@ -170,6 +221,7 @@ impl Engine {
             store_path,
             interactions,
             deltas,
+            model,
         } = request;
 
         let workspace = std::fs::canonicalize(&workspace).map_err(|error| KernelError::Io {
@@ -237,7 +289,7 @@ impl Engine {
         validate_config(&config, &registry, &context)?;
 
         let model = UiModel {
-            inner: build_model(&config)?,
+            inner: build_model(&config, model.as_ref())?,
             deltas,
         };
         let policy: Arc<dyn Policy> = Arc::new(config.clone());
@@ -304,10 +356,10 @@ impl Engine {
             .error
             .as_ref()
             .map(|error| format!("{} ({})", error, error.code().as_str()));
-        let stored_events = self
-            .events
-            .snapshot()
-            .into_iter()
+        let records = self.events.snapshot();
+        let tools = tool_lines(&records);
+        let stored_events = records
+            .iter()
             .map(|record| StoredEvent {
                 name: record.event.name().to_owned(),
                 payload: serde_json::to_value(&record.event).unwrap_or_default(),
@@ -320,6 +372,7 @@ impl Engine {
             answer: outcome.answer.body.clone(),
             error,
             duration_ms: outcome.duration_ms,
+            tools,
             events: stored_events,
         });
         self.store.save(&session)
@@ -361,6 +414,97 @@ impl Engine {
     pub fn interject(&self, text: &str) -> InterjectionPush {
         self.driver.interject(text)
     }
+
+    /// The transcript sequence the next turn will use.
+    pub fn next_turn_seq(&self) -> u32 {
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        session
+            .turns
+            .last()
+            .map(|turn| turn.seq.saturating_add(1))
+            .unwrap_or(1)
+    }
+
+    /// One finished turn, or `None` before it is persisted.
+    pub fn turn(&self, seq: u32) -> Option<TurnView> {
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        session
+            .turns
+            .iter()
+            .find(|turn| turn.seq == seq)
+            .map(TurnView::from)
+    }
+
+    /// A keyset page ending before `before` (exclusive), oldest first. The
+    /// cursor is a turn sequence, so appends never shift an open page.
+    pub fn history(&self, before: Option<u32>, limit: usize) -> TurnPage {
+        let limit = limit.clamp(1, 100);
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let matching: Vec<&StoredTurn> = session
+            .turns
+            .iter()
+            .filter(|turn| before.map_or(true, |cursor| turn.seq < cursor))
+            .collect();
+        let start = matching.len().saturating_sub(limit);
+        let older = start > 0;
+        let turns: Vec<TurnView> = matching[start..]
+            .iter()
+            .map(|turn| TurnView::from(*turn))
+            .collect();
+        let next_before = if older {
+            turns.first().map(|turn| turn.seq)
+        } else {
+            None
+        };
+        TurnPage { turns, next_before }
+    }
+}
+
+/// Pairs live tool events into transcript rows. The kernel's serialized events
+/// omit previews; these rows carry them, bounded by the kernel.
+fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
+    let mut lines: Vec<ToolLine> = Vec::new();
+    for record in records {
+        match &record.event {
+            Event::ToolStarted {
+                tool, args_preview, ..
+            } => lines.push(ToolLine {
+                name: tool.clone(),
+                ok: None,
+                duration_ms: 0,
+                args: args_preview.clone(),
+                output: None,
+            }),
+            Event::ToolFinished {
+                tool,
+                ok,
+                duration_ms,
+                output_preview,
+                ..
+            } => {
+                if let Some(line) = lines
+                    .iter_mut()
+                    .rev()
+                    .find(|line| line.name == *tool && line.ok.is_none())
+                {
+                    line.ok = Some(*ok);
+                    line.duration_ms = *duration_ms;
+                    line.output = output_preview.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+    lines
 }
 
 /// Runs one turn for a rig and persists the session.
@@ -372,6 +516,7 @@ pub async fn run(request: RunRequest) -> Result<TurnReport, KernelError> {
         store_path: request.store_path,
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
+        model: None,
     })?;
     let outcome = engine.run_turn(&request.input, CancelToken::new()).await?;
     Ok(TurnReport {
@@ -415,20 +560,36 @@ fn access_kind(access: rig::Access) -> AccessKind {
     }
 }
 
-fn build_model(config: &RuntimeConfig) -> Result<HostModel, KernelError> {
-    match config.model_route.provider.as_str() {
+fn build_model(
+    config: &RuntimeConfig,
+    over: Option<&ModelOverride>,
+) -> Result<HostModel, KernelError> {
+    let provider = over
+        .map(|over| over.provider.as_str())
+        .unwrap_or(config.model_route.provider.as_str());
+    let model = over
+        .map(|over| over.model.clone())
+        .unwrap_or_else(|| config.model_route.model.clone());
+    let base_url = over
+        .and_then(|over| over.base_url.clone())
+        .or_else(|| config.model_base_url.clone());
+    let key = |default: &str, alternatives: &[&str]| -> Result<String, KernelError> {
+        match over {
+            Some(over) => Ok(over.api_key.clone()),
+            None => api_key(config, default, alternatives),
+        }
+    };
+
+    match provider {
         "mock" => Ok(HostModel::Mock(DemoMock {
             calls: AtomicU64::new(0),
             echo: config.visible_tool_names.iter().any(|name| name == "echo"),
         })),
         "openai" | "openai-compatible" => {
             let provider = OpenAiProvider::new(OpenAiConfig {
-                base_url: config
-                    .model_base_url
-                    .clone()
-                    .unwrap_or_else(|| "https://api.openai.com/v1".to_owned()),
-                api_key: api_key(config, "OPENAI_API_KEY")?,
-                model: config.model_route.model.clone(),
+                base_url: base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_owned()),
+                api_key: key("OPENAI_API_KEY", &[])?,
+                model,
                 supports_reasoning: config.supports_reasoning,
                 max_retries: 2,
             })
@@ -437,12 +598,9 @@ fn build_model(config: &RuntimeConfig) -> Result<HostModel, KernelError> {
         }
         "anthropic" | "anthropic-compatible" => {
             let provider = AnthropicProvider::new(AnthropicConfig {
-                base_url: config
-                    .model_base_url
-                    .clone()
-                    .unwrap_or_else(|| "https://api.anthropic.com".to_owned()),
-                api_key: api_key(config, "ANTHROPIC_API_KEY")?,
-                model: config.model_route.model.clone(),
+                base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".to_owned()),
+                api_key: key("ANTHROPIC_API_KEY", &["ANTHROPIC_AUTH_TOKEN"])?,
+                model,
                 max_retries: 2,
             })
             .map_err(model_error)?;
@@ -460,14 +618,27 @@ fn model_error(error: ModelError) -> KernelError {
     }
 }
 
-fn api_key(config: &RuntimeConfig, default_env: &str) -> Result<String, KernelError> {
-    let name = config.api_key_env.as_deref().unwrap_or(default_env);
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(KernelError::InvalidConfig {
-            message: format!("{name} is not set"),
-        }),
+fn api_key(
+    config: &RuntimeConfig,
+    default_env: &str,
+    alternatives: &[&str],
+) -> Result<String, KernelError> {
+    let mut names: Vec<&str> = Vec::new();
+    if let Some(name) = config.api_key_env.as_deref() {
+        names.push(name);
     }
+    names.push(default_env);
+    names.extend_from_slice(alternatives);
+    for name in &names {
+        if let Ok(value) = std::env::var(name) {
+            if !value.trim().is_empty() {
+                return Ok(value);
+            }
+        }
+    }
+    Err(KernelError::InvalidConfig {
+        message: format!("{} is not set", names.join(" or ")),
+    })
 }
 
 #[cfg(test)]
@@ -547,6 +718,7 @@ system = "prompt.md"
                 store_path: program.join("state/sessions/test.json"),
                 interactions,
                 deltas: None,
+                model: None,
             })
             .expect("the engine opens")
         }
@@ -587,6 +759,13 @@ system = "prompt.md"
                 .any(|event| event.name == "turn_finished"),
             "the turn is audited"
         );
+        assert_eq!(session.turns[0].tools.len(), 1);
+        assert_eq!(session.turns[0].tools[0].name, "echo");
+        assert_eq!(session.turns[0].tools[0].ok, Some(true));
+        assert_eq!(
+            session.turns[0].tools[0].args.as_deref(),
+            Some("text=mock input")
+        );
     }
 
     #[tokio::test]
@@ -623,6 +802,32 @@ system = "prompt.md"
     }
 
     #[tokio::test]
+    async fn history_pages_by_turn_sequence() {
+        let fixture = Fixture::new();
+        let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
+        for input in ["one", "two", "three"] {
+            engine
+                .run_turn(input, CancelToken::new())
+                .await
+                .expect("the turn");
+        }
+
+        let page = engine.history(None, 2);
+        assert_eq!(
+            page.turns.iter().map(|turn| turn.seq).collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(page.next_before, Some(2));
+
+        let older = engine.history(page.next_before, 2);
+        assert_eq!(
+            older.turns.iter().map(|turn| turn.seq).collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert_eq!(older.next_before, None);
+    }
+
+    #[tokio::test]
     async fn a_live_view_receives_text_deltas() {
         let fixture = Fixture::new();
         let (tx, mut rx) = mpsc::channel(64);
@@ -633,6 +838,7 @@ system = "prompt.md"
             store_path: fixture.dir.path().join("state/sessions/test.json"),
             interactions: Arc::new(DeferAllInteractionPort),
             deltas: Some(tx),
+            model: None,
         })
         .expect("the engine opens");
 

@@ -3,11 +3,7 @@
 //! One binary, several rigs. A rig is a file that names a kernel profile, a
 //! view and optional scopes; the host loads it and gives it a face.
 
-mod doctor;
-mod engine;
-mod render;
-mod rig;
-mod view;
+use keelson::{doctor, engine, rig, view};
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -37,6 +33,9 @@ is searched, then `<state>/rigs`. The state directory is `$KEELSON_HOME`, else
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    // A local `.env` keeps credentials out of the shell history. It is
+    // gitignored; a missing file is fine.
+    dotenvy::dotenv().ok();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match dispatch(&args).await {
         Ok(0) => ExitCode::SUCCESS,
@@ -162,7 +161,7 @@ async fn run_rig(args: &[String]) -> Result<u8, String> {
                     .get(index + 1)
                     .ok_or_else(|| "missing value for `--session-id`".to_owned())?
                     .clone();
-                validate_session_id(&session_id)?;
+                rig::validate_session_id(&session_id)?;
                 index += 2;
             }
             "--store" => {
@@ -230,6 +229,7 @@ async fn run_rig(args: &[String]) -> Result<u8, String> {
                 store_path,
                 interactions: std::sync::Arc::new(port),
                 deltas: Some(deltas),
+                model: None,
             })
             .map_err(|error| error.to_string())?;
             let text = view::ui_text::Text::new(view::ui_text::Lang::resolve(Some(&lang)));
@@ -262,20 +262,6 @@ fn read_stdin() -> Result<String, String> {
         .read_to_string(&mut text)
         .map_err(|error| format!("cannot read stdin: {error}"))?;
     Ok(text)
-}
-
-/// A session id becomes a file name, so it stays a simple handle.
-fn validate_session_id(id: &str) -> Result<(), String> {
-    let valid = !id.is_empty()
-        && id.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '-' || character == '_'
-        });
-    if valid {
-        return Ok(());
-    }
-    Err(format!(
-        "session id `{id}` must be letters, digits, `-` and `_`"
-    ))
 }
 
 fn print_version() {

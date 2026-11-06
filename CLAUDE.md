@@ -12,20 +12,23 @@ that are specific here.
 ## Architecture
 
 ```
-engine/   turn loop, permissions, storage, tools    (no UI types)
-view/     transcript | chat | oneshot              (reads events, owns layout)
-render/   ratatui, crossterm                       (the only terminal code)
+engine/          turn loop, permissions, storage, tools    (no UI types)
+view/            transcript | chat | oneshot              (CLI faces)
+render/          ratatui, crossterm                       (terminal code)
+desktop/         Tauri shell + Svelte frontend            (desktop face)
 ```
 
 - The engine may depend on `keel-*` and on neutral view types. It may not
-  mention `ratatui` or `crossterm`; a test enforces this once `engine/` exists.
-- A new face is a `view/` module selected by the rig's `ui` field, never a flag
-  inside the engine and never a second binary.
+  mention `ratatui` or `crossterm`; `tests/engine_boundary.rs` enforces this.
+- A CLI face is a `view/` module selected by the rig's `ui` field. The desktop
+  shell is a separate binary because Tauri owns its event loop and bundler; it
+  consumes the same library engine and adds no engine branch (ADR 0003).
 - Rigs are files. Do not add an in-app settings screen, a theme picker or a
   per-rig toggle panel.
 - No workspace index, vector store, embedding, graph database or cloud
   dependency. If a feature seems to need one, write the case in
   `docs/llmwiki/backlog.md` first.
+- No Electron and no separate UI server. The desktop webview is embedded.
 
 ## Kernel relationship
 
@@ -44,6 +47,16 @@ cargo test
 ```
 
 Plus `cargo run -- doctor` when the change touches rig resolution.
+
+For `desktop/`:
+
+```bash
+cd desktop
+npm test
+npm run check
+npm run build
+cd src-tauri && cargo clippy --all-targets -- -D warnings
+```
 
 ## Language and git
 

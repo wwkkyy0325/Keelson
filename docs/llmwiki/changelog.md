@@ -121,3 +121,97 @@ with the session. A per-turn expansion matches how the process is actually
 read, and releasing old detail bounds both memory and the work a redraw does.
 The block model already carried the turn boundary, so no cursor or selection
 model was needed.
+
+## 2026-11-06 — D1: the basic desktop shell
+
+- The engine moved into `src/lib.rs`; the CLI binary is now a thin host over
+  the library.
+- `Engine` exposes a read model for the desktop: `TurnView`, `TurnPage`,
+  `ToolLine`, `Engine::history` (keyset by `turn_seq`), `next_turn_seq` and
+  `turn`. Live tool rows are persisted with bounded args and output.
+- `desktop/` is a Tauri v2 shell with a Svelte 5 + TypeScript frontend:
+  setup screen, transcript, streamed answer, tool details, permission card,
+  cancel and "load older" with scroll anchoring.
+- The backend owns the session and emits typed events; the frontend has one
+  `SessionState` and one reducer, and deduplicates by turn sequence.
+- ADR 0003 records the desktop decision and amends the "never a second binary"
+  rule for a host with its own event loop.
+- `.env` is loaded by both hosts; the Anthropic provider falls back across the
+  profile's key variable, `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN`.
+
+### Why
+
+The terminal face is not the shape the owner uses. Tauri gives a cross-platform
+window and, later, floating-window behaviour without Electron or an HTTP
+server. Keyset pagination and a single reducer are deliberate: they remove the
+two failure modes that made earlier agent frontends painful — offset paging
+that shifts under appends, and scattered loading/streaming/error flags.
+
+## 2026-11-06 — D2: first-run onboarding and the Chinese interface
+
+- Four-page setup wizard: key → model endpoint → language → finish, with a
+  per-page fly/fade transition and a progress bar. Only the key is required.
+- The key is stored in the OS keychain (Windows Credential Manager / macOS
+  Keychain); `desktop.json` keeps only provider, endpoint, model, locale and
+  the last workspace.
+- `ModelOverride` on `OpenRequest` lets the desktop pass provider, endpoint,
+  model and key without rewriting a profile or setting process environment
+  variables.
+- Chinese is the default interface; one dictionary and one `locale` store
+  leave the English switch (`中/EN`) available, and every string goes through
+  `t()`.
+- The workspace moved out of setup. The header chip opens a folder picker and
+  remembers the directory; desktop sessions live under
+  `<state>/sessions/<workspace-hash>/default.json`.
+- An offline mode on the key page saves the mock provider and enters the app
+  without a key.
+
+### Why
+
+The owner uses a Chinese interface and does not want a startup form with a
+workspace. Asking for the key first, then prefilled defaults, keeps the setup
+short. The keychain and the model override keep the secret out of the config
+and the repo. The workspace hash removes the workspace/session-id collision
+that the old global session file would have created.
+
+## 2026-11-06 — D2b: one-page settings
+
+- The gear no longer reopens the paged wizard. It opens a one-page slide-over:
+  model and key, language segments, workspace information, and a save that
+  reconnects the current workspace.
+- The paged wizard is first-run only. Saving the model or key reapplies the
+  engine through `open_session`, so the new override takes effect without a
+  restart.
+- Offline mode keeps the prefilled endpoint and model, so switching back to a
+  live provider later does not start from empty fields.
+- The workspace label strips the Windows `\\?\` canonical prefix before it is
+  shown or stored.
+
+### Why
+
+Paging belongs to the first run, when each decision needs its own screen.
+Later changes are infrequent and benefit from seeing everything together. The
+settings page also gives the model/key change a single explicit action
+("save and reconnect") instead of walking the user through setup again.
+
+## 2026-11-06 — D2c: split components and a stable page stage
+
+- The wizard renders all four steps into one CSS grid cell. The card height is
+  fixed by the tallest step, and step changes use `opacity`/`transform` only,
+  so the card no longer reflows or jumps between pages.
+- `App.svelte` is now a controller: boot, setup, connection and the settings
+  overlay. The UI is split into `Wizard`, `Chat`, `AppHeader`, `Transcript`,
+  `Turn`, `Composer`, `PermissionCard` and `SettingsPanel`.
+- Shared state is only the session reducer store and the locale store.
+  Components that persist settings call the API themselves; none reaches into
+  another component's local state.
+- Settings remain a single page; the paged flow is first-run only.
+
+### Why
+
+The previous wizard used Svelte `in/out` transitions on a keyed block: both
+steps were briefly in normal flow, so the card resized during every page
+change. Overlapping the steps in one grid cell removes the reflow by
+construction. The single `App.svelte` had become a 700-line controller with
+wizard, chat, pagination, permissions and settings mixed together; the split
+gives each concern one file and a clear prop/API boundary.

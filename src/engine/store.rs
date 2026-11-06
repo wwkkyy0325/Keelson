@@ -23,6 +23,20 @@ pub struct StoredSession {
     pub turns: Vec<StoredTurn>,
 }
 
+/// One tool call as a transcript row. The previews are bounded by the kernel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolLine {
+    pub name: String,
+    /// `None` while the call is still running.
+    pub ok: Option<bool>,
+    pub duration_ms: u64,
+    /// Bounded, redacted call arguments.
+    pub args: Option<String>,
+    /// Bounded, redacted output.
+    pub output: Option<String>,
+}
+
 /// One finished turn as the session file keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTurn {
@@ -32,6 +46,9 @@ pub struct StoredTurn {
     pub answer: String,
     pub error: Option<String>,
     pub duration_ms: u64,
+    /// Live tool rows. Absent in sessions written before the field existed.
+    #[serde(default)]
+    pub tools: Vec<ToolLine>,
     /// Events in emission order. The payload is the kernel's serialized event;
     /// previews are already skipped by the kernel.
     #[serde(default)]
@@ -120,6 +137,7 @@ mod tests {
                 answer: "hi".to_owned(),
                 error: None,
                 duration_ms: 3,
+                tools: Vec::new(),
                 events: vec![StoredEvent {
                     name: "turn_started".to_owned(),
                     payload: serde_json::json!({ "input": "hello" }),

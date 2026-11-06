@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 async-trait = "0.1"
 crossterm = "0.28"
+dotenvy = "0.15"
 keel-core = { path = "../Keel/crates/keel-core" }
 keel-model-anthropic = { path = "../Keel/crates/keel-model-anthropic" }
 keel-model-openai = { path = "../Keel/crates/keel-model-openai" }
