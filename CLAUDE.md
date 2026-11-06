@@ -12,19 +12,22 @@ that are specific here.
 ## Architecture
 
 ```
-engine/          turn loop, permissions, storage, tools    (no UI types)
-view/            transcript | chat | oneshot              (CLI faces)
-render/          ratatui, crossterm                       (terminal code)
-desktop/         Tauri shell + Svelte frontend            (desktop face)
+src/engine/      turn loop, permissions, storage, tools    (no UI types)
+src/rig.rs       rig schema, discovery and validation
+src/main.rs      CLI diagnostics: rig list/show, doctor
+desktop/         Tauri shell + Svelte frontend            (the only face)
 ```
 
-- The engine may depend on `keel-*` and on neutral view types. It may not
-  mention `ratatui` or `crossterm`; `tests/engine_boundary.rs` enforces this.
-- A CLI face is a `view/` module selected by the rig's `ui` field. The desktop
-  shell is a separate binary because Tauri owns its event loop and bundler; it
-  consumes the same library engine and adds no engine branch (ADR 0003).
-- Rigs are files. Do not add an in-app settings screen, a theme picker or a
-  per-rig toggle panel.
+- The engine may depend on `keel-*`, never on a UI crate. It may not mention
+  `ratatui`, `crossterm`, `tauri` or `svelte`; `tests/engine_boundary.rs`
+  enforces this (ADR 0004).
+- The desktop is a separate binary because Tauri owns its event loop and
+  bundler; it consumes the same library engine and adds no engine branch
+  (ADR 0003). The CLI starts no session and runs no turn.
+- Rigs are files. Do not add a rig form, a theme picker or a per-rig toggle
+  panel. The settings page covers the model connection and language only.
+- Do not add a terminal UI or keep a hidden fallback face. A second face
+  returns only with a concrete need and a new ADR.
 - No workspace index, vector store, embedding, graph database or cloud
   dependency. If a feature seems to need one, write the case in
   `docs/llmwiki/backlog.md` first.

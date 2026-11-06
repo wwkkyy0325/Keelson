@@ -24,18 +24,14 @@ pub fn run(discovery: &Discovery) -> u8 {
     for rig in &discovery.rigs {
         match keel_policy::load_profile(&rig.profile) {
             Ok(config) => println!(
-                "  {:<10}  {:<11}  profile {} ({:?})",
-                rig.name,
-                rig.ui.as_str(),
-                config.profile_name,
-                config.permission_level
+                "  {:<12}  profile {} ({:?})",
+                rig.name, config.profile_name, config.permission_level
             ),
             Err(error) => {
                 healthy = false;
                 println!(
-                    "  {:<10}  {:<11}  profile failed: {} ({error})",
+                    "  {:<12}  profile failed: {} ({error})",
                     rig.name,
-                    rig.ui.as_str(),
                     rig.profile.display()
                 );
             }

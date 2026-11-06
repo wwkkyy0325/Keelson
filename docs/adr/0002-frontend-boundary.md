@@ -1,6 +1,7 @@
 # 0002 — The engine does not know the terminal
 
-Status: accepted
+Status: superseded by ADR 0004. The `view/` and `render/` layers were removed
+with the terminal faces; the engine-boundary rule remains in force.
 
 ## Context
 

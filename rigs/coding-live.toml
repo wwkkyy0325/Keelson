@@ -8,5 +8,4 @@
 name = "coding-live"
 title = "Coding (live)"
 description = "Read, edit and verify a codebase against the live model."
-ui = "transcript"
 profile = "../profiles/coding-live.toml"

@@ -1,6 +1,8 @@
 # 0003 — A desktop shell
 
-Status: accepted
+Status: accepted. ADR 0004 later removed the terminal transcript, the
+one-shot CLI and the rig's `ui` field; the desktop decision below is
+unchanged.
 
 ## Context
 

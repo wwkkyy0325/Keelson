@@ -1,7 +1,7 @@
 //! Session persistence.
 //!
 //! One session is one JSON document: the kernel's opaque snapshot, the task
-//! list and the transcript rows this host has run. The kernel owns the
+//! list and the turn rows this host has run. The kernel owns the
 //! snapshot shape; this adapter only moves it in and out of a file.
 
 use std::fs;
@@ -23,7 +23,7 @@ pub struct StoredSession {
     pub turns: Vec<StoredTurn>,
 }
 
-/// One tool call as a transcript row. The previews are bounded by the kernel.
+/// One tool call as a turn row. The previews are bounded by the kernel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolLine {

@@ -1,7 +1,7 @@
 //! Turn execution: build the kernel from a rig and run turns.
 //!
-//! This module owns no output. It returns kernel outcomes; a view decides what
-//! the user sees and where it goes (ADR 0002).
+//! This module owns no output. It returns kernel outcomes; the host decides
+//! what the user sees and where it goes (ADR 0004).
 
 mod store;
 
@@ -13,17 +13,17 @@ use std::time::Duration;
 use async_trait::async_trait;
 use keel_core::{
     AccessKind, ArgValue, CancelToken, Event, InteractionPort, KernelError, ModelChunk, ModelError,
-    ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList, ToolArgs, TurnState,
+    ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList, ToolArgs,
 };
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, CodeSearchTool, ContextBuilder, DeferAllInteractionPort,
-    DeleteFileTool, EchoTool, EventLog, EventRecord, HistoryStage, InteractionBroker,
-    InterjectionPush, KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalTrashStore,
-    MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine, ReadFileTool,
-    RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool,
-    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
+    load_profile, validate_config, CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool,
+    EventLog, EventRecord, HistoryStage, InteractionBroker, InterjectionPush, KernelOptions,
+    LatestStage, ListDirTool, ListTrashTool, LocalTrashStore, MakeDirTool, MemoryStage, MockModel,
+    MockStep, MoveFileTool, PermissionEngine, ReadFileTool, RestoreFileTool, RootScope,
+    RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver,
+    TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -32,21 +32,8 @@ use crate::rig::{self, Rig};
 
 pub use store::{Store, StoredEvent, StoredSession, StoredTurn, ToolLine};
 
-/// Everything a one-shot run needs. The host resolves the paths; the engine
-/// does not read environment variables.
-pub struct RunRequest {
-    pub rig: Rig,
-    pub workspace: PathBuf,
-    /// Host state: outputs and trash live here.
-    pub state_dir: PathBuf,
-    /// The session document to load and save.
-    pub store_path: PathBuf,
-    pub input: String,
-}
-
-/// Everything opening a session needs. A live view supplies its own
-/// interaction port and a channel for text deltas; a one-shot run supplies the
-/// deferring port and no channel.
+/// Everything opening a session needs. A host supplies its own interaction
+/// port and, when it wants streamed text, a channel for deltas.
 pub struct OpenRequest {
     pub rig: Rig,
     pub workspace: PathBuf,
@@ -69,14 +56,7 @@ pub struct ModelOverride {
     pub api_key: String,
 }
 
-/// What a one-shot view needs after a turn.
-pub struct TurnReport {
-    pub state: TurnState,
-    pub answer: String,
-    pub error: Option<String>,
-}
-
-/// One finished turn as a read model. It carries the compact transcript, not
+/// One finished turn as a read model. It carries the compact turn history, not
 /// the kernel event stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,7 +85,7 @@ impl From<&StoredTurn> for TurnView {
 }
 
 /// A keyset page of turns, oldest first. `next_before` is the cursor for the
-/// page above this one, or `None` when the transcript start is reached.
+/// page above this one, or `None` when the turn history starts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnPage {
@@ -114,11 +94,11 @@ pub struct TurnPage {
 }
 
 /// A long-lived host: one driver, one event log, one session document, many
-/// turns. Views drive it; it knows nothing about them.
+/// turns. A host drives it; it knows nothing about the interface.
 pub struct Engine {
     workspace: PathBuf,
     config: RuntimeConfig,
-    driver: TurnDriver<UiModel>,
+    driver: TurnDriver<DeltaModel>,
     events: Arc<EventLog>,
     todos: Arc<Mutex<TodoList>>,
     store: Store,
@@ -177,30 +157,30 @@ impl ModelProvider for HostModel {
     }
 }
 
-/// Forwards text deltas to a view while the driver consumes the stream. The
-/// kernel's event stream carries boundaries, not tokens (ADR 0002).
-struct UiModel {
+/// Forwards text deltas to the host while the driver consumes the stream. The
+/// kernel's event stream carries boundaries, not tokens (ADR 0004).
+struct DeltaModel {
     inner: HostModel,
     deltas: Option<mpsc::Sender<String>>,
 }
 
 #[async_trait]
-impl ModelProvider for UiModel {
+impl ModelProvider for DeltaModel {
     async fn stream(
         &self,
         request: ModelRequest,
         cancel: &CancelToken,
     ) -> Result<ModelStream, ModelError> {
-        let Some(ui) = &self.deltas else {
+        let Some(sender) = &self.deltas else {
             return self.inner.stream(request, cancel).await;
         };
         let mut stream = self.inner.stream(request, cancel).await?;
-        let ui = ui.clone();
+        let sender = sender.clone();
         let (tx, rx) = mpsc::channel(64);
         tokio::spawn(async move {
             while let Some(chunk) = stream.recv().await {
                 if let Ok(ModelChunk::TextDelta(text)) = &chunk {
-                    let _ = ui.send(text.clone()).await;
+                    let _ = sender.send(text.clone()).await;
                 }
                 if tx.send(chunk).await.is_err() {
                     break;
@@ -288,7 +268,7 @@ impl Engine {
         ]);
         validate_config(&config, &registry, &context)?;
 
-        let model = UiModel {
+        let model = DeltaModel {
             inner: build_model(&config, model.as_ref())?,
             deltas,
         };
@@ -415,7 +395,7 @@ impl Engine {
         self.driver.interject(text)
     }
 
-    /// The transcript sequence the next turn will use.
+    /// The turn sequence the next turn will use.
     pub fn next_turn_seq(&self) -> u32 {
         let session = self
             .session
@@ -469,7 +449,7 @@ impl Engine {
     }
 }
 
-/// Pairs live tool events into transcript rows. The kernel's serialized events
+/// Pairs live tool events into turn rows. The kernel's serialized events
 /// omit previews; these rows carry them, bounded by the kernel.
 fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
     let mut lines: Vec<ToolLine> = Vec::new();
@@ -505,28 +485,6 @@ fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
         }
     }
     lines
-}
-
-/// Runs one turn for a rig and persists the session.
-pub async fn run(request: RunRequest) -> Result<TurnReport, KernelError> {
-    let engine = Engine::open(OpenRequest {
-        rig: request.rig,
-        workspace: request.workspace,
-        state_dir: request.state_dir,
-        store_path: request.store_path,
-        interactions: Arc::new(DeferAllInteractionPort),
-        deltas: None,
-        model: None,
-    })?;
-    let outcome = engine.run_turn(&request.input, CancelToken::new()).await?;
-    Ok(TurnReport {
-        state: outcome.state,
-        answer: outcome.answer.body,
-        error: outcome
-            .error
-            .as_ref()
-            .map(|error| format!("{} ({})", error, error.code().as_str())),
-    })
 }
 
 fn tools(
@@ -644,7 +602,8 @@ fn api_key(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rig::UiMode;
+    use keel_core::TurnState;
+    use keel_runtime::DeferAllInteractionPort;
 
     const PROFILE: &str = r#"
 [profile]
@@ -691,21 +650,9 @@ system = "prompt.md"
                 name: "test".to_owned(),
                 title: "Test".to_owned(),
                 description: String::new(),
-                ui: UiMode::Oneshot,
                 profile: self.dir.path().join("profile.toml"),
                 extra_roots: Vec::new(),
                 path: self.dir.path().join("rig.toml"),
-            }
-        }
-
-        fn request(&self, input: &str) -> RunRequest {
-            let program = self.dir.path();
-            RunRequest {
-                rig: self.rig(),
-                workspace: program.join("workspace"),
-                state_dir: program.join("state"),
-                store_path: program.join("state/sessions/test.json"),
-                input: input.to_owned(),
             }
         }
 
@@ -736,11 +683,15 @@ system = "prompt.md"
     #[tokio::test]
     async fn a_mock_turn_returns_and_persists_the_answer() {
         let fixture = Fixture::new();
+        let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
 
-        let report = run(fixture.request("hi")).await.expect("the turn runs");
+        let outcome = engine
+            .run_turn("hi", CancelToken::new())
+            .await
+            .expect("the turn runs");
 
-        assert_eq!(report.state, TurnState::Done);
-        assert_eq!(report.answer, "mock turn complete");
+        assert_eq!(outcome.state, TurnState::Done);
+        assert_eq!(outcome.answer.body, "mock turn complete");
         let session = fixture.session();
         assert_eq!(session.turns.len(), 1);
         assert_eq!(session.turns[0].seq, 1);
@@ -771,11 +722,18 @@ system = "prompt.md"
     #[tokio::test]
     async fn a_second_turn_resumes_the_session() {
         let fixture = Fixture::new();
+        fixture
+            .engine(Arc::new(DeferAllInteractionPort))
+            .run_turn("one", CancelToken::new())
+            .await
+            .expect("the first turn");
+        let outcome = fixture
+            .engine(Arc::new(DeferAllInteractionPort))
+            .run_turn("two", CancelToken::new())
+            .await
+            .expect("the second turn");
 
-        run(fixture.request("one")).await.expect("the first turn");
-        let report = run(fixture.request("two")).await.expect("the second turn");
-
-        assert_eq!(report.state, TurnState::Done);
+        assert_eq!(outcome.state, TurnState::Done);
         let session = fixture.session();
         assert_eq!(session.turns.len(), 2);
         assert_eq!(session.turns[1].seq, 2);
@@ -828,7 +786,7 @@ system = "prompt.md"
     }
 
     #[tokio::test]
-    async fn a_live_view_receives_text_deltas() {
+    async fn a_host_receives_text_deltas() {
         let fixture = Fixture::new();
         let (tx, mut rx) = mpsc::channel(64);
         let engine = Engine::open(OpenRequest {

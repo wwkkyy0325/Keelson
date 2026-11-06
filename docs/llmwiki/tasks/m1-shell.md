@@ -1,5 +1,7 @@
 # M1 — the shell host
 
+> Historical record. The rig's `ui` field was removed in D2d (ADR 0004).
+
 Goal: a repository that loads rigs from files, validates them against the
 pinned kernel, and can be checked with one command. No model, no turn loop.
 

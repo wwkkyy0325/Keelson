@@ -215,3 +215,32 @@ change. Overlapping the steps in one grid cell removes the reflow by
 construction. The single `App.svelte` had become a 700-line controller with
 wizard, chat, pagination, permissions and settings mixed together; the split
 gives each concern one file and a clear prop/API boundary.
+
+## 2026-11-06 — D2d: the desktop is the only face
+
+- Deleted the terminal face: `src/view/` (transcript, oneshot, bilingual
+  chrome), `src/render/`, the TUI goldens, `docs/design/tui.md` and the M3
+  task records.
+- Deleted the `script` rig and the `run` subcommand. The CLI keeps `rig list`,
+  `rig show`, `doctor`, `--version` and `--help`.
+- Deleted the one-shot engine runner (`engine::run`, `RunRequest`,
+  `TurnReport`). A host opens an `Engine`, supplies its interaction port and
+  optional delta channel, and calls `run_turn`.
+- Removed `ui` and `UiMode` from the rig schema; updated `rigs/coding.toml`,
+  `rigs/coding-live.toml` and the `doctor` output.
+- Dropped `crossterm`, `ratatui`, `unicode-width` and the root `dotenvy`
+  dependency.
+- The engine boundary test now rejects any UI crate name.
+- ADR 0004 records the decision and supersedes the terminal parts of ADR 0002
+  and ADR 0003.
+
+### Why
+
+Two faces meant two sets of modules, dependencies, goldens and docs, and the
+owner does not use the TUI. A single face makes the desktop the product and
+leaves the CLI with the diagnostics that are still useful. Removing the rig's
+`ui` field follows: with one face left, it selects nothing.
+
+The engine surface is now the same one the desktop already used, so this is a
+deletion rather than a redesign. The engine-boundary test stays because the
+library must remain UI-agnostic even with one known host.

@@ -1,7 +1,7 @@
 //! Rig files: the unit of configuration.
 //!
-//! A rig names a kernel profile, a view and optional scopes outside the
-//! workspace. It is data, never a settings screen (ADR 0001).
+//! A rig names a kernel profile and optional scopes outside the workspace. It
+//! is data, never a settings screen (ADR 0001).
 
 use std::collections::HashSet;
 use std::fmt;
@@ -9,29 +9,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-
-/// How a rig talks to the user.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum UiMode {
-    /// Full transcript with tool lines and expandable output.
-    #[default]
-    Transcript,
-    /// Answers only; the process stays behind one key.
-    Chat,
-    /// One answer on stdout, no interactivity.
-    Oneshot,
-}
-
-impl UiMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Transcript => "transcript",
-            Self::Chat => "chat",
-            Self::Oneshot => "oneshot",
-        }
-    }
-}
 
 /// Access a rig's extra root asks for.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -65,7 +42,6 @@ pub struct Rig {
     pub name: String,
     pub title: String,
     pub description: String,
-    pub ui: UiMode,
     pub profile: PathBuf,
     pub extra_roots: Vec<Root>,
     /// The file this rig came from.
@@ -79,8 +55,6 @@ struct RawRig {
     title: String,
     #[serde(default)]
     description: String,
-    #[serde(default)]
-    ui: UiMode,
     profile: PathBuf,
     #[serde(default)]
     extra_root: Vec<RawRoot>,
@@ -140,7 +114,6 @@ impl Rig {
             name: raw.name,
             title: raw.title,
             description: raw.description,
-            ui: raw.ui,
             profile,
             extra_roots,
             path: path.to_path_buf(),
@@ -193,20 +166,6 @@ pub fn state_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(value));
     }
     home_dir().map(|home| home.join(".keelson"))
-}
-
-/// A session id becomes a file name, so it stays a simple handle.
-pub fn validate_session_id(id: &str) -> Result<(), String> {
-    let valid = !id.is_empty()
-        && id.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '-' || character == '_'
-        });
-    if valid {
-        return Ok(());
-    }
-    Err(format!(
-        "session id `{id}` must be letters, digits, `-` and `_`"
-    ))
 }
 
 pub fn discover(dirs: &[PathBuf]) -> Discovery {
@@ -337,7 +296,6 @@ mod tests {
             .expect("the rig parses");
 
         assert_eq!(rig.name, "coding");
-        assert_eq!(rig.ui, UiMode::Transcript);
         assert!(rig.extra_roots.is_empty());
         assert_eq!(rig.profile, PathBuf::from("rigs/p.toml"));
     }
@@ -371,13 +329,6 @@ mod tests {
         let error = parse("name = \"Coding App\"\ntitle = \"A\"\nprofile = \"p.toml\"\n")
             .expect_err("a name with a space is refused");
         assert!(error.to_string().contains("must be lowercase"), "{error}");
-    }
-
-    #[test]
-    fn an_unknown_ui_mode_is_an_error() {
-        let error = parse("name = \"a\"\ntitle = \"A\"\nprofile = \"p.toml\"\nui = \"web\"\n")
-            .expect_err("an unknown view is refused");
-        assert!(error.to_string().contains("unknown variant"), "{error}");
     }
 
     #[test]

@@ -1,5 +1,8 @@
 # M2 — the engine
 
+> Historical record. The one-shot view, `RunRequest` and the `run` subcommand
+> were removed in D2d (ADR 0004); `Engine` is now the only entry point.
+
 Goal: a rig runs one turn through the kernel, the session survives across
 runs, and a `oneshot` view puts the answer on stdout. No terminal UI.
 

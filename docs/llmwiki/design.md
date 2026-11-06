@@ -1,33 +1,32 @@
 # Keelson — design
 
-Keelson is a host for the Keel kernel: one binary, several **rigs**, each rig a
-file. Coding is the first rig and the reference for the shape. The app's job is
-to load a rig, build the kernel from it, and give it a face. It is not a
-settings application.
+Keelson is a host for the Keel kernel: one library engine, several **rigs**,
+and a desktop face. The desktop is the product. The CLI is a diagnostics
+tool for rigs and the kernel handshake, not a second interface.
 
 ## Vocabulary
 
 | Word | Meaning |
 |---|---|
-| kernel | The `keel-*` crates, pinned by tag. Mechanisms and invariants only. |
-| rig | One shell: a profile, a view mode and optional extra scopes, in one file. |
-| view | How a rig talks to the user: `transcript`, `chat`, `oneshot`. |
-| host | This program. Loads rigs, runs turns, renders a view, stores sessions. |
+| kernel | The `keel-*` crates, pinned by path. Mechanisms and invariants only. |
+| rig | One shell: a profile and optional extra scopes, in one file. |
+| host | The desktop app. Loads a rig, runs turns, renders the conversation, stores sessions. |
 
-A rig is data. Switching rigs changes behavior, tools and face; it does not
+A rig is data. Switching rigs changes behavior, tools and scopes; it does not
 open a panel of toggles.
 
 ## Why this shape
 
-The kernel already resolves a profile into an immutable `RuntimeConfig` per
-turn, so a second rig costs a file, not a code path. The risk of a
-shell-switching app is that it drifts into a settings screen — the exact
-failure a thin agent is supposed to avoid. Two rules hold the line:
+The kernel resolves a profile into an immutable `RuntimeConfig` per turn, so a
+second rig costs a file, not a code path. The risk of a shell host is that it
+drifts into a settings application — the exact failure a thin agent is
+supposed to avoid. Two rules hold the line:
 
-1. A rig is a file (ADR 0001). The app offers `rig list`, `rig show`,
-   `rig new`; editing is `$EDITOR`. There is no form.
-2. The engine never imports a terminal library (ADR 0002). The rig's `ui`
-   field selects a view, and a view is a module, not a fork.
+1. A rig is a file (ADR 0001). The CLI offers `rig list` and `rig show`;
+   editing is `$EDITOR`. There is no rig form in the app.
+2. The engine contains no interface code (ADR 0004). The desktop is a host
+   over the library, and `tests/engine_boundary.rs` rejects any UI crate name
+   in `src/engine/`.
 
 ## Rig file
 
@@ -37,19 +36,17 @@ failure a thin agent is supposed to avoid. Two rules hold the line:
 name = "coding"
 title = "Coding"
 description = "Read, edit and verify a codebase."
-ui = "transcript"
-profile = "profiles/coding.toml"
+profile = "../profiles/coding.toml"
 
 # Extra scopes beyond the workspace. The workspace itself comes from the
-# launch directory or an argument, never from the rig.
+# folder picked in the app, never from the rig.
 [[extra_root]]
 path = "~/notes"
 access = "ro"
 ```
 
-- `name` is the handle on the command line: lowercase letters, digits and `-`.
+- `name` is the handle: lowercase letters, digits and `-`.
 - `profile` resolves relative to the rig file and is loaded by `keel-policy`.
-- `ui` is `transcript` (default), `chat` or `oneshot`.
 - `extra_root.access` is `ro` or `rw`; execution stays confirm-only.
 - Unknown keys are an error, the same rule the profile schema uses.
 
@@ -59,49 +56,43 @@ given name wins; `doctor` reports the shadowed one.
 
 ## Frontend
 
-Three layers, one direction of dependency:
+The dependency direction is one line:
 
 ```
-engine/    turn loop, permissions, storage, tools   (no UI types)
+desktop/   Tauri commands, session, keychain, Svelte components
    |
-view/      transcript | chat | oneshot             (reads events, owns layout)
-   |
-render/    ratatui, crossterm                       (the only terminal code)
+src/lib.rs engine: turn loop, permissions, storage, tools   (no UI types)
 ```
 
-The kernel emits a typed event stream and streams tokens through a wrapped
-provider; a view consumes both. Concretely:
-
-- **CLI faces**: `transcript` is the ported Keel TUI with `TestBackend`
-  goldens; `oneshot` is plain stdout for scripts and pipes.
 - **Desktop**: `desktop/` is a Tauri v2 shell with a Svelte 5 frontend (ADR
-  0003). The backend owns the session, serializes a view model and paginates
-  history by turn sequence; the frontend applies one reducer. The engine is a
-  library shared by both hosts. First launch is a four-page wizard (key →
-  endpoint → language → finish); the key goes to the OS keychain, the endpoint
-  becomes a `ModelOverride`, and the workspace is chosen inside the app, not
-  during setup. Later settings are a **single page**, not the wizard: a
-  slide-over with model/key, language and workspace information. Chinese is the
-  default interface; one dictionary and one `locale` store leave the `en`
-  switch available.
-- **Next**: `chat` for a second CLI rig — answers only, tool lines behind one
-  key; and the floating-window form of the desktop shell.
-- **Not planned**: Electron or a separate browser/UI server. The Tauri webview
-  is embedded, and no HTTP surface is exposed.
+  0003). `src-tauri/` owns the session, serializes a view model and paginates
+  history by turn sequence; `src/` is a controller plus independent
+  components and applies one reducer. The engine is a library.
+- **First launch**: a four-page wizard (key → endpoint → language → finish).
+  The key goes to the OS keychain, the endpoint becomes a `ModelOverride`,
+  and the workspace is chosen inside the app, not during setup. All wizard
+  steps share one grid cell, so the card height never jumps.
+- **Later settings**: a **single page**, not the wizard — a slide-over with
+  model/key, language and workspace information. Chinese is the default; one
+  dictionary and one `locale` store leave the English switch available.
+- **CLI**: `keelson rig list`, `rig show`, `doctor`, `--version`. It starts no
+  session and runs no turn. There is no terminal UI.
+- **Next**: the floating-window form of the desktop shell.
+- **Not planned**: Electron, a separate browser/UI server, or a hidden
+  terminal fallback. The Tauri webview is embedded, and no HTTP surface is
+  exposed.
 
-The rule that keeps this honest is testable: no file under `src/engine/` may
-contain `ratatui` or `crossterm`. `tests/engine_boundary.rs` enforces it.
+The boundary is testable: no file under `src/engine/` may contain `ratatui`,
+`crossterm`, `tauri` or `svelte`. `tests/engine_boundary.rs` enforces it.
 
 ## Sessions
 
-One run is one turn. A session is one JSON document at
-`<state>/sessions/<id>.json` (the CLI) or
-`<state>/sessions/<workspace-hash>/default.json` (the desktop), with `<state>`
-from `$KEELSON_HOME` (default `~/.keelson`). It holds the kernel snapshot, the
-task list and one row per turn with the turn's events. The workspace is
-recorded in the document, so a session id is refused against a different
-project instead of silently contaminating it; the desktop's workspace hash
-keeps separate projects from ever sharing a document.
+One run is one turn. The desktop stores a session as one JSON document at
+`<state>/sessions/<workspace-hash>/default.json`, with `<state>` from
+`$KEELSON_HOME` (default `~/.keelson`). It holds the kernel snapshot, the task
+list and one row per turn with the turn's events. The workspace is recorded in
+the document, so a session is refused against a different project; the
+workspace hash keeps separate projects from ever sharing a document.
 
 This is not the reference host's SQLite read model. The desktop reads turns
 through `Engine::history`, a keyset page over the in-memory document; it never
@@ -112,13 +103,11 @@ snapshot if a reader ever needs queries the page API cannot answer.
 
 ```
 src/
-  lib.rs         the library both hosts link
-  main.rs        the CLI: argument parsing and command dispatch
+  lib.rs         the library the CLI and the desktop link
+  main.rs        the CLI: rig and kernel diagnostics only
   rig.rs         rig schema, discovery, validation
   doctor.rs      version handshakes and rig/profile checks
-  engine/        turn execution, driver wiring, session store (M2)
-  view/          oneshot, transcript, ui_text (M2–M3)
-  render/        raw mode, alternate screen, key polling (M3)
+  engine/        turn execution, driver wiring, session store
 desktop/
   src-tauri/     Tauri commands, config/keychain, events, interaction port
   src/           controller + components: Wizard, Chat, AppHeader,
@@ -126,38 +115,29 @@ desktop/
   src/lib/       one session reducer store and one i18n locale store
 ```
 
-The view owns the screen model, the key semantics and the layout; `render/`
-owns the terminal lifecycle and input polling. The enforced boundary remains
-the one ADR 0002 names: no file under `src/engine/` may mention a terminal
-library, and `tests/engine_boundary.rs` fails the build on a match.
-
 A module is added when it has content; no empty placeholders.
 
 ## Milestones
 
-M1 — Shell (this iteration)
+M1 — Shell (done)
 
 - repository, rig schema, discovery, validation, `rig list`, `rig show`,
   `doctor`, tests.
 - Verify: `cargo test`, `cargo clippy -D warnings`, and `keelson doctor`
-  loading `rigs/coding.toml` against the pinned kernel.
+  loading the rigs against the pinned kernel.
 
 M2 — Engine (done)
 
-- Port the turn loop from the reference host: driver, permissions, event sink,
-  session store, one `oneshot` run.
-- Verify: a mock-model unit test plus one real-model turn in
-  `examples/demo-workspace` that fixes the failing test. The mock path passes;
-  the real-model turn needs a provider key and is the next manual check.
+- The turn loop: driver, permissions, event sink, session store, mock and
+  live model selection.
+- Verify: the mock-model unit tests and the kernel conformance probes. A
+  real-model turn needs a provider key and is a manual check.
 
-M3 — Transcript view (done)
+M3 — Terminal view (removed)
 
-- Port the terminal UI and the text table; keep the goldens. The reference
-  fixtures are kept with the fixture workspace renamed from `keel` to
-  `keelson`; every other line is unchanged.
-- Verify: golden tests pass, then a manual run. The manual run was done under
-  a pseudo-terminal: a mock turn completed, its answer streamed, the session
-  was written, and `/quit` exited cleanly.
+- The ported terminal transcript, its goldens and the one-shot CLI existed
+  here and were removed in D2d (ADR 0004). The history remains in the
+  changelog; the code is gone.
 
 M4 — Coding rig does the work
 
@@ -168,26 +148,30 @@ M4 — Coding rig does the work
 
 M5 — A second rig
 
-- The proof that this is a shell host: one non-coding rig (`chat` view) built
-  from a file, with no engine change.
+- The proof that this is a shell host: one non-coding rig built from a file,
+  with no engine change.
 - Starts only after M4, so the coding rig exposes what the engine actually
   needs.
 
 D1 — Basic desktop shell (done)
 
-- Tauri v2 + Svelte 5: setup screen, transcript, streamed answer, tool
+- Tauri v2 + Svelte 5: setup screen, conversation, streamed answer, tool
   details, permission card, cancel and keyset history pages. The engine is a
   library; ADR 0003 records the desktop decision.
-- Verify: the reducer tests, `npm run check/build`, `cargo tauri build`, and a
-  launched window. A real-model turn through the window is the next manual
-  check.
 
 D2 — First-run onboarding (done)
 
 - Four-page wizard, key in the OS keychain, model override, Chinese-default
   i18n with an English switch, and a workspace picker inside the app.
-- Verify: reducer and Rust tests, `npm run check/build`, and a UI-automation
-  walkthrough from a clean config to a streamed mock turn.
+
+D2b — One-page settings (done)
+
+D2c — Component split and a stable page stage (done)
+
+D2d — Terminal faces removed (done)
+
+- `src/view/`, `src/render/`, the TUI goldens, the `script` rig, the `run`
+  subcommand and the rig's `ui` field are gone. The CLI keeps diagnostics.
 
 D3 — Floating window
 
@@ -196,7 +180,9 @@ D3 — Floating window
 
 ## Non-goals
 
-- An in-app settings screen, theme picker, keybinding editor.
+- A terminal UI, or any second face kept without a concrete need.
+- A paged settings wizard after the first run; a theme picker; a keybinding
+  editor.
 - Electron, a separate UI server, or a browser-process frontend.
 - A plugin marketplace; MCP is the extension surface and the kernel already
   speaks it.
