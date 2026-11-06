@@ -86,15 +86,16 @@ No new panels. Everything above lands in the transcript or the status line.
   output excerpt for a failure.
 - When the turn ends, those lines collapse into one aggregate line under the
   answer. The transcript keeps the user message, the answer and the aggregate.
-- `Ctrl-O` or `/details` toggles the process for the whole conversation. The
+- `Ctrl-O` or `/details` toggles the process of the **most recent turn**. The
   toggle only filters hidden blocks; it never re-runs, reorders or drops
-  messages. Revealing scrolls to the last turn's first hidden block: without
-  that, the view stays at the bottom and the toggle looks like a no-op.
-- A per-turn expansion would need a cursor over blocks, a selection model and
-  a second key set. A global toggle is one key, and it answers the question the
-  user actually asks ("what did it do"). If it ever proves insufficient, the
-  per-turn variant can be added on top; the block model already carries the
-  turn boundary.
+  messages. Revealing scrolls to that turn's first hidden block: without that,
+  the view stays at the bottom and the toggle looks like a no-op.
+- Only the latest turn expands. Expanding the whole conversation flooded the
+  screen and made every redraw grow with the session, so older turns stay
+  folded and release their tool arguments and output when the next turn
+  collapses. The compact lines, the answers and the summaries stay. A
+  cursor-based selector for arbitrary turns is not introduced; the one turn a
+  person actually asks about is the one that just ran.
 
 ## Settings
 
@@ -138,7 +139,7 @@ Everything else (model, tools, permissions, budget) stays in the profile.
 | `Enter` | Send |
 | `Shift+Enter` | Newline (terminals that report it; `Alt+Enter` fallback) |
 | `Ctrl-C` | Cancel the running turn; when idle, clear the input; on an empty input, confirm quit |
-| `Ctrl-O` | Show or hide tool output and details (same as `/details`) |
+| `Ctrl-O` | Show or hide the latest turn's tool output and details (same as `/details`) |
 | `Shift+Tab` | Toggle `Workspace` / `Full auto` |
 | `PageUp` / `PageDown` | Scroll the transcript |
 
@@ -259,19 +260,30 @@ column 0, with the summary underneath.
       `a_code_block_is_rendered_with_a_bar_and_no_fences`,
       `a_table_becomes_aligned_columns`,
       `inline_code_markers_are_removed`. Done 2026-11-05.
-- [ ] Tool line compaction: one line per call with target and duration;
+- [x] Tool line compaction: one line per call with target and duration;
       failure keeps the error; `Ctrl-O` expands. The finished-turn aggregate
-      drops the token count. Verify: a running turn renders N lines; a
-      finished turn renders the aggregate without tokens.
-- [ ] Sub-agent and background lines from the event log
-      (`BackgroundStarted`, `SubAgentFinished`), no panels. Verify: both
-      events render one line in each language.
-- [ ] Permission prompt strings through the table; keys unchanged. Verify:
-      goldens `tui-prompt.zh.txt` and `tui-prompt.en.txt`.
-- [ ] `/cost` prints the turn total and the session total; `/help` lists the
-      six keys and five commands. Verify: the command tests.
+      drops the token count. Verify: `a_tool_line_names_its_target`,
+      `a_failed_tool_stays_visible_after_the_turn`,
+      `a_finished_turn_renders_only_the_result_and_its_fields`. Done
+      2026-11-06.
+- [x] Sub-agent and background lines from the event log
+      (`BackgroundStarted`, `SubAgentFinished`), no panels. Verify:
+      `background_and_sub_agent_events_render_one_line` (English and Chinese).
+      Done 2026-11-06.
+- [x] Permission prompt strings through the table; keys unchanged. Verify:
+      goldens `tui-prompt.zh.txt` and `tui-prompt.en.txt`. Done 2026-11-06.
+- [x] `/cost` prints the turn total and the session total; `/help` lists the
+      keys and commands. Verify: `cost_reports_the_turn_and_the_session` and
+      `chrome_text_has_both_arms`. Done 2026-11-06.
+- [x] Per-turn expansion and a change-driven redraw: `Ctrl-O` reveals only the
+      latest turn; older turns release their process detail; an idle screen
+      does not rebuild the transcript. Verify:
+      `ctrl_o_expands_only_the_latest_turn`, `older_turn_details_are_released`.
+      Done 2026-11-06.
 - [ ] Manual smoke: raw mode restore, resize, `Ctrl-C`, paste with CJK, 80 and
-      40 columns.
+      40 columns. Under winpty, `Ctrl-C`, CJK input and the persisted turn are
+      checked; 40 columns is covered by `the_screen_degrades_at_forty_columns`.
+      Resize and raw-mode restore still need a real terminal pass.
 
 ## Boundaries
 

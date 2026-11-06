@@ -1,0 +1,24 @@
+  · type a request; /help lists commands
+
+
+
+
+
+
+
+
+
+
+┌ permission ──────────────────────────────────────────────────────────────────┐
+│Allow `shell` to execute `cargo`?                                             │
+│command: cargo test                                                           │
+│  Deny                                                                        │
+│› Allow once                                                                  │
+│  Allow this path                                                             │
+│  Full auto                                                                   │
+│ ↑↓ select · Enter confirm · Esc defer · Shift+Tab mode                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+╭──────────────────────────────────────────────────────────────────────────────╮
+│> ▏                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ ● ready · keelson                                         Workspace · Shift+Tab

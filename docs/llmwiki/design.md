@@ -84,6 +84,19 @@ The rule that keeps this honest is testable: no file under `src/engine/` may
 contain `ratatui` or `crossterm`. That test lands with the first engine
 module.
 
+## Sessions
+
+One run is one turn. A session is one JSON document at
+`<state>/sessions/<id>.json`, with `<state>` from `$KEELSON_HOME` (default
+`~/.keelson`). It holds the kernel snapshot, the task list and one row per
+turn with the turn's events. The workspace is recorded in the document, so a
+session id is refused against a different project instead of silently
+contaminating it.
+
+This is not the reference host's SQLite read model. Keelson has no reader that
+queries turns yet; when a view needs one, the table layer is added behind the
+same snapshot, so the kernel data stays the source of truth.
+
 ## Module layout
 
 ```
@@ -91,10 +104,15 @@ src/
   main.rs        argument parsing and command dispatch
   rig.rs         rig schema, discovery, validation
   doctor.rs      version handshakes and rig/profile checks
-  engine/        M2: session loop, driver wiring, store
-  view/          M3: transcript, chat, oneshot
-  render/        M3: ratatui and crossterm
+  engine/        turn execution, driver wiring, session store (M2)
+  view/          oneshot, transcript, ui_text (M2–M3)
+  render/        raw mode, alternate screen, key polling (M3)
 ```
+
+The view owns the screen model, the key semantics and the layout; `render/`
+owns the terminal lifecycle and input polling. The enforced boundary remains
+the one ADR 0002 names: no file under `src/engine/` may mention a terminal
+library, and `tests/engine_boundary.rs` fails the build on a match.
 
 A module is added when it has content; no empty placeholders.
 
@@ -107,17 +125,22 @@ M1 — Shell (this iteration)
 - Verify: `cargo test`, `cargo clippy -D warnings`, and `keelson doctor`
   loading `rigs/coding.toml` against the pinned kernel.
 
-M2 — Engine
+M2 — Engine (done)
 
 - Port the turn loop from the reference host: driver, permissions, event sink,
   session store, one `oneshot` run.
 - Verify: a mock-model unit test plus one real-model turn in
-  `examples/demo-workspace` that fixes the failing test.
+  `examples/demo-workspace` that fixes the failing test. The mock path passes;
+  the real-model turn needs a provider key and is the next manual check.
 
-M3 — Transcript view
+M3 — Transcript view (done)
 
-- Port the terminal UI and the text table; keep the goldens.
-- Verify: golden tests pass unchanged, then a manual run.
+- Port the terminal UI and the text table; keep the goldens. The reference
+  fixtures are kept with the fixture workspace renamed from `keel` to
+  `keelson`; every other line is unchanged.
+- Verify: golden tests pass, then a manual run. The manual run was done under
+  a pseudo-terminal: a mock turn completed, its answer streamed, the session
+  was written, and `/quit` exited cleanly.
 
 M4 — Coding rig does the work
 

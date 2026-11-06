@@ -181,10 +181,18 @@ pub fn search_dirs() -> Vec<PathBuf> {
         return std::env::split_paths(&value).collect();
     }
     let mut dirs = vec![PathBuf::from("rigs")];
-    if let Some(home) = home_dir() {
-        dirs.push(home.join(".keelson").join("rigs"));
+    if let Some(state) = state_dir() {
+        dirs.push(state.join("rigs"));
     }
     dirs
+}
+
+/// The host state directory: `$KEELSON_HOME`, else `~/.keelson`.
+pub fn state_dir() -> Option<PathBuf> {
+    if let Some(value) = std::env::var_os("KEELSON_HOME") {
+        return Some(PathBuf::from(value));
+    }
+    home_dir().map(|home| home.join(".keelson"))
 }
 
 pub fn discover(dirs: &[PathBuf]) -> Discovery {
