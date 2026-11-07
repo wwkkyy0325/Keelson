@@ -38,16 +38,35 @@ Requirements: Node 20+, Rust, the Tauri prerequisites, and WebView2 on
 Windows. In a debug build the app also searches the repository's `rigs/`; a
 bundled build uses `$KEELSON_RIGS` or `~/.keelson/rigs`.
 
-The first launch is a four-page wizard: key, model endpoint, language, finish.
-Only the key is required; the endpoint is prefilled and the language defaults
-to Chinese. The key is stored in the OS keychain, not in a config file. The
+The first launch is a three-page wizard: model + key, language, finish. The
+model list comes from [`models.dev`](https://models.dev), filtered to
+tool-capable, current models of the providers this host can drive. Each row
+shows context, price and vision/PDF capability; the selected model's context
+is what the engine uses. It is cached for an hour and revalidated with its
+ETag; only the key is typed.
+
+The catalog is fetched from `models.dev`, with the byte-identical
+`models.opencode.ai` mirror as a fallback. If both are unreachable, a bundled
+snapshot keeps the picker usable; set `KEELSON_CATALOG_URL` in `.env` to point
+at your own proxy or mirror. A manual endpoint disclosure stays available for custom
+gateways. The key is stored in the OS keychain, not in a config file. The
 wizard also offers an offline mode for a first look without a key.
 
 After that the app connects directly. The workspace is **not** chosen during
-setup: the header shows the remembered directory and opens a folder picker.
-Sessions are stored per workspace, so switching projects never mixes them.
+setup: the left rail's project menu shows the recently opened folders and
+opens a folder picker, and `新对话` starts another conversation in the current
+project. If nothing is remembered, the app opens `~/Documents/Keelson` (or
+`~/Keelson`), created on demand — never the whole home directory. A stored
+home path is migrated to that landing folder. Each project keeps its own
+conversation list, so switching projects never mixes them; a conversation is
+one JSON document with an immutable id, and the rail lists it by the first
+user message. Rows can be renamed and archived behind a `已归档 · N` tab;
+an archived conversation opens read-only until it is unarchived, and only
+archived conversations can be permanently deleted, after a `永久删除对话?`
+dialog.
 The header's 中/EN switch changes the interface language; the gear opens a
-single-page settings panel for the model, key, language and workspace info.
+single-page settings panel with the same model picker, key, language and
+workspace info.
 
 The window shows the conversation, streams the answer, renders tool lines
 after the turn, prompts for permissions and loads older turns by a stable turn
@@ -76,7 +95,8 @@ settings page covers the model connection and language, not rig behavior.
 
 - `docs/llmwiki/design.md` — what this is, the layers, the milestones.
 - `docs/kernel.md` — the pinned kernel, the consumed surface, the upgrade path.
-- `docs/adr/` — rigs as files, the desktop shell, the desktop-only face.
+- `docs/adr/` — rigs as files, the desktop shell, the desktop-only face, the
+  model catalog and project conversations.
 
 ## Status
 
@@ -91,6 +111,13 @@ permission card and keyset history pagination.
 D2: first-run onboarding, the OS keychain, a Chinese-default interface and a
 one-page settings panel. The terminal transcript and the one-shot CLI were
 removed in D2d; the desktop is the only face.
+
+D2e: the model catalog. The picker is fed by `models.dev`, cached and
+refreshable; first run is a model choice plus a key.
+
+D2f: projects own conversations. The left rail lists history, starts a new
+chat and switches recent projects; each conversation is its own document with
+a stable id.
 
 Next: D3 (a floating window) and M4 (the coding tools do the work). See the
 milestones in `docs/llmwiki/design.md`.

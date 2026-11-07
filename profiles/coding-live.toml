@@ -3,12 +3,13 @@ name = "coding-live"
 
 [model]
 provider = "anthropic-compatible"
-model = "deepseek-flash[1M]"
+model = "deepseek-flash"
 base_url = "https://api.deepseek.com/anthropic"
 api_key_env = "ANTHROPIC_AUTH_TOKEN"
 thinking_budget = 0
 max_output_tokens = 4096
-context_window = 131072
+# The API model id has no context suffix; capacity is a separate field.
+context_window = 1048576
 
 [context]
 stages = ["system", "memory", "history", "latest"]

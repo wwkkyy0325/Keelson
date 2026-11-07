@@ -2,8 +2,10 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod catalog;
 mod commands;
 mod config;
+mod sessions;
 mod state;
 
 use std::sync::Arc;
@@ -21,11 +23,17 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::setup_state,
+            commands::model_catalog,
             commands::save_key,
             commands::save_model,
             commands::save_locale,
             commands::complete_onboarding,
             commands::open_session,
+            commands::new_session,
+            commands::list_sessions,
+            commands::delete_session,
+            commands::rename_session,
+            commands::archive_session,
             commands::send_message,
             commands::cancel_turn,
             commands::load_turns,

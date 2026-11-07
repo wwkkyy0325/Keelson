@@ -244,3 +244,251 @@ leaves the CLI with the diagnostics that are still useful. Removing the rig's
 The engine surface is now the same one the desktop already used, so this is a
 deletion rather than a redesign. The engine-boundary test stays because the
 library must remain UI-agnostic even with one known host.
+
+## 2026-11-06 — D2e: a maintained model catalog
+
+- `desktop/src-tauri/src/catalog.rs` fetches `https://models.dev/api.json`
+  with the byte-identical `https://models.opencode.ai/api.json` mirror as a
+  fallback; `KEELSON_CATALOG_URL` can point at another proxy. It keeps
+  tool-capable models for a fixed provider allowlist and caches the reduced
+  list at `<state>/model-catalog.json` for an hour. Deprecated models
+  are dropped, each family keeps only its newest model, and a six-month window
+  hides stale families. After the hour, an `If-None-Match` request revalidates
+  with the stored ETag; a 304 keeps the cache without a body download. A
+  manual refresh and a bundled offline snapshot are included; a failed refresh
+  keeps the cached list.
+- Provider kind, endpoint and key hint are fixed in code. The remote JSON
+  supplies model metadata only, so a bad entry cannot redirect a key.
+- The first wizard page is now model + key; the separate endpoint page is
+  gone and the wizard is three pages. Manual provider, endpoint and model
+  fields remain behind a disclosure.
+- The wizard is a fixed 640x580 frame. The model list fills the body, and the
+  `上一步` / `下一步` footer is on the same bottom line on every page; the
+  language and finish content centers above that footer. Manual mode seeds its
+  protocol, endpoint and model from the current catalog selection, sits in a
+  full-height panel and labels the selector `接口协议`; the key line no longer
+  prints an environment variable name. Headings, body text and model ids use
+  separate display, text and mono stacks with a tighter size hierarchy.
+- `ModelPicker` now owns its flex layout: the toolbar is fixed, the list takes
+  the remaining height and is the only scroll container (`overflow-y: auto`,
+  `overscroll-behavior: contain`). The wizard passes `fill`; settings keeps a
+  fixed list. The page stage no longer serves as the model-list scrollbar.
+- The stage grid uses `minmax(0, 1fr)` and the step has `min-height: 0`; a
+  plain `1fr` kept the step's min-content height, so a five-model list made the
+  stage scroll instead of the list. With the fix, the list shrinks and owns
+  the scrollbar while the header and footer stay put.
+- Page changes are opacity-only now. The old 6px translate made the page
+  slide under the fixed footer, and the stage's scrollbar could appear or
+  disappear between pages, shifting the content sideways. The stage clips;
+  the list is the only scroll container.
+- The default workspace is `~/Documents/Keelson` (or `~/Keelson` when
+  Documents is absent), created on demand. A stored home path is migrated to
+  it; the workspace permission root is no longer the whole user profile.
+- The selected model row is marked with a check instead of a persistent
+  background, so hovering another row highlights only that row.
+- The settings panel uses the same searchable `ModelPicker` and refresh.
+- The picker reads input modalities and marks vision and PDF models; the
+  selected model's hard context is stored with the connection and passed as
+  `ModelOverride.context_window`, while the profile keeps its working-set
+  budget and output reserve.
+- `SetupState` and the config record the catalog provider and which provider
+  the stored key belongs to; switching providers requires a new key instead
+  of reusing the old one silently.
+- ADR 0005 records the source, the fixed-provider rule and the cache.
+
+### Why
+
+The first run asked the user to know a wire protocol, a base URL and a current
+model name. The owner wanted to choose a model from a current list and type
+only a key. A maintained catalog is the only way to keep model ids fresh
+without shipping a release for every model launch; fixing endpoints in code
+keeps that convenience from becoming a key-exfiltration path.
+
+## 2026-11-06 — D2f: projects own conversations
+
+- A project directory under `<state>/sessions/<workspace-hash>/` now holds one
+  JSON document per conversation plus an `index.json`. The previous
+  `default.json` is adopted as the conversation with id `default`.
+- A conversation id is opaque and immutable (`s-<unix nanos in hex>`), not a
+  hash of the turns. The workspace hash partitions directories; the id
+  identifies a row.
+- The index is a cache reconciled against the directory on every load:
+  missing documents are dropped, unknown documents are adopted, and duplicate
+  rows collapse to the newest. An explicit "new chat" writes an empty
+  document, so it survives a restart; opening a project with no conversations
+  only opens a blank view until the first turn.
+- Titles come from the first non-empty line of the first user message (48
+  characters). A `session-updated` event refreshes the row after every turn.
+- New commands: `new_session`, `list_sessions`, `delete_session`;
+  `open_session` takes an optional conversation id and otherwise opens the
+  newest conversation in the project.
+- `desktop.json` records up to eight recent projects, newest first. It is a
+  shortcut list, not a permission grant.
+- The chat shell has a left rail: brand, project switcher, `新对话`, and the
+  current project's conversations with inline delete. The header shows the
+  conversation title.
+- A running turn blocks switching, creating and deleting. Deleting the current
+  conversation creates a new one first, so the engine never writes to a
+  deleted document.
+
+### Why
+
+A workspace was the permission root, the storage partition and one endless
+conversation at once. Different projects were isolated, but a project had no
+new chat and no history. A content hash cannot be the conversation key because
+it changes with every turn; an opaque id plus a reconciled index gives stable
+identity and lets a lost index be rebuilt without hiding documents.
+
+## 2026-11-06 — D2f follow-up: duplicate rows
+
+- The first boot after D2f exposed an index from an intermediate build with the
+  same row twice; the Svelte keyed list threw and the app stayed on the loading
+  screen. `reconcile` now collapses duplicate ids, keeps the newest row and
+  rewrites the index. A unit test pins it.
+
+## 2026-11-06 — D2f follow-up: no phantom conversation
+
+- Opening a project with no conversations no longer writes an empty document.
+  It opens a blank conversation with no row; the first turn creates the
+  document, the row and the title. Visiting a folder does not leave an
+  untitled conversation behind.
+- An explicit `新对话` still writes an empty document, so a new chat made on
+  purpose survives a restart.
+- Switching conversations resets the composer draft; the empty transcript
+  names the current project; deleting a conversation shows a short toast, and
+  deleting the open one says a new conversation was started.
+
+### Why
+
+Auto-creating a conversation on open made every folder visit look like an
+action and accumulated empty rows. The engine can open a store path that does
+not exist yet, so the document can wait for the first turn without any new
+state. Resetting the draft, naming the project and confirming a delete close
+the three small gaps the first walkthrough exposed.
+
+## 2026-11-06 — D2f fix: the live profile's model id
+
+- `profiles/coding-live.toml` used `model = "deepseek-flash[1M]"`. The
+  provider accepts `deepseek-flash` and `deepseek-v4-pro`; the `[1M]` suffix
+  is not part of the API model id, so a live turn failed with
+  `400 Bad Request: ... you passed deepseek-flash[1M]`.
+- The profile now uses `deepseek-flash` and carries the capacity in
+  `context_window = 1048576`, where it belongs.
+- The desktop builds its model override when it opens a workspace. Editing
+  `desktop.json` outside the app does not reconnect a running window; restart
+  the app or save settings to apply the new value.
+
+### Why
+
+A model id and a context capacity are different fields. The desktop catalog
+already supplied the capacity through `ModelOverride.context_window`; the
+profile's suffix copied a client-side display convention into the wire model
+name. `cargo run -- doctor` validates the profile again.
+
+## 2026-11-06 — D2g: history operations
+
+- `StoredSession` now carries `title` and `archived`. They live in the
+  conversation document; `index.json` mirrors them, so rebuilding the cache
+  cannot lose a rename or bring an archived conversation back.
+- `rename_session` and `archive_session` commands return the updated row and
+  emit `session-updated`. The open conversation is updated through the engine,
+  so a later turn cannot overwrite the change with the values loaded at open.
+- The rail's rows show hover actions: rename (inline input, Enter saves,
+  Escape cancels) and archive/unarchive. Archived rows sit under a collapsed
+  `已归档 · N` section, stay openable, and are the only rows with a permanent
+  delete action. The backend also refuses to delete an active conversation.
+- Opening a project without an id chooses the newest active conversation.
+  Archiving the open conversation switches to the next active one, or a blank
+  view when none remains.
+- A running turn blocks archiving and deleting; renaming stays available.
+
+### Why
+
+The history list could create, switch and delete, but there was no way to name
+a conversation, put an old one away without destroying it, or find it again.
+Keeping the metadata in the document rather than only in the index makes the
+index safe to rebuild, which was already the design rule for rows.
+
+## 2026-11-06 — D2g follow-up: archived rows survive a restart
+
+- The walkthrough archived both conversations, restarted the process and
+  confirmed the archived flags and custom titles were still in the documents
+  and the rail; unarchiving after the restart worked.
+- Deleting an archived row works through the same inline confirmation.
+
+## 2026-11-06 — D2g follow-up: archive before delete
+
+- Active rows no longer show a delete action. Only archived conversations can
+  be deleted, and `delete_session` refuses a non-archived document with
+  `请先归档再删除`.
+- The confirmation now says `永久删除?` and the toast says `已永久删除对话`,
+  because deletion is final; archive is the recoverable step.
+- There is no trash or timed recycle bin. The owner chose archive-first
+  permanent delete over a soft-delete window.
+
+### Why
+
+Archive hides a conversation but keeps its document; delete erases it. Making
+archive the required step gives one recoverable state before the irreversible
+one without adding a second retention system. The backend enforces the rule,
+so a stale UI or a direct call cannot skip it.
+
+## 2026-11-06 — D2g follow-up: two tabs and a delete dialog
+
+- The conversation label became a two-tab control, `对话` and `已归档 · N`.
+  Both tabs render into the same list area, so expanding archived rows no
+  longer shrinks the active list or moves the scrollbar.
+- Opening an archived conversation selects the archived tab; unarchiving the
+  open conversation returns to the active tab. `新对话` and switching projects
+  reset to the active tab.
+- Delete confirmation moved out of the row into a centered dialog with the
+  conversation title. Cancel is focused, Escape and the backdrop cancel, and
+  the row keeps its 32.6 px height while the dialog is open.
+
+### Why
+
+The stacked archived section changed the rail's height and made the archive
+flow feel like a second list bolted onto the first. Tabs give the two states
+one stable frame. The inline confirmation changed the row's height and shifted
+every row below it; a rare destructive action belongs in a modal, not in the
+list's flow.
+
+## 2026-11-06 — D2g follow-up: archived conversations are read-only
+
+- Opening an archived conversation still renders its transcript, but the
+  composer is replaced by an `已归档的对话不能继续` notice and the header
+  carries an `已归档` badge. The notice's unarchive action restores the
+  composer.
+- `send_message` refuses an archived conversation with
+  `已归档的对话不能继续；请先取消归档`, so a stale UI cannot bypass the rule.
+- Unarchiving the open conversation switches the rail back to the `对话` tab.
+
+### Why
+
+Archive should mean "put away", not "still live". Keeping history readable is
+useful; letting the user keep typing without noticing the state makes archive
+meaningless and hides which conversation is active. The backend guard keeps
+the invariant even if the frontend misses it.
+
+## 2026-11-06 — D2g follow-up: a stable history rail
+
+- `.session-list` reserves its scrollbar with `scrollbar-gutter: stable`, so
+  losing the last row (and its scrollbar) no longer changes the list width.
+- The archived tab count has a fixed `2ch` width, so moving between `0`, `24`
+  and `25` does not move either tab label.
+- Row actions are an absolutely positioned overlay with an opacity
+  transition. The title and timestamp keep their widths; hovering changes
+  neither the row height (32.625 px) nor the title width (160.55 px).
+- Switching tabs resets the new list to the top instead of inheriting a
+  clamped scroll position.
+- The archived notice has a `4rem` minimum height, close to the composer's
+  footer height, so opening an archived conversation does not resize the
+  transcript by 11 px.
+
+### Why
+
+The rail twitched when the last row disappeared, when the archived count
+changed, and when hover actions replaced the timestamp. Each was a layout
+change, not an animation: a scrollbar appearing, a count changing width, or
+`display: none` on the actions. Reserving space or moving the toolbar out of
+the flow removes the reflow instead of trying to hide it.

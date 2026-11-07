@@ -24,6 +24,15 @@ pub const EV_INTERACTION_RESOLVED: &str = "keelson:interaction-resolved";
 /// Grants made from the desktop expire even if the window stays open.
 const GRANT_TTL: Duration = Duration::from_secs(8 * 60 * 60);
 
+/// The conversation the engine is writing to. The session row is refreshed
+/// from it after every turn.
+#[derive(Clone)]
+pub struct CurrentSession {
+    pub id: String,
+    pub workspace: PathBuf,
+    pub state_dir: PathBuf,
+}
+
 pub struct DesktopState {
     pub engine: Mutex<Option<Arc<Engine>>>,
     pub cancel: Mutex<Option<CancelToken>>,
@@ -31,6 +40,10 @@ pub struct DesktopState {
     pub current_seq: Arc<AtomicU32>,
     pub interactions: Arc<DesktopInteractions>,
     pub config: Mutex<DesktopConfig>,
+    pub current: Mutex<Option<CurrentSession>>,
+    /// Serializes index reads and writes; the session documents themselves
+    /// are replaced atomically.
+    pub session_io: Mutex<()>,
 }
 
 impl DesktopState {
@@ -41,6 +54,8 @@ impl DesktopState {
             current_seq: Arc::new(AtomicU32::new(0)),
             interactions: Arc::new(DesktopInteractions::new(app)),
             config: Mutex::new(config::load_config()),
+            current: Mutex::new(None),
+            session_io: Mutex::new(()),
         }
     }
 }

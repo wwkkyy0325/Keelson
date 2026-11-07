@@ -54,6 +54,9 @@ pub struct ModelOverride {
     pub model: String,
     pub base_url: Option<String>,
     pub api_key: String,
+    /// The selected model's hard context capacity, when the host knows it.
+    /// The profile still owns the working-set budget and output reserve.
+    pub context_window: Option<u32>,
 }
 
 /// One finished turn as a read model. It carries the compact turn history, not
@@ -224,7 +227,7 @@ impl Engine {
         })?;
         let outputs_dir = state_dir.join("outputs");
 
-        let config = load_profile(&rig.profile)?;
+        let mut config = load_profile(&rig.profile)?;
         let mut permissions = PermissionEngine::new(&workspace, config.permission_level)?;
         for root in &rig.extra_roots {
             permissions = permissions.with_root(&root.path, access_kind(root.access))?;
@@ -243,6 +246,8 @@ impl Engine {
                 None,
                 StoredSession {
                     workspace: workspace.clone(),
+                    title: String::new(),
+                    archived: false,
                     snapshot: Default::default(),
                     todos: None,
                     turns: Vec::new(),
@@ -267,6 +272,17 @@ impl Engine {
             Arc::new(LatestStage::new()),
         ]);
         validate_config(&config, &registry, &context)?;
+
+        // A catalog model knows its own hard capacity. Keep the profile's
+        // working set and output reserve, but let the driver use the larger
+        // window the model actually has.
+        if let Some(capacity) = model.as_ref().and_then(|model| model.context_window) {
+            let floor = config
+                .context
+                .budget_tokens
+                .saturating_add(config.max_output_tokens);
+            config.context_window = capacity.max(floor);
+        }
 
         let model = DeltaModel {
             inner: build_model(&config, model.as_ref())?,
@@ -355,6 +371,27 @@ impl Engine {
             tools,
             events: stored_events,
         });
+        self.store.save(&session)
+    }
+
+    /// Sets the host-owned title on the open conversation. Persisted now, so
+    /// a later turn cannot overwrite it with the value loaded at open.
+    pub fn set_title(&self, title: &str) -> Result<(), KernelError> {
+        let mut session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        session.title = title.to_owned();
+        self.store.save(&session)
+    }
+
+    /// Sets the host-owned archive flag on the open conversation.
+    pub fn set_archived(&self, archived: bool) -> Result<(), KernelError> {
+        let mut session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        session.archived = archived;
         self.store.save(&session)
     }
 
@@ -738,6 +775,56 @@ system = "prompt.md"
         assert_eq!(session.turns.len(), 2);
         assert_eq!(session.turns[1].seq, 2);
         assert_eq!(session.turns[1].input, "two");
+    }
+
+    #[tokio::test]
+    async fn host_metadata_survives_a_turn() {
+        let fixture = Fixture::new();
+        let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
+        engine.set_title("renamed").expect("set the title");
+        engine.set_archived(true).expect("archive");
+
+        engine
+            .run_turn("hi", CancelToken::new())
+            .await
+            .expect("the turn runs");
+
+        let session = fixture.session();
+        assert_eq!(session.title, "renamed");
+        assert!(session.archived);
+
+        let reopened = fixture.engine(Arc::new(DeferAllInteractionPort));
+        reopened
+            .run_turn("again", CancelToken::new())
+            .await
+            .expect("the reopened engine runs");
+        let session = fixture.session();
+        assert_eq!(session.title, "renamed");
+        assert!(session.archived);
+        assert_eq!(session.turns.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_model_override_sets_the_context_capacity() {
+        let fixture = Fixture::new();
+        let engine = Engine::open(OpenRequest {
+            rig: fixture.rig(),
+            workspace: fixture.dir.path().join("workspace"),
+            state_dir: fixture.dir.path().join("state"),
+            store_path: fixture.dir.path().join("state/sessions/test.json"),
+            interactions: Arc::new(DeferAllInteractionPort),
+            deltas: None,
+            model: Some(ModelOverride {
+                provider: "mock".to_owned(),
+                model: "mock".to_owned(),
+                base_url: None,
+                api_key: String::new(),
+                context_window: Some(1_000_000),
+            }),
+        })
+        .expect("the engine opens");
+
+        assert_eq!(engine.config().context_window, 1_000_000);
     }
 
     #[tokio::test]

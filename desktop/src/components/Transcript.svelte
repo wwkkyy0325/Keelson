@@ -5,7 +5,13 @@
   import { t } from "../lib/i18n";
   import Turn from "./Turn.svelte";
 
-  let { onError }: { onError: (message: string) => void } = $props();
+  let {
+    onError,
+    projectName,
+  }: {
+    onError: (message: string) => void;
+    projectName: string;
+  } = $props();
 
   let scroller = $state<HTMLDivElement | null>(null);
   let stick = true;
@@ -71,7 +77,11 @@
   {/if}
 
   {#if $session.turns.length === 0 && !$session.running}
-    <p class="empty">{$t("app.empty")}</p>
+    <p class="empty">
+      {projectName
+        ? $t("app.emptyProject", { project: projectName })
+        : $t("app.empty")}
+    </p>
   {/if}
 
   {#each $session.turns as turn (turn.seq)}

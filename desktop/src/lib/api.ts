@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Interaction,
+  ModelCatalog,
+  SessionMeta,
+  SessionUpdated,
   SessionView,
   SetupState,
   TextDelta,
@@ -16,16 +19,30 @@ export function setupState(): Promise<SetupState> {
   return invoke("setup_state");
 }
 
-export function saveKey(key: string): Promise<void> {
-  return invoke("save_key", { key });
+export function modelCatalog(refresh = false): Promise<ModelCatalog> {
+  return invoke("model_catalog", { refresh });
+}
+
+export function saveKey(key: string, providerId: string): Promise<void> {
+  return invoke("save_key", { key, providerId });
 }
 
 export function saveModel(
   provider: string,
+  providerId: string,
+  providerName: string,
   baseUrl: string,
   model: string,
+  context: number | null,
 ): Promise<void> {
-  return invoke("save_model", { provider, baseUrl, model });
+  return invoke("save_model", {
+    provider,
+    providerId,
+    providerName,
+    baseUrl,
+    model,
+    context,
+  });
 }
 
 export function saveLocale(locale: string): Promise<void> {
@@ -36,8 +53,42 @@ export function completeOnboarding(): Promise<void> {
   return invoke("complete_onboarding");
 }
 
-export function openSession(workspace: string | null): Promise<SessionView> {
-  return invoke("open_session", { workspace });
+export function openSession(
+  workspace: string | null,
+  sessionId: string | null = null,
+): Promise<SessionView> {
+  return invoke("open_session", { workspace, sessionId });
+}
+
+export function newSession(workspace: string | null): Promise<SessionView> {
+  return invoke("new_session", { workspace });
+}
+
+export function listSessions(workspace: string): Promise<SessionMeta[]> {
+  return invoke("list_sessions", { workspace });
+}
+
+export function deleteSession(
+  workspace: string,
+  sessionId: string,
+): Promise<void> {
+  return invoke("delete_session", { workspace, sessionId });
+}
+
+export function renameSession(
+  workspace: string,
+  sessionId: string,
+  title: string,
+): Promise<SessionMeta> {
+  return invoke("rename_session", { workspace, sessionId, title });
+}
+
+export function archiveSession(
+  workspace: string,
+  sessionId: string,
+  archived: boolean,
+): Promise<SessionMeta> {
+  return invoke("archive_session", { workspace, sessionId, archived });
 }
 
 export function sendMessage(input: string): Promise<void> {
@@ -94,6 +145,11 @@ export async function listenToEvents(): Promise<UnlistenFn[]> {
   unlisten.push(
     await listen<{ id: string }>("keelson:interaction-resolved", (event) =>
       dispatch({ type: "interaction-resolved", id: event.payload.id }),
+    ),
+  );
+  unlisten.push(
+    await listen<SessionUpdated>("keelson:session-updated", (event) =>
+      dispatch({ type: "session-updated", meta: event.payload.meta }),
     ),
   );
   return unlisten;

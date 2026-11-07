@@ -28,6 +28,14 @@ desktop/         Tauri shell + Svelte frontend            (the only face)
   panel. The settings page covers the model connection and language only.
 - Do not add a terminal UI or keep a hidden fallback face. A second face
   returns only with a concrete need and a new ADR.
+- The only non-model network request is the models.dev catalog in
+  `desktop/src-tauri/src/catalog.rs`. It is metadata only, cached, and its
+  provider endpoints stay fixed in code (ADR 0005).
+- Conversation storage is per project: one document per conversation under
+  `<state>/sessions/<workspace-hash>/` plus a reconciled `index.json`
+  (ADR 0006). The document owns the title and archive flag; the index mirrors
+  them and is a cache, never the source of truth. A conversation id is opaque
+  and immutable, never a hash of the turns.
 - No workspace index, vector store, embedding, graph database or cloud
   dependency. If a feature seems to need one, write the case in
   `docs/llmwiki/backlog.md` first.
@@ -58,7 +66,7 @@ cd desktop
 npm test
 npm run check
 npm run build
-cd src-tauri && cargo clippy --all-targets -- -D warnings
+cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 ```
 
 ## Language and git

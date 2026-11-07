@@ -16,6 +16,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredSession {
     pub workspace: PathBuf,
+    /// Host-owned display name. Empty means "use the first user message".
+    #[serde(default)]
+    pub title: String,
+    /// Host-owned archive flag. Archived conversations stay in the project.
+    #[serde(default)]
+    pub archived: bool,
     pub snapshot: SessionSnapshot,
     #[serde(default)]
     pub todos: Option<TodoList>,
@@ -128,6 +134,8 @@ mod tests {
     fn session(workspace: PathBuf) -> StoredSession {
         StoredSession {
             workspace,
+            title: String::new(),
+            archived: false,
             snapshot: SessionSnapshot::default(),
             todos: Some(TodoList::default()),
             turns: vec![StoredTurn {

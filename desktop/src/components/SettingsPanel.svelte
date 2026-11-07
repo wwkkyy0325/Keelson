@@ -1,8 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { saveKey, saveLocale, saveModel, setupState } from "../lib/api";
+  import {
+    modelCatalog,
+    saveKey,
+    saveLocale,
+    saveModel,
+    setupState,
+  } from "../lib/api";
+  import { defaultSelection, findSelection, type ModelRow } from "../lib/catalog";
   import { locale, t } from "../lib/i18n";
-  import type { SetupState } from "../lib/protocol";
+  import type { ModelCatalog, SetupState } from "../lib/protocol";
+  import ModelPicker from "./ModelPicker.svelte";
 
   let {
     workspace,
@@ -15,7 +23,14 @@
   } = $props();
 
   let setup = $state<SetupState | null>(null);
-  let provider = $state("anthropic-compatible");
+  let catalog = $state<ModelCatalog | null>(null);
+  let catalogLoading = $state(true);
+  let catalogRefreshing = $state(false);
+  let catalogError = $state<string | null>(null);
+  let selectedProviderId = $state("");
+  let selectedModelId = $state("");
+  let manual = $state(false);
+  let providerKind = $state("openai-compatible");
   let baseUrl = $state("");
   let modelName = $state("");
   let keyDraft = $state("");
@@ -24,19 +39,142 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
+  let selectedProvider = $derived(
+    catalog?.providers.find((provider) => provider.id === selectedProviderId) ??
+      null,
+  );
+  let selectedModel = $derived(
+    selectedProvider?.models.find((model) => model.id === selectedModelId) ?? null,
+  );
+  let manualMatchesSelection = $derived(
+    !!selectedProvider &&
+      providerKind === selectedProvider.kind &&
+      baseUrl === selectedProvider.baseUrl &&
+      modelName === selectedModelId,
+  );
+  let activeProviderId = $derived(
+    manual
+      ? providerKind === "mock"
+        ? "mock"
+        : manualMatchesSelection
+          ? selectedProviderId
+          : "custom"
+      : selectedProviderId,
+  );
+  let activeProviderName = $derived(
+    manual
+      ? providerKind === "mock"
+        ? $t("wizard.model.mock")
+        : manualMatchesSelection
+          ? (selectedProvider?.name ?? "")
+          : kindLabel(providerKind)
+      : (selectedProvider?.name ?? ""),
+  );
+  let activeProviderKind = $derived(
+    manual ? providerKind : (selectedProvider?.kind ?? ""),
+  );
+  let activeBaseUrl = $derived(
+    manual ? baseUrl : (selectedProvider?.baseUrl ?? ""),
+  );
+  let activeModel = $derived(manual ? modelName : selectedModelId);
+  let isMock = $derived(activeProviderKind === "mock");
+  let connectionChanged = $derived(
+    !!setup &&
+      (activeProviderKind !== setup.provider ||
+        activeBaseUrl !== setup.baseUrl ||
+        activeModel !== setup.model),
+  );
+  let hasKeyForSelection = $derived(
+    !!setup?.hasKey &&
+      (setup?.keyProvider
+        ? setup.keyProvider === activeProviderId
+        : !connectionChanged),
+  );
+
   onMount(async () => {
     try {
       const state = await setupState();
       setup = state;
-      provider = state.provider;
+      providerKind =
+        state.provider === "anthropic-compatible"
+          ? "anthropic-compatible"
+          : state.provider === "mock"
+            ? "mock"
+            : "openai-compatible";
       baseUrl = state.baseUrl;
       modelName = state.model;
+      await loadCatalog(false, state);
     } catch (cause) {
       error = errText(cause);
+      catalogLoading = false;
     } finally {
       loading = false;
     }
   });
+
+  async function loadCatalog(
+    refresh: boolean,
+    state = setup,
+  ): Promise<void> {
+    if (refresh) catalogRefreshing = true;
+    else catalogLoading = true;
+    catalogError = null;
+    try {
+      const value = await modelCatalog(refresh);
+      catalog = value;
+      if (state) {
+        const current = findSelection(value, selectedProviderId, selectedModelId);
+        if (current) return;
+        if (state.provider === "mock") {
+          manual = true;
+          return;
+        }
+        const choice = defaultSelection(value, state, !state.model);
+        if (choice) {
+          choose(choice);
+        } else if (!manual) {
+          manual = true;
+        }
+      }
+    } catch (cause) {
+      catalogError = errText(cause);
+      if (!catalog) manual = true;
+    } finally {
+      catalogLoading = false;
+      catalogRefreshing = false;
+    }
+  }
+
+  function choose(row: ModelRow): void {
+    selectedProviderId = row.provider.id;
+    selectedModelId = row.model.id;
+    manual = false;
+    error = null;
+  }
+
+  function toggleManual(): void {
+    if (manual) {
+      manual = false;
+      if (!selectedProvider && catalog && setup) {
+        const choice = defaultSelection(catalog, setup, true);
+        if (choice) choose(choice);
+      }
+    } else {
+      if (selectedProvider) {
+        providerKind = selectedProvider.kind;
+        baseUrl = selectedProvider.baseUrl;
+        modelName = selectedModelId;
+      }
+      manual = true;
+    }
+    error = null;
+  }
+
+  function kindLabel(kind: string): string {
+    return kind === "anthropic-compatible"
+      ? $t("wizard.model.anthropic")
+      : $t("wizard.model.openai");
+  }
 
   async function changeLocale(next: "zh" | "en"): Promise<void> {
     locale.set(next);
@@ -49,22 +187,38 @@
 
   async function save(): Promise<void> {
     error = null;
-    if (provider !== "mock" && !setup?.hasKey && !keyDraft.trim()) {
-      error = $t("settings.error.key");
+    if (!manual && !selectedProvider) {
+      error = $t("wizard.error.select");
       return;
     }
-    if (provider !== "mock" && (!baseUrl.trim() || !modelName.trim())) {
+    if (!isMock && (!activeBaseUrl.trim() || !activeModel.trim())) {
       error = $t("wizard.error.model");
+      return;
+    }
+    if (!isMock && !hasKeyForSelection && !keyDraft.trim()) {
+      error = setup?.hasKey
+        ? $t("settings.keyOther")
+        : $t("settings.error.key");
       return;
     }
     busy = true;
     try {
       if (keyDraft.trim()) {
-        await saveKey(keyDraft.trim());
-        if (setup) setup.hasKey = true;
+        await saveKey(keyDraft.trim(), activeProviderId);
+        if (setup) {
+          setup.hasKey = true;
+          setup.keyProvider = activeProviderId;
+        }
         keyDraft = "";
       }
-      await saveModel(provider, baseUrl, modelName);
+      await saveModel(
+        activeProviderKind,
+        activeProviderId,
+        activeProviderName,
+        activeBaseUrl,
+        activeModel,
+        manual ? null : (selectedModel?.context ?? null),
+      );
       const reconnectError = await onReconnect();
       if (reconnectError) {
         error = reconnectError;
@@ -109,53 +263,78 @@
       <section>
         <h3>{$t("settings.model")}</h3>
         <p class="muted">{$t("settings.modelHint")}</p>
-        <label>
-          <span>{$t("wizard.model.provider")}</span>
-          <select bind:value={provider}>
-            <option value="anthropic-compatible">
-              {$t("wizard.model.anthropic")}
-            </option>
-            <option value="openai-compatible">
-              {$t("wizard.model.openai")}
-            </option>
-            <option value="mock">{$t("wizard.model.mock")}</option>
-          </select>
-        </label>
-        <label>
-          <span>{$t("wizard.model.baseUrl")}</span>
-          <input
-            bind:value={baseUrl}
-            disabled={provider === "mock"}
-            spellcheck="false"
-          />
-        </label>
-        <label>
-          <span>{$t("wizard.model.model")}</span>
-          <input
-            bind:value={modelName}
-            disabled={provider === "mock"}
-            spellcheck="false"
-          />
-        </label>
-        <label>
-          <span>{$t("settings.key")}</span>
-          <div class="key-row">
-            <input
-              type={revealKey ? "text" : "password"}
-              bind:value={keyDraft}
-              placeholder={setup?.hasKey
-                ? $t("settings.keySaved")
-                : $t("wizard.key.placeholder")}
-              autocomplete="off"
-              spellcheck="false"
-            />
-            <button class="ghost" onclick={() => (revealKey = !revealKey)}>
-              {revealKey ? $t("wizard.key.hide") : $t("wizard.key.show")}
-            </button>
+
+        {#if manual}
+          <div class="manual-fields">
+            <label>
+              <span>{$t("wizard.model.protocol")}</span>
+              <select bind:value={providerKind}>
+                <option value="anthropic-compatible">
+                  {$t("wizard.model.anthropic")}
+                </option>
+                <option value="openai-compatible">
+                  {$t("wizard.model.openai")}
+                </option>
+                <option value="mock">{$t("wizard.model.mock")}</option>
+              </select>
+            </label>
+            <label>
+              <span>{$t("wizard.model.baseUrl")}</span>
+              <input
+                bind:value={baseUrl}
+                disabled={providerKind === "mock"}
+                spellcheck="false"
+              />
+            </label>
+            <label>
+              <span>{$t("wizard.model.model")}</span>
+              <input
+                bind:value={modelName}
+                disabled={providerKind === "mock"}
+                spellcheck="false"
+              />
+            </label>
           </div>
-        </label>
-        {#if setup?.hasKey}
-          <p class="hint">{$t("settings.keySavedHint")}</p>
+        {:else}
+          <ModelPicker
+            catalog={catalog}
+            loading={catalogLoading}
+            refreshing={catalogRefreshing}
+            error={catalogError}
+            selectedProviderId={selectedProviderId}
+            selectedModelId={selectedModelId}
+            onSelect={choose}
+            onRefresh={() => loadCatalog(true)}
+          />
+        {/if}
+
+        <button class="link settings-mode" onclick={toggleManual} disabled={busy}>
+          {manual ? $t("settings.fromList") : $t("settings.advanced")}
+        </button>
+
+        {#if !isMock}
+          <label>
+            <span>{$t("settings.key")}</span>
+            <div class="key-row">
+              <input
+                type={revealKey ? "text" : "password"}
+                bind:value={keyDraft}
+                placeholder={hasKeyForSelection
+                  ? $t("settings.keySaved")
+                  : $t("wizard.key.placeholder")}
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button class="ghost" onclick={() => (revealKey = !revealKey)}>
+                {revealKey ? $t("wizard.key.hide") : $t("wizard.key.show")}
+              </button>
+            </div>
+          </label>
+          {#if hasKeyForSelection}
+            <p class="hint">{$t("settings.keySavedHint")}</p>
+          {:else if setup?.hasKey}
+            <p class="hint">{$t("settings.keyOther")}</p>
+          {/if}
         {/if}
       </section>
 
@@ -189,7 +368,11 @@
 
     <div class="settings-foot">
       <button class="link" onclick={onClose}>{$t("settings.close")}</button>
-      <button class="primary" onclick={save} disabled={busy || loading}>
+      <button
+        class="primary"
+        onclick={save}
+        disabled={busy || loading || (!manual && !selectedProvider)}
+      >
         {busy ? $t("settings.saving") : $t("settings.save")}
       </button>
     </div>

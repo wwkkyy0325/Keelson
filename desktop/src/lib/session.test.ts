@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Turn } from "./protocol";
+import type { SessionMeta, Turn } from "./protocol";
 import { initialSession, reduce } from "./session";
 
 function turn(seq: number, input = `in ${seq}`, answer = `out ${seq}`): Turn {
@@ -14,6 +14,17 @@ function turn(seq: number, input = `in ${seq}`, answer = `out ${seq}`): Turn {
   };
 }
 
+function meta(id: string, updatedAt: number, title = ""): SessionMeta {
+  return {
+    id,
+    title,
+    archived: false,
+    createdAt: updatedAt,
+    updatedAt,
+    turns: 0,
+  };
+}
+
 describe("session reducer", () => {
   it("opens a session with turns sorted by sequence", () => {
     const state = reduce(initialSession(), {
@@ -22,6 +33,8 @@ describe("session reducer", () => {
         rig: "coding",
         workspace: "/w",
         sessionId: "s",
+        sessions: [],
+        projects: [],
         turns: [turn(3), turn(1), turn(2)],
         nextBefore: 1,
       },
@@ -67,6 +80,8 @@ describe("session reducer", () => {
         rig: "r",
         workspace: "/w",
         sessionId: "s",
+        sessions: [],
+        projects: [],
         turns: [turn(4), turn(5)],
         nextBefore: 4,
       },
@@ -131,6 +146,8 @@ describe("session reducer", () => {
         rig: "r",
         workspace: "/w",
         sessionId: "s",
+        sessions: [],
+        projects: [],
         turns: [turn(1)],
         nextBefore: null,
       },
@@ -138,6 +155,93 @@ describe("session reducer", () => {
     state = reduce(state, { type: "turn-started", seq: 1, input: "late" });
 
     expect(state.running).toBeNull();
+    expect(state.turns).toHaveLength(1);
+  });
+
+  it("opens a project's conversations newest first", () => {
+    const state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "a",
+        sessions: [meta("a", 1), meta("b", 2)],
+        projects: [{ path: "/w", name: "w", openedAt: 1 }],
+        turns: [],
+        nextBefore: null,
+      },
+    });
+
+    expect(state.sessions.map((item) => item.id)).toEqual(["b", "a"]);
+    expect(state.projects.map((item) => item.name)).toEqual(["w"]);
+  });
+
+  it("moves an updated conversation to the front with its new title", () => {
+    let state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "a",
+        sessions: [meta("a", 1), meta("b", 2)],
+        projects: [],
+        turns: [],
+        nextBefore: null,
+      },
+    });
+
+    state = reduce(state, {
+      type: "session-updated",
+      meta: meta("a", 3, "first question"),
+    });
+
+    expect(state.sessions.map((item) => item.id)).toEqual(["a", "b"]);
+    expect(state.sessions[0].title).toBe("first question");
+  });
+
+  it("carries the archived flag through a row update", () => {
+    let state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "a",
+        sessions: [meta("a", 1)],
+        projects: [],
+        turns: [],
+        nextBefore: null,
+      },
+    });
+
+    state = reduce(state, {
+      type: "session-updated",
+      meta: { ...meta("a", 2, "renamed"), archived: true },
+    });
+
+    expect(state.sessions[0].archived).toBe(true);
+    expect(state.sessions[0].title).toBe("renamed");
+  });
+
+  it("replaces the conversation list without touching the transcript", () => {
+    let state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "a",
+        sessions: [meta("a", 1)],
+        projects: [],
+        turns: [turn(1)],
+        nextBefore: null,
+      },
+    });
+
+    state = reduce(state, {
+      type: "sessions-loaded",
+      sessions: [meta("b", 5), meta("a", 1)],
+    });
+
+    expect(state.sessions.map((item) => item.id)).toEqual(["b", "a"]);
     expect(state.turns).toHaveLength(1);
   });
 });

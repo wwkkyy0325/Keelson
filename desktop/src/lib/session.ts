@@ -1,5 +1,7 @@
 import type {
   Interaction,
+  ProjectEntry,
+  SessionMeta,
   SessionView,
   Turn,
   TurnPage,
@@ -15,6 +17,10 @@ export type SessionState = {
   rig: string;
   workspace: string;
   sessionId: string;
+  /** Conversations in the project, newest first. */
+  sessions: SessionMeta[];
+  /** Recently opened projects, newest first. */
+  projects: ProjectEntry[];
   /** Finished turns, ascending by seq. */
   turns: Turn[];
   running: RunningTurn | null;
@@ -31,6 +37,8 @@ export function initialSession(): SessionState {
     rig: "",
     workspace: "",
     sessionId: "",
+    sessions: [],
+    projects: [],
     turns: [],
     running: null,
     pendingInteraction: null,
@@ -42,6 +50,8 @@ export function initialSession(): SessionState {
 
 export type Action =
   | { type: "session-opened"; view: SessionView }
+  | { type: "sessions-loaded"; sessions: SessionMeta[] }
+  | { type: "session-updated"; meta: SessionMeta }
   | { type: "turns-loaded"; page: TurnPage }
   | { type: "loading-older"; value: boolean }
   | { type: "turn-started"; seq: number; input: string }
@@ -61,8 +71,22 @@ export function reduce(state: SessionState, action: Action): SessionState {
         rig: action.view.rig,
         workspace: action.view.workspace,
         sessionId: action.view.sessionId,
+        sessions: sortSessions(action.view.sessions),
+        projects: action.view.projects,
         turns: normalize(action.view.turns),
         nextBefore: action.view.nextBefore,
+      };
+
+    case "sessions-loaded":
+      return { ...state, sessions: sortSessions(action.sessions) };
+
+    case "session-updated":
+      return {
+        ...state,
+        sessions: sortSessions([
+          ...state.sessions.filter((item) => item.id !== action.meta.id),
+          action.meta,
+        ]),
       };
 
     case "turns-loaded":
@@ -134,6 +158,17 @@ export function reduce(state: SessionState, action: Action): SessionState {
     case "reset":
       return initialSession();
   }
+}
+
+/// Newest first, with a stable fallback so two rows written in the same
+/// millisecond do not swap places between renders.
+function sortSessions(sessions: SessionMeta[]): SessionMeta[] {
+  return [...sessions].sort(
+    (left, right) =>
+      right.updatedAt - left.updatedAt ||
+      right.createdAt - left.createdAt ||
+      right.id.localeCompare(left.id),
+  );
 }
 
 /// Deduplicates by turn sequence and keeps the transcript ascending. Pages and

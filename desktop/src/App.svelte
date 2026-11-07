@@ -12,11 +12,14 @@
   const fallbackSetup: SetupState = {
     onboarded: false,
     hasKey: false,
-    provider: "anthropic-compatible",
-    baseUrl: "https://api.deepseek.com/anthropic",
-    model: "deepseek-flash[1M]",
+    provider: "openai-compatible",
+    providerId: "",
+    providerName: "",
+    baseUrl: "https://api.deepseek.com",
+    model: "deepseek-flash",
     locale: "zh",
     lastWorkspace: "",
+    keyProvider: "",
     problems: [],
   };
 
@@ -56,9 +59,12 @@
     };
   });
 
-  async function enterApp(workspace?: string): Promise<string | null> {
+  async function enterApp(
+    workspace?: string,
+    sessionId?: string,
+  ): Promise<string | null> {
     try {
-      const view = await openSession(workspace ?? null);
+      const view = await openSession(workspace ?? null, sessionId ?? null);
       dispatch({ type: "session-opened", view });
       phase = "app";
       return null;
@@ -72,7 +78,10 @@
   }
 
   async function reconnect(): Promise<string | null> {
-    return enterApp($session.workspace || undefined);
+    return enterApp(
+      $session.workspace || undefined,
+      $session.sessionId || undefined,
+    );
   }
 
   function errText(error: unknown): string {
@@ -94,7 +103,7 @@
     onDone={onWizardDone}
   />
 {:else}
-  <Chat onConnect={enterApp} onSettings={() => (showSettings = true)} />
+  <Chat onSettings={() => (showSettings = true)} />
   {#if showSettings}
     <SettingsPanel
       workspace={$session.workspace}
