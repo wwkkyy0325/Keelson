@@ -1,0 +1,7 @@
+{
+  "name": "cross-file-workspace",
+  "private": true,
+  "scripts": {
+    "test": "node test.js"
+  }
+}

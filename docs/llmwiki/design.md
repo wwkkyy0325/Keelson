@@ -155,7 +155,9 @@ that belongs to none runs every check. The order is Cargo, Go, Python, Node
 (M4p). A Python project with several test roots runs each root; a nested root
 is folded into its parent (M4q). `multi_edit` counts as a workspace change. A
 polyglot fixture runs a live frontend-only turn; the Node check passes and the
-deliberately failing Python check is not selected (M4u). A shell call can mark
+deliberately failing Python check is not selected (M4u). A second fixture
+renames a function across two files; the live turn uses `apply_edits` and the
+test stays unchanged (M4y). A shell call can mark
 `mutates: true` to count as a workspace change; it reports no path, so every
 check is the fallback (M4v).
 `read_file` can read a 1-based line range

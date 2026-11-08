@@ -1108,3 +1108,20 @@ name a location precisely without changing the default or the edit contract.
 spans files. Applying edits one file at a time can leave a partial rewrite
 when a later snippet does not match. The cross-file tool validates the whole
 set first, so the common failure touches nothing.
+
+## 2026-11-08 — M4y: cross-file apply_edits, live
+
+- `examples/cross-file-workspace` pairs a two-file rename: `math.js` exports
+  `add`, `report.js` uses it, `test.js` asserts the result.
+- `tests/cross_file_eval.rs` (ignored, needs a provider key) runs one live
+  turn asking for the rename with `apply_edits`. It asserts both sources use
+  `sum`, `test.js` is unchanged, the session used `apply_edits`, and
+  `npm test` passes.
+- **9.59 s**; the model applied the cross-file rename in one call.
+- Task doc: `docs/llmwiki/tasks/m4y-cross-file-eval.md`.
+
+### Why
+
+M4x is a new tool; a kernel test proves its contract, but only a live turn
+shows the model reaches for it on a real cross-file change and that the
+resulting workspace still passes the project check.

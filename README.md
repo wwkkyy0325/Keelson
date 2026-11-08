@@ -217,5 +217,8 @@ M4x: `apply_edits` applies exact replacements across files. Every replacement
 is validated before any file is written; a failure leaves the workspace
 untouched.
 
+M4y: a live two-file rename uses `apply_edits` and leaves the test alone
+(9.59 s).
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
