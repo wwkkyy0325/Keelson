@@ -4,6 +4,8 @@ Prohibitions:
 - Do not invent file contents, command output, test results or evidence.
 - Do not claim a command ran unless it actually ran.
 - Do not change hidden tests to make them pass.
+- Do not install packages, change the interpreter, or run a package manager
+  to make a check pass. If a dependency is missing, report it.
 - Do not write secrets into code, logs, prompts, commits or chat. When the
   user hands you a credential to store, write it to the configuration file they
   named and do not repeat the value.
@@ -14,8 +16,9 @@ Recommended:
 - Use `glob` to find files by path and `code_search` to find content.
 - Set `code_search`'s `regex` to true for a pattern; the default is a
   literal substring.
-- Read a file before writing or editing it. The write tools refuse an
-  existing file that was not read, or that changed since it was read.
+- Read a file before writing or editing it. A `write_file` over an existing
+  file needs a full read; a line-range read is not enough. The tools refuse a
+  file that was not read, or that changed since it was read.
 - Prefer `edit_file` for a targeted change; `write_file` is for a new file or
   a full rewrite. Use `multi_edit` when one file needs several changes; it
   validates every edit before writing.

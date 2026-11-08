@@ -661,71 +661,139 @@ fn project_instructions(workspace: &Path) -> Option<String> {
 }
 
 /// The first supported project check. An unknown ecosystem stays unverified
-/// instead of guessing a command.
+/// instead of guessing a command. A manifest may sit in a subdirectory, so a
+/// monorepo gets a check for the first project found.
 fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
-    if workspace.join("Cargo.toml").is_file() {
-        return Some(AcceptanceItem {
-            id: "workspace-tests".to_owned(),
-            description: "cargo test".to_owned(),
-            required: true,
-            verify: VerifySpec::Test {
-                program: "cargo".to_owned(),
-                args: vec!["test".to_owned()],
-            },
-        });
+    if let Some(project) = project_directories(workspace, "Cargo.toml")
+        .into_iter()
+        .next()
+    {
+        return Some(cargo_check(&project));
     }
-    if workspace.join("go.mod").is_file() {
-        return Some(AcceptanceItem {
-            id: "workspace-tests".to_owned(),
-            description: "go test ./...".to_owned(),
-            required: true,
-            verify: VerifySpec::Test {
-                program: "go".to_owned(),
-                args: vec!["test".to_owned(), "./...".to_owned()],
-            },
-        });
+    if let Some(project) = project_directories(workspace, "go.mod").into_iter().next() {
+        return Some(go_check(&project));
     }
-    if has_python_tests(workspace) {
-        let python = python_program(workspace);
-        let pytest = uses_pytest(workspace);
-        return Some(AcceptanceItem {
-            id: "workspace-tests".to_owned(),
-            description: if pytest {
-                format!("{python} -m pytest -q")
-            } else {
-                format!("{python} -m unittest discover -v")
-            },
-            required: true,
-            verify: VerifySpec::Test {
-                program: python,
-                args: if pytest {
-                    vec!["-m".to_owned(), "pytest".to_owned(), "-q".to_owned()]
-                } else {
-                    vec![
-                        "-m".to_owned(),
-                        "unittest".to_owned(),
-                        "discover".to_owned(),
-                        "-v".to_owned(),
-                    ]
-                },
-            },
-        });
+    if let Some(tests) = find_python_tests(workspace) {
+        return Some(python_check(workspace, &tests));
     }
-    if has_node_test(workspace) {
-        return Some(AcceptanceItem {
-            id: "workspace-tests".to_owned(),
-            description: "npm test".to_owned(),
-            required: true,
-            verify: VerifySpec::Test {
-                program: "npm".to_owned(),
-                args: vec!["test".to_owned()],
-            },
-        });
+    if let Some(project) = node_project(workspace) {
+        return Some(node_check(&project));
     }
     None
 }
 
-fn has_python_tests(workspace: &Path) -> bool {
+/// Project directories (relative to the workspace) that contain `file_name`,
+/// root first, then depth 1, then depth 2.
+fn project_directories(workspace: &Path, file_name: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    if workspace.join(file_name).is_file() {
+        found.push(PathBuf::new());
+    }
+    let mut stack = vec![(workspace.to_path_buf(), 0usize)];
+    while let Some((directory, depth)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                if depth < 2 && !is_skipped_test_directory(&path) {
+                    stack.push((path, depth + 1));
+                }
+                continue;
+            }
+            if path.file_name().and_then(|name| name.to_str()) != Some(file_name) {
+                continue;
+            }
+            let Ok(relative) = path.strip_prefix(workspace) else {
+                continue;
+            };
+            let Some(parent) = relative.parent() else {
+                continue;
+            };
+            found.push(parent.to_path_buf());
+        }
+    }
+    found.sort();
+    found.dedup();
+    found
+}
+
+fn check_item(description: String, program: String, args: Vec<String>) -> AcceptanceItem {
+    AcceptanceItem {
+        id: "workspace-tests".to_owned(),
+        description,
+        required: true,
+        verify: VerifySpec::Test { program, args },
+    }
+}
+
+fn cargo_check(project: &Path) -> AcceptanceItem {
+    if project.as_os_str().is_empty() {
+        return check_item(
+            "cargo test".to_owned(),
+            "cargo".to_owned(),
+            vec!["test".to_owned()],
+        );
+    }
+    let manifest = command_path(&project.join("Cargo.toml"));
+    check_item(
+        format!("cargo test --manifest-path {manifest}"),
+        "cargo".to_owned(),
+        vec!["test".to_owned(), "--manifest-path".to_owned(), manifest],
+    )
+}
+
+fn go_check(project: &Path) -> AcceptanceItem {
+    if project.as_os_str().is_empty() {
+        return check_item(
+            "go test ./...".to_owned(),
+            "go".to_owned(),
+            vec!["test".to_owned(), "./...".to_owned()],
+        );
+    }
+    let directory = command_path(project);
+    check_item(
+        format!("go -C {directory} test ./..."),
+        "go".to_owned(),
+        vec![
+            "-C".to_owned(),
+            directory,
+            "test".to_owned(),
+            "./...".to_owned(),
+        ],
+    )
+}
+
+fn node_project(workspace: &Path) -> Option<PathBuf> {
+    project_directories(workspace, "package.json")
+        .into_iter()
+        .find(|project| has_node_test(&workspace.join(project)))
+}
+
+fn node_check(project: &Path) -> AcceptanceItem {
+    if project.as_os_str().is_empty() {
+        return check_item(
+            "npm test".to_owned(),
+            "npm".to_owned(),
+            vec!["test".to_owned()],
+        );
+    }
+    let prefix = command_path(project);
+    check_item(
+        format!("npm --prefix {prefix} test"),
+        "npm".to_owned(),
+        vec!["--prefix".to_owned(), prefix, "test".to_owned()],
+    )
+}
+
+/// Directories whose test files the Python check should run, relative to the
+/// workspace. Root-level test files yield an empty path.
+fn find_python_tests(workspace: &Path) -> Option<PathBuf> {
+    let mut files = Vec::new();
     let mut stack = vec![(workspace.to_path_buf(), 0usize)];
     while let Some((directory, depth)) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&directory) else {
@@ -746,25 +814,62 @@ fn has_python_tests(workspace: &Path) -> bool {
                 continue;
             };
             if name.ends_with(".py") && (name.starts_with("test_") || name.ends_with("_test.py")) {
-                return true;
+                if let Ok(relative) = path.strip_prefix(workspace) {
+                    files.push(relative.to_path_buf());
+                }
             }
         }
     }
-    false
+    files.sort_by_key(|path| (path.components().count(), path.clone()));
+    files
+        .into_iter()
+        .next()
+        .map(|file| file.parent().map(Path::to_path_buf).unwrap_or_default())
+}
+
+fn python_check(workspace: &Path, tests: &Path) -> AcceptanceItem {
+    let python = python_program(workspace, tests);
+    let pytest = uses_pytest(workspace, tests);
+    let target = command_path(tests);
+    let mut args = if pytest {
+        vec!["-m".to_owned(), "pytest".to_owned(), "-q".to_owned()]
+    } else {
+        vec![
+            "-m".to_owned(),
+            "unittest".to_owned(),
+            "discover".to_owned(),
+        ]
+    };
+    if !tests.as_os_str().is_empty() {
+        if pytest {
+            args.push(target);
+        } else {
+            args.push("-s".to_owned());
+            args.push(target);
+        }
+    }
+    if !pytest {
+        args.push("-v".to_owned());
+    }
+    let description = format!("{python} {}", args.join(" "));
+    check_item(description, python, args)
 }
 
 /// A project-local virtual environment is the interpreter the project's
-/// dependencies live in; a bare `python` often misses them.
-fn python_program(workspace: &Path) -> String {
+/// dependencies live in; a bare `python` often misses them. The nearest
+/// ancestor of the tests wins, then the workspace root.
+fn python_program(workspace: &Path, tests: &Path) -> String {
     let (subdirectory, binary) = if cfg!(windows) {
         ("Scripts", "python.exe")
     } else {
         ("bin", "python")
     };
-    for venv in [".venv", "venv"] {
-        let path = workspace.join(venv).join(subdirectory).join(binary);
-        if path.is_file() {
-            return path.to_string_lossy().into_owned();
+    for base in ancestors(workspace, tests) {
+        for venv in [".venv", "venv"] {
+            let path = base.join(venv).join(subdirectory).join(binary);
+            if path.is_file() {
+                return path.to_string_lossy().into_owned();
+            }
         }
     }
     if cfg!(windows) {
@@ -775,8 +880,15 @@ fn python_program(workspace: &Path) -> String {
 }
 
 /// Pytest-style tests exit `unittest discover` with code 0 and no tests, which
-/// would count as a pass. Run pytest when the project declares it.
-fn uses_pytest(workspace: &Path) -> bool {
+/// would count as a pass. Run pytest when the project or an ancestor declares
+/// it.
+fn uses_pytest(workspace: &Path, tests: &Path) -> bool {
+    ancestors(workspace, tests)
+        .iter()
+        .any(|base| pytest_marker(base))
+}
+
+fn pytest_marker(directory: &Path) -> bool {
     for name in [
         "pytest.ini",
         "conftest.py",
@@ -784,13 +896,13 @@ fn uses_pytest(workspace: &Path) -> bool {
         "setup.cfg",
         "tox.ini",
     ] {
-        if let Ok(text) = std::fs::read_to_string(workspace.join(name)) {
+        if let Ok(text) = std::fs::read_to_string(directory.join(name)) {
             if mentions_pytest(&text) {
                 return true;
             }
         }
     }
-    let Ok(entries) = std::fs::read_dir(workspace) else {
+    let Ok(entries) = std::fs::read_dir(directory) else {
         return false;
     };
     for entry in entries.flatten() {
@@ -805,6 +917,34 @@ fn uses_pytest(workspace: &Path) -> bool {
         }
     }
     false
+}
+
+/// The tests directory and its parents up to the workspace root.
+fn ancestors(workspace: &Path, tests: &Path) -> Vec<PathBuf> {
+    let mut bases = Vec::new();
+    let mut current = if tests.as_os_str().is_empty() {
+        workspace.to_path_buf()
+    } else {
+        workspace.join(tests)
+    };
+    loop {
+        bases.push(current.clone());
+        if current == workspace {
+            break;
+        }
+        match current.parent() {
+            Some(parent) if parent.starts_with(workspace) => current = parent.to_path_buf(),
+            _ => break,
+        }
+    }
+    if !bases.iter().any(|base| base == workspace) {
+        bases.push(workspace.to_path_buf());
+    }
+    bases
+}
+
+fn command_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn mentions_pytest(text: &str) -> bool {
@@ -1549,6 +1689,161 @@ system = "prompt.md"
             check.verify,
             VerifySpec::Test { ref program, .. }
                 if program == &python.to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn a_nested_cargo_project_gets_a_manifest_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("backend")).expect("a project directory");
+        std::fs::write(
+            dir.path().join("backend/Cargo.toml"),
+            "[package]\nname = \"x\"\n",
+        )
+        .expect("a manifest");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == "cargo"
+                    && args == &[
+                        "test".to_owned(),
+                        "--manifest-path".to_owned(),
+                        "backend/Cargo.toml".to_owned(),
+                    ]
+        ));
+        assert_eq!(
+            check.description,
+            "cargo test --manifest-path backend/Cargo.toml"
+        );
+    }
+
+    #[test]
+    fn a_root_manifest_wins_over_a_nested_one() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"root\"\n",
+        )
+        .expect("a root manifest");
+        std::fs::create_dir_all(dir.path().join("backend")).expect("a project directory");
+        std::fs::write(
+            dir.path().join("backend/Cargo.toml"),
+            "[package]\nname = \"nested\"\n",
+        )
+        .expect("a nested manifest");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref args, .. } if args == &["test".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn a_nested_go_project_gets_a_directory_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("server")).expect("a project directory");
+        std::fs::write(dir.path().join("server/go.mod"), "module example.com/x\n")
+            .expect("a manifest");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == "go"
+                    && args == &[
+                        "-C".to_owned(),
+                        "server".to_owned(),
+                        "test".to_owned(),
+                        "./...".to_owned(),
+                    ]
+        ));
+    }
+
+    #[test]
+    fn a_nested_node_project_gets_a_prefix_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("frontend")).expect("a project directory");
+        std::fs::write(
+            dir.path().join("frontend/package.json"),
+            r#"{"scripts": {"test": "vitest run"}}"#,
+        )
+        .expect("a manifest");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == "npm"
+                    && args == &[
+                        "--prefix".to_owned(),
+                        "frontend".to_owned(),
+                        "test".to_owned(),
+                    ]
+        ));
+    }
+
+    #[test]
+    fn a_nested_python_project_uses_its_venv() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("backend/tests")).expect("a test directory");
+        std::fs::write(
+            dir.path().join("backend/tests/test_stats.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        let (subdirectory, binary) = if cfg!(windows) {
+            ("Scripts", "python.exe")
+        } else {
+            ("bin", "python")
+        };
+        let python = dir
+            .path()
+            .join("backend")
+            .join(".venv")
+            .join(subdirectory)
+            .join(binary);
+        std::fs::create_dir_all(python.parent().expect("parent")).expect("a venv directory");
+        std::fs::write(&python, "").expect("an interpreter");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == &python.to_string_lossy()
+                    && args.iter().any(|arg| arg == "backend/tests")
+        ));
+    }
+
+    #[test]
+    fn a_nested_python_project_runs_pytest() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("backend/tests")).expect("a test directory");
+        std::fs::write(
+            dir.path().join("backend/tests/test_stats.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(
+            dir.path().join("backend/pyproject.toml"),
+            "[tool.pytest.ini_options]\n",
+        )
+        .expect("a pytest config");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref args, .. }
+                if args.iter().any(|arg| arg == "pytest")
+                    && args.iter().any(|arg| arg == "backend/tests")
         ));
     }
 

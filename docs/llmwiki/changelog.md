@@ -853,3 +853,53 @@ A test command that discovers zero tests must not count as a pass, and the
 interpreter a project depends on is part of the rig, not an accident of PATH.
 The first run also showed that blanket execution approval is unsafe on a real
 machine; the harness now refuses commands that leave the copy.
+
+## 2026-11-08 — M4l: coding rig polish
+
+- `write_file` over an existing file now requires a full read. The read ledger
+  records a coverage flag: a ranged or truncated read is partial, a later
+  partial read does not clear an earlier full read, and an edit keeps the flag
+  of the read it checked. The refusal says "read the whole file before
+  overwriting it; a line range is not enough".
+- `edit_file` and `multi_edit` keep accepting any current read; their exact
+  match protects the untouched bytes.
+- The coding persona forbids installing packages, changing the interpreter or
+  running a package manager to make a check pass; a missing dependency is
+  reported. It also says a `write_file` over an existing file needs a full
+  read.
+- Keel: 111 `keel-runtime` lib tests (+4), clippy. Keelson: 40 tests, clippy;
+  the desktop backend still compiles and passes 28 tests. The live two-module
+  discount eval still passed in 19.10 s with whole-file reads.
+- Task doc: `docs/llmwiki/tasks/m4l-rig-polish.md`. ADR 0020 amended.
+
+### Why
+
+A one-line read was enough to authorize a whole-file overwrite, discarding
+lines the model never saw; the ledger now distinguishes partial from full
+reads. The real-task run also showed a model repairing a broken interpreter
+with `pip --user`; the persona now tells it to report the missing dependency
+instead of changing the host.
+
+## 2026-11-08 — M4m: monorepo project checks
+
+- `workspace_check` now finds a manifest at the workspace root, depth one or
+  depth two. `Cargo.toml` and `go.mod` target their directory
+  (`--manifest-path`, `go -C`), a `package.json` with a `scripts.test` uses
+  `npm --prefix`, and a Python test file selects its own directory for
+  `pytest` or `unittest discover -s`.
+- `python_program` and `uses_pytest` inspect the tests directory and its
+  ancestors, so a nested `backend/.venv` or `backend/pyproject.toml` is used
+  before the workspace root.
+- Root manifests still win, and the ecosystem order is still Cargo, Go,
+  Python, Node; one check per turn.
+- Keelson: 39 lib tests (+6), clippy. The exact nested commands were run in a
+  temporary tree (cargo, go, npm, pytest) and all exited 0. The live
+  two-module eval still passed in 41.37 s.
+- Task doc: `docs/llmwiki/tasks/m4m-monorepo-checks.md`.
+
+### Why
+
+A repository whose backend lives in `backend/` and frontend in `frontend/` had
+no automatic check at all unless a manifest happened to be at the root. The
+same heuristic now points at the subproject without changing the one-check
+policy or the driver.

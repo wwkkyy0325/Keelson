@@ -145,14 +145,21 @@ than sending a prompt it cannot hold. A turn that changed the workspace runs
 one project check (Cargo, Go, nested Python tests, or Node only with a
 `scripts.test`) after the turn. The Python check prefers the project's `.venv`
 and runs `pytest` when the project declares it; `unittest discover` treats a
-pytest module as zero tests and exits 0, which would be a false green.
+pytest module as zero tests and exits 0, which would be a false green. A
+manifest in a subdirectory (depth at most two) is found and the check targets
+its directory (`--manifest-path`, `go -C`, `npm --prefix`, `pytest <dir>`);
+the nearest `.venv` and pytest config win. A polyglot root still runs one
+check in Cargo, Go, Python, Node order (M4m).
 `read_file` can read a 1-based line range
 without altering its bytes; `code_search` can be case-sensitive, filtered by a
 file-name or path glob and match a regex on request; the `glob` tool finds
 files by path. The engine
-keeps a SHA-256 read ledger: `write_file` on an existing file, `edit_file` and
-`multi_edit` require a current read, and the edit tools match across a CRLF/LF
-difference without changing the file's line endings. `multi_edit` validates
+keeps a SHA-256 read ledger: `write_file` on an existing file needs a full
+read, `edit_file` and `multi_edit` need a current read, and the edit tools
+match across a CRLF/LF difference without changing the file's line endings. A
+ranged read is recorded as partial, so it cannot authorize a whole-file
+overwrite (M4l). The persona forbids installing packages or changing the
+interpreter to make a check pass; a missing dependency is reported. `multi_edit` validates
 several replacements to one file in memory and writes them as one atomic
 change. The workspace's `AGENTS.md`
 (fallback `CLAUDE.md`) is appended to the system prompt at engine open, capped

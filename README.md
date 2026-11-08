@@ -142,8 +142,9 @@ reads line ranges; `code_search` can be case-sensitive and glob-filtered;
 background shell commands are wired to the kernel registry.
 
 M4c: the coding rig is safe to write with. A per-engine read ledger makes
-`write_file` and `edit_file` require a current read, so a blind overwrite or a
-stale edit is refused instead of applied. `edit_file` matches across CRLF/LF
+`write_file` require a full read and `edit_file` a current read, so a blind
+overwrite, a partial-read overwrite or a stale edit is refused instead of
+applied. `edit_file` matches across CRLF/LF
 without changing the file's line endings; `glob` finds files by path; the
 workspace's `AGENTS.md` (fallback `CLAUDE.md`) is added to the system prompt.
 
@@ -166,6 +167,15 @@ and runs `python -m pytest -q` when the project declares pytest;
 `unittest discover` would report zero tests and pass. A copied ValveGuard
 accepted a `compare_demos.py` comparison harness; the clean run passed 23
 tests (7 new) and skipped 6 in 138.66 s.
+
+M4l: `write_file` over an existing file needs a full read; a line-range read
+records partial coverage and cannot overwrite. The persona refuses package
+installs and interpreter changes, and reports a missing dependency instead.
+
+M4m: a monorepo's subproject is checked. A manifest at depth one or two is
+found and the check targets its directory (`--manifest-path`, `go -C`,
+`npm --prefix`, `pytest <dir>`); the nearest `.venv` and pytest config are
+used.
 
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
