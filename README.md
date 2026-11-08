@@ -133,8 +133,8 @@ project's own check (Cargo, Go, Python or Node). The live demo eval repairs
 `examples/demo-workspace`, a second eval adds a discount across two modules
 in `examples/inventory-workspace`, and a larger eval crosses the modules in
 `examples/shop-workspace`. A copied GameVault core also accepted a root-level
-save-detection and backup task across two turns; one generated Windows path
-assertion needed a one-line fix.
+save-detection and backup task across two turns; with execution approved, the
+model then fixed its own one-line Windows path test.
 
 M4b: the coding rig is usable on a real repository. The output reserve is 8k
 and the working set 64k, lowered when the model window is smaller. `read_file`

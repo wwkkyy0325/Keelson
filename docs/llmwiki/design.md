@@ -164,10 +164,10 @@ check (M4h); it exposed a transcript bug where parallel tool results were
 paired by tool name, now fixed by pairing on the call id. A failed check keeps
 only its non-passing evidence (bounded tail) and the transcript shows it under
 the badge (M4i). A copied GameVault core accepted a root-level save-detection
-task and, in a second turn, the schema-v3 persistence/backup path (293 tests
-pass after a one-line Windows path fix); a green host check was not product
-acceptance, and denied calls lost their arguments, now fixed in the dispatcher
-(M4j).
+task and, in a second turn, the schema-v3 persistence/backup path; with an
+approving interaction port, a third turn found and fixed its own Windows path
+test (293 tests pass, 69.47 s). A green host check was not product acceptance,
+and denied calls lost their arguments, now fixed in the dispatcher (M4j).
 
 ## Checkpoints
 

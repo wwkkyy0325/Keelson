@@ -807,6 +807,12 @@ it.
 - All `shell` calls were denied by the eval's deferring interaction port, so
   the model could not run `cargo test` or see the assertion values; it ended
   `VerificationFailed` and did not claim a green run.
+- Turn 3: the harness gained an `ApproveExecution` port (allow once, trusted
+  copy), and the one-line test fix was reverted. The model ran `cargo test`,
+  saw the Windows path mismatch, changed the test to
+  `root.join("Game").join("Save01.rvdata2")`, ran targeted and full tests,
+  fmt and clippy; **293 passed in 69.47 s**. The host verification also
+  passed; no human edit was needed.
 - Found and fixed a Keel transcript bug: denied calls emitted
   `args_preview: None`, so a denied `shell` row showed no command. The
   dispatcher now keeps the redacted preview; a dispatch test pins it.

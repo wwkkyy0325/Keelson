@@ -11,10 +11,34 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use keel_core::CancelToken;
-use keel_runtime::DeferAllInteractionPort;
+use async_trait::async_trait;
+use keel_core::{
+    CancelToken, GrantScope, InteractionKind, InteractionPort, InteractionRequest,
+    InteractionResponse,
+};
 use keelson::engine::{Engine, ModelOverride, OpenRequest, Store};
 use keelson::rig::Rig;
+
+/// Simulates a user clicking "allow once" for an execution request. Only use
+/// this on a trusted copy; a `shell` call is not sandboxed.
+struct ApproveExecution;
+
+#[async_trait]
+impl InteractionPort for ApproveExecution {
+    async fn request(
+        &self,
+        request: InteractionRequest,
+        _cancel: &CancelToken,
+    ) -> InteractionResponse {
+        if request.kind == InteractionKind::PermissionApproval {
+            InteractionResponse::Approved {
+                scope: GrantScope::Once,
+            }
+        } else {
+            InteractionResponse::Deferred
+        }
+    }
+}
 
 #[tokio::test]
 #[ignore = "runs a live turn on KEELSON_TASK_WORKSPACE"]
@@ -54,7 +78,7 @@ async fn run_the_task() {
         workspace: workspace.clone(),
         state_dir,
         store_path,
-        interactions: Arc::new(DeferAllInteractionPort),
+        interactions: Arc::new(ApproveExecution),
         deltas: None,
         model: Some(ModelOverride {
             provider: "openai-compatible".to_owned(),

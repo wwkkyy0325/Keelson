@@ -52,6 +52,25 @@ assertions may change with the migration; do not weaken behavioral tests.
 - Six core files changed: `domain/save.rs`, `db/migrations.rs`, `db/repo.rs`,
   `db/mod.rs`, `saves/detect.rs`, `saves/service.rs`.
 
+## Turn 3 — self-verification with approved execution
+
+To test the missing execution path, the one-line human fix was reverted (the
+suite was back to 292/293), and the real-task harness was given an
+`ApproveExecution` interaction port: it answers a permission approval with
+`GrantScope::Once`, like a user clicking "allow once" on a trusted copy.
+
+Prompt: the suite has one failing test; run `cargo test`, find it, fix it
+without weakening the assertion, and report the real result.
+
+- **69.47 s**; shell calls now succeeded (`cargo test`, `cargo fmt --check`,
+  `cargo clippy --workspace`, `git log`/`git diff`).
+- The model ran the suite, read the failing assertion, and changed the test
+  to `root.join("Game").join("Save01.rvdata2")` — a platform-neutral join.
+- It ran the targeted service tests, the full suite, fmt and clippy; **293
+  passed**. The host's automatic check also passed.
+- The model fixed its own Windows path bug once it could execute; no human
+  edit was needed for this run.
+
 ## Findings
 
 1. **The rig can do a real end-to-end foreign feature.** Across two turns it
@@ -62,12 +81,12 @@ assertions may change with the migration; do not weaken behavioral tests.
    test used a mixed path separator on Windows; the production code was
    correct. A one-line fix made 293 tests pass. This is a test-authoring
    lesson, not a production defect.
-3. **Without execution, the model cannot self-verify.** `workspace_auto`
-   confirms execute; the eval's deferring interaction port cannot approve it.
-   The model could not run `cargo test` and could not see the assertion values
-   to fix its own test. A desktop user would approve the permission card; an
-   automated harness that wants self-checking needs an approving port or a
-   trusted execution policy.
+3. **Execution approval is the difference between blind and self-verifying.**
+   With the deferring port, the model could not run `cargo test` and could not
+   see the assertion values. With `ApproveExecution` (allow once), it ran the
+   suite, saw the Windows path mismatch, fixed its own test, and reached 293
+   passes in 69 s. A desktop user approves the card; the harness now simulates
+   that for a trusted copy.
 4. **Denied calls lost their arguments in the transcript.** The dispatcher's
    `reject` path emitted `ToolStarted { args_preview: None }`, so every denied
    `shell` row showed no command. Fixed in Keel: the redacted args preview is
@@ -79,15 +98,15 @@ assertions may change with the migration; do not weaken behavioral tests.
 
 ## Follow-ups
 
-- Add an approving interaction port to the real-task harness so a trusted copy
-  can run its own tests, matching a desktop user who approves the card.
 - Add a persona/test guideline: build expected paths with `Path::join`, never
   mixed-separator strings, especially in cross-platform tests.
+- Keep `ApproveExecution` manual and scoped to a trusted copy; it approves
+  every permission request, and `shell` is not sandboxed.
 - Commit the Keel denied-call fix, the harness and this task doc.
 
 ## Not in M4j
 
 - Merging the copy back into the real project; the copy is for inspection at
   `D:/workspace-new/wwkkyy0325/keelson-task-gamevault`.
-- A second model turn to fix the one-line test assertion; the point was to
-  observe what the rig does, and the human fix isolates the failure.
+- A general permission policy for unattended runs; the harness approval is a
+  test-only simulation.
