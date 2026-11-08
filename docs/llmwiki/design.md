@@ -159,7 +159,8 @@ deliberately failing Python check is not selected (M4u). A shell call can mark
 `mutates: true` to count as a workspace change; it reports no path, so every
 check is the fallback (M4v).
 `read_file` can read a 1-based line range
-without altering its bytes; `code_search` can be case-sensitive, filtered by a
+without altering its bytes, and can prefix absolute line numbers on request
+(M4w); `code_search` can be case-sensitive, filtered by a
 file-name or path glob and match a regex on request; the `glob` tool finds
 files by path. The engine
 keeps a SHA-256 read ledger: `write_file` on an existing file needs a full

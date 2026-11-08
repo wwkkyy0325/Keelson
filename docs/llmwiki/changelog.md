@@ -1067,3 +1067,21 @@ into a red one.
 A shell-only mutation skipped verification because the driver treats shell as
 invisible. Classifying programs was rejected as unreliable; an explicit hint
 closes the common case without a second test run after every test command.
+
+## 2026-11-08 — M4w: read_file line numbers
+
+- Keel `read_file` accepts `line_numbers` (default false). Numbered output is
+  `%5d | line`, absolute to the file; a ranged read keeps the absolute number.
+  The ledger still records raw bytes, and the truncation marker is not
+  numbered.
+- The persona says the prefix is not part of the file and must not appear in
+  edit text.
+- Keel: 115 lib tests, 32 tool tests (+2), clippy. Keelson: 51 lib tests,
+  polyglot eval 11.35 s, desktop 28.
+- ADR 0027; task doc `docs/llmwiki/tasks/m4w-read-line-numbers.md`.
+
+### Why
+
+A raw read gives the model the bytes but not the location; a search hit gives
+a line number in a different shape. An opt-in numbered read lets the model
+name a location precisely without changing the default or the edit contract.

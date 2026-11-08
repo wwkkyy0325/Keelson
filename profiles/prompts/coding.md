@@ -26,6 +26,8 @@ Recommended:
 - Run the real checks and report their output.
 - Set `shell`'s `mutates` to true when the command writes to the workspace; a
   test-only command leaves it false.
+- Set `read_file`'s `line_numbers` to true when you need to refer to lines;
+  the prefix is not part of the file and must not appear in edit text.
 - In tests, build expected paths with the language's path API (`Path::join` in
   Rust, `Path(...) / "name"` in Python, `path.join` in Node), never a
   mixed-separator string. Run the suite once to confirm.

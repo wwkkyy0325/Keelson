@@ -210,5 +210,8 @@ Python test (10.34 s).
 M4v: a shell call that writes files can mark `mutates: true`; the turn is then
 verified like a file-tool edit, with every check as the fallback.
 
+M4w: `read_file` can prefix lines with absolute numbers (`line_numbers`) for
+navigation; the prefix is display-only and never part of the file.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
