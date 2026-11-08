@@ -903,3 +903,22 @@ A repository whose backend lives in `backend/` and frontend in `frontend/` had
 no automatic check at all unless a manifest happened to be at the root. The
 same heuristic now points at the subproject without changing the one-check
 policy or the driver.
+
+## 2026-11-08 — M4n: every ecosystem gets a check
+
+- `workspace_check` became `workspace_checks`: one required item per detected
+  ecosystem, in Cargo, Go, Python, Node order. The engine passes the whole
+  list to `with_acceptance_after_changes`, so a failing frontend check is
+  visible even when the turn edited Rust.
+- Each item keeps the M4m project targeting: a nested manifest, a project
+  venv, and pytest when declared.
+- Keelson: 41 lib tests (+2), clippy. One test builds a Cargo + Node
+  workspace and runs the real `AcceptanceVerifier`; it reports two passing
+  evidence items in 1.48 s.
+- Task doc: `docs/llmwiki/tasks/m4n-multi-ecosystem-checks.md`.
+
+### Why
+
+M4m found a subproject but still stopped at the first ecosystem, so a
+repository with a Rust core and a Node frontend never checked the frontend.
+The driver already accepts a list; the host was constructing a single item.

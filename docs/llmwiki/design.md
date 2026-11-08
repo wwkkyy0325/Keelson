@@ -148,8 +148,8 @@ and runs `pytest` when the project declares it; `unittest discover` treats a
 pytest module as zero tests and exits 0, which would be a false green. A
 manifest in a subdirectory (depth at most two) is found and the check targets
 its directory (`--manifest-path`, `go -C`, `npm --prefix`, `pytest <dir>`);
-the nearest `.venv` and pytest config win. A polyglot root still runs one
-check in Cargo, Go, Python, Node order (M4m).
+the nearest `.venv` and pytest config win. A polyglot root runs one check per
+detected ecosystem, in Cargo, Go, Python, Node order (M4n).
 `read_file` can read a 1-based line range
 without altering its bytes; `code_search` can be case-sensitive, filtered by a
 file-name or path glob and match a regex on request; the `glob` tool finds

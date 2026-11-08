@@ -15,7 +15,8 @@ subdirectory, not only a repository root.
 - `python_program` and `uses_pytest` walk the tests directory and its
   ancestors, so `backend/.venv` and `backend/pyproject.toml` are found.
 - One ecosystem still wins in the order Cargo, Go, Python, Node; a polyglot
-  repo with a root Cargo manifest still runs only Cargo.
+  repo with a root Cargo manifest still runs only Cargo. M4n later runs every
+  detected ecosystem.
 
 ## Verification
 

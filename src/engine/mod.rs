@@ -359,9 +359,10 @@ impl Engine {
         )
         .with_outputs_dir(outputs_dir);
         // A turn that edited the workspace is checked by the project's own
-        // command. A conversational turn skips it.
-        if let Some(check) = workspace_check(&workspace) {
-            driver = driver.with_acceptance_after_changes(vec![check], 2);
+        // commands. A conversational turn skips them.
+        let checks = workspace_checks(&workspace);
+        if !checks.is_empty() {
+            driver = driver.with_acceptance_after_changes(checks, 2);
         }
         if let Some(snapshot) = restored {
             driver = driver.with_session(Session::restore(snapshot)?);
@@ -660,26 +661,32 @@ fn project_instructions(workspace: &Path) -> Option<String> {
     None
 }
 
-/// The first supported project check. An unknown ecosystem stays unverified
-/// instead of guessing a command. A manifest may sit in a subdirectory, so a
-/// monorepo gets a check for the first project found.
-fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
+/// Every supported project check. A polyglot workspace runs one check per
+/// detected ecosystem, in Cargo, Go, Python, Node order. An unknown ecosystem
+/// stays unverified instead of guessing a command.
+fn workspace_checks(workspace: &Path) -> Vec<AcceptanceItem> {
+    let mut checks = Vec::new();
     if let Some(project) = project_directories(workspace, "Cargo.toml")
         .into_iter()
         .next()
     {
-        return Some(cargo_check(&project));
+        checks.push(cargo_check(&project));
     }
     if let Some(project) = project_directories(workspace, "go.mod").into_iter().next() {
-        return Some(go_check(&project));
+        checks.push(go_check(&project));
     }
     if let Some(tests) = find_python_tests(workspace) {
-        return Some(python_check(workspace, &tests));
+        checks.push(python_check(workspace, &tests));
     }
     if let Some(project) = node_project(workspace) {
-        return Some(node_check(&project));
+        checks.push(node_check(&project));
     }
-    None
+    checks
+}
+
+#[cfg(test)]
+fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
+    workspace_checks(workspace).into_iter().next()
 }
 
 /// Project directories (relative to the workspace) that contain `file_name`,
@@ -1845,6 +1852,62 @@ system = "prompt.md"
                 if args.iter().any(|arg| arg == "pytest")
                     && args.iter().any(|arg| arg == "backend/tests")
         ));
+    }
+
+    #[test]
+    fn a_polyglot_workspace_gets_every_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .expect("a cargo manifest");
+        std::fs::write(dir.path().join("test_stats.py"), "pass\n").expect("a test file");
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"test": "node test.js"}}"#,
+        )
+        .expect("a node manifest");
+
+        let checks = workspace_checks(dir.path());
+        let programs: Vec<&str> = checks
+            .iter()
+            .map(|check| match &check.verify {
+                VerifySpec::Test { program, .. } => program.as_str(),
+                _ => panic!("unexpected check"),
+            })
+            .collect();
+        let python = if cfg!(windows) { "python" } else { "python3" };
+
+        assert_eq!(programs, ["cargo", python, "npm"]);
+        assert!(checks.iter().all(|check| check.required));
+    }
+
+    #[tokio::test]
+    async fn a_polyglot_workspace_runs_every_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"polyglot\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("a cargo manifest");
+        std::fs::create_dir_all(dir.path().join("src")).expect("a source directory");
+        std::fs::write(
+            dir.path().join("src/lib.rs"),
+            "#[test]\nfn ok() {\n    assert_eq!(2 + 2, 4);\n}\n",
+        )
+        .expect("a test");
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"test": "node test.js"}}"#,
+        )
+        .expect("a node manifest");
+        std::fs::write(dir.path().join("test.js"), "console.log('ok');\n").expect("a node test");
+
+        let checks = workspace_checks(dir.path());
+        let report = keel_runtime::AcceptanceVerifier::new(dir.path())
+            .verify(&checks)
+            .await;
+
+        assert_eq!(report.evidence.len(), 2, "{report:?}");
+        assert!(report.passed(), "{report:?}");
     }
 
     #[test]
