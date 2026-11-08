@@ -200,5 +200,8 @@ M4s: `code_search` can show up to five lines around a match. The match keeps
 `path:line:`, neighbors use `path:line-`, and blocks are separated by `--`;
 the result and output caps are unchanged.
 
+M4t: overlapping search context merges into one block, so a line prints once,
+and the output cap reports itself instead of claiming the result limit.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

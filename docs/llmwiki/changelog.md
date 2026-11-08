@@ -1013,3 +1013,20 @@ directories, so one more level is cheap.
 A hit line alone often lacks the signature or branch that makes it useful, so
 the model issued a `read_file` per hit. Context turns one search into the read
 the model actually needed, without lifting the output caps.
+
+## 2026-11-08 — M4t: search output polish
+
+- `render_context` merges overlapping or adjacent context ranges per file, so
+  a line prints once; a line that is both context and a match keeps the match
+  marker. Disjoint ranges and different files stay separated by `--`.
+- A byte-cap cut now appends "output truncated at the byte limit" instead of
+  the result-limit message.
+- Keel: 115 lib tests, 30 tool tests (+2), clippy. Keelson: 51 lib tests, live
+  two-module eval passed in 12.23 s; desktop tests pass (28).
+- Task doc: `docs/llmwiki/tasks/m4t-search-output.md`.
+
+### Why
+
+M4s printed a block per match, so nearby matches repeated their context lines.
+The byte cap also reused the result-limit message, which told the model the
+wrong limit had been reached.
