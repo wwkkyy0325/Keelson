@@ -1049,3 +1049,21 @@ M4m–M4t were covered piecewise: the selector, the project walker, the search
 output. This fixture exercises the whole chain with a live model in a
 polyglot workspace, where a selector mistake would turn a green frontend turn
 into a red one.
+
+## 2026-11-08 — M4v: shell mutation hint
+
+- Keel's shell schema accepts `mutates` (boolean, default false). A successful
+  shell call with `mutates: true` sets `workspace_changed` and reports no
+  path, so the selector falls back to every check. The execution path ignores
+  the flag.
+- The coding persona tells the model to set it for formatters, generators,
+  `git checkout` and scripts that edit files.
+- Keel: 115 lib tests, 42 turn tests (+2), clippy. Keelson: 51 lib tests,
+  polyglot eval 9.57 s, desktop 28.
+- ADR 0026; task doc `docs/llmwiki/tasks/m4v-shell-mutation-hint.md`.
+
+### Why
+
+A shell-only mutation skipped verification because the driver treats shell as
+invisible. Classifying programs was rejected as unreliable; an explicit hint
+closes the common case without a second test run after every test command.

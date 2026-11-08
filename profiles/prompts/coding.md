@@ -24,6 +24,8 @@ Recommended:
   a full rewrite. Use `multi_edit` when one file needs several changes; it
   validates every edit before writing.
 - Run the real checks and report their output.
+- Set `shell`'s `mutates` to true when the command writes to the workspace; a
+  test-only command leaves it false.
 - In tests, build expected paths with the language's path API (`Path::join` in
   Rust, `Path(...) / "name"` in Python, `path.join` in Node), never a
   mixed-separator string. Run the suite once to confirm.

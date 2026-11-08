@@ -207,5 +207,8 @@ M4u: the polyglot fixture proves the selector end to end. A live turn that
 fixed only `frontend/` ran the Node check and skipped the fixture's failing
 Python test (10.34 s).
 
+M4v: a shell call that writes files can mark `mutates: true`; the turn is then
+verified like a file-tool edit, with every check as the fallback.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
