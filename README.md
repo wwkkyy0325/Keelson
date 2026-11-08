@@ -181,5 +181,10 @@ M4n: a polyglot workspace runs one check per detected ecosystem, in Cargo,
 Go, Python, Node order. Every check is required, so a failing frontend test is
 visible even when the turn edited Rust.
 
+M4o: only the projects a turn touched are checked. The kernel records the
+paths a mutating call changed; the host picks the deepest project for each and
+falls back to every check when a path belongs to none. `multi_edit` now counts
+as a workspace change.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

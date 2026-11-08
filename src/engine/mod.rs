@@ -19,13 +19,13 @@ use keel_core::{
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, BackgroundTasks, CodeSearchTool, ContextBuilder, DeleteFileTool,
-    EchoTool, EditFileTool, EventLog, EventRecord, GlobTool, HistoryStage, InteractionBroker,
-    InterjectionPush, KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks,
-    LocalTrashStore, MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, MultiEditTool,
-    PermissionEngine, ReadFileTool, ReadLedger, RestoreFileTool, RootScope, RuntimeConfig,
-    ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver, TurnDriverConfig,
-    TurnOutcome, WriteFileTool,
+    load_profile, validate_config, AcceptanceSelector, BackgroundTasks, CodeSearchTool,
+    ContextBuilder, DeleteFileTool, EchoTool, EditFileTool, EventLog, EventRecord, GlobTool,
+    HistoryStage, InteractionBroker, InterjectionPush, KernelOptions, LatestStage, ListDirTool,
+    ListTrashTool, LocalBackgroundTasks, LocalTrashStore, MakeDirTool, MemoryStage, MockModel,
+    MockStep, MoveFileTool, MultiEditTool, PermissionEngine, ReadFileTool, ReadLedger,
+    RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool,
+    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -362,7 +362,10 @@ impl Engine {
         // commands. A conversational turn skips them.
         let checks = workspace_checks(&workspace);
         if !checks.is_empty() {
-            driver = driver.with_acceptance_after_changes(checks, 2);
+            let workspace_root = workspace.clone();
+            let selector: AcceptanceSelector =
+                Arc::new(move |paths: &[PathBuf]| selected_checks(&checks, &workspace_root, paths));
+            driver = driver.with_acceptance_selector(selector, 2);
         }
         if let Some(snapshot) = restored {
             driver = driver.with_session(Session::restore(snapshot)?);
@@ -661,32 +664,96 @@ fn project_instructions(workspace: &Path) -> Option<String> {
     None
 }
 
+/// One project check and the directory it covers. A changed path selects the
+/// check of the deepest project that contains it.
+struct ProjectCheck {
+    project: PathBuf,
+    item: AcceptanceItem,
+}
+
 /// Every supported project check. A polyglot workspace runs one check per
 /// detected ecosystem, in Cargo, Go, Python, Node order. An unknown ecosystem
 /// stays unverified instead of guessing a command.
-fn workspace_checks(workspace: &Path) -> Vec<AcceptanceItem> {
+fn workspace_checks(workspace: &Path) -> Vec<ProjectCheck> {
     let mut checks = Vec::new();
     if let Some(project) = project_directories(workspace, "Cargo.toml")
         .into_iter()
         .next()
     {
-        checks.push(cargo_check(&project));
+        checks.push(ProjectCheck {
+            item: cargo_check(&project),
+            project,
+        });
     }
     if let Some(project) = project_directories(workspace, "go.mod").into_iter().next() {
-        checks.push(go_check(&project));
+        checks.push(ProjectCheck {
+            item: go_check(&project),
+            project,
+        });
     }
     if let Some(tests) = find_python_tests(workspace) {
-        checks.push(python_check(workspace, &tests));
+        checks.push(ProjectCheck {
+            project: python_project(workspace, &tests),
+            item: python_check(workspace, &tests),
+        });
     }
     if let Some(project) = node_project(workspace) {
-        checks.push(node_check(&project));
+        checks.push(ProjectCheck {
+            item: node_check(&project),
+            project,
+        });
     }
     checks
 }
 
+/// Picks the checks for the deepest project that contains each changed path.
+/// A path outside every project, such as a shell-only change, runs them all.
+fn selected_checks(
+    checks: &[ProjectCheck],
+    workspace: &Path,
+    paths: &[PathBuf],
+) -> Vec<AcceptanceItem> {
+    let mut selected: Vec<AcceptanceItem> = Vec::new();
+    for path in paths {
+        let absolute = if path.is_absolute() {
+            path.clone()
+        } else {
+            workspace.join(path)
+        };
+        let mut best = 0usize;
+        let mut matched: Vec<&ProjectCheck> = Vec::new();
+        for check in checks {
+            let project = workspace.join(&check.project);
+            if !absolute.starts_with(&project) {
+                continue;
+            }
+            let depth = project.components().count();
+            if depth > best {
+                best = depth;
+                matched.clear();
+                matched.push(check);
+            } else if depth == best {
+                matched.push(check);
+            }
+        }
+        for check in matched {
+            if !selected.contains(&check.item) {
+                selected.push(check.item.clone());
+            }
+        }
+    }
+    if selected.is_empty() {
+        return checks.iter().map(|check| check.item.clone()).collect();
+    }
+    selected
+}
+
 #[cfg(test)]
 fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
-    workspace_checks(workspace).into_iter().next()
+    workspace_checks(workspace)
+        .into_iter()
+        .next()
+        .map(|check| check.item)
 }
 
 /// Project directories (relative to the workspace) that contain `file_name`,
@@ -832,6 +899,37 @@ fn find_python_tests(workspace: &Path) -> Option<PathBuf> {
         .into_iter()
         .next()
         .map(|file| file.parent().map(Path::to_path_buf).unwrap_or_default())
+}
+
+/// The directory a Python check belongs to. The nearest ancestor with a
+/// project manifest or a virtual environment wins; otherwise the parent of a
+/// `tests` directory.
+fn python_project(workspace: &Path, tests: &Path) -> PathBuf {
+    for base in ancestors(workspace, tests) {
+        let manifest = [
+            "pyproject.toml",
+            "setup.py",
+            "setup.cfg",
+            "pytest.ini",
+            "tox.ini",
+        ]
+        .iter()
+        .any(|name| base.join(name).is_file());
+        let venv = [".venv", "venv"]
+            .iter()
+            .any(|name| base.join(name).is_dir());
+        if manifest || venv {
+            return base
+                .strip_prefix(workspace)
+                .unwrap_or(Path::new(""))
+                .to_path_buf();
+        }
+    }
+    if tests.file_name().and_then(|name| name.to_str()) == Some("tests") {
+        tests.parent().map(Path::to_path_buf).unwrap_or_default()
+    } else {
+        tests.to_path_buf()
+    }
 }
 
 fn python_check(workspace: &Path, tests: &Path) -> AcceptanceItem {
@@ -1135,6 +1233,16 @@ mod tests {
     use super::*;
     use keel_core::TurnState;
     use keel_runtime::DeferAllInteractionPort;
+
+    fn check_programs(items: &[AcceptanceItem]) -> Vec<&str> {
+        items
+            .iter()
+            .map(|item| match &item.verify {
+                VerifySpec::Test { program, .. } => program.as_str(),
+                _ => panic!("unexpected check"),
+            })
+            .collect()
+    }
 
     const PROFILE: &str = r#"
 [profile]
@@ -1869,7 +1977,7 @@ system = "prompt.md"
         let checks = workspace_checks(dir.path());
         let programs: Vec<&str> = checks
             .iter()
-            .map(|check| match &check.verify {
+            .map(|check| match &check.item.verify {
                 VerifySpec::Test { program, .. } => program.as_str(),
                 _ => panic!("unexpected check"),
             })
@@ -1877,7 +1985,7 @@ system = "prompt.md"
         let python = if cfg!(windows) { "python" } else { "python3" };
 
         assert_eq!(programs, ["cargo", python, "npm"]);
-        assert!(checks.iter().all(|check| check.required));
+        assert!(checks.iter().all(|check| check.item.required));
     }
 
     #[tokio::test]
@@ -1901,13 +2009,94 @@ system = "prompt.md"
         .expect("a node manifest");
         std::fs::write(dir.path().join("test.js"), "console.log('ok');\n").expect("a node test");
 
-        let checks = workspace_checks(dir.path());
+        let items: Vec<AcceptanceItem> = workspace_checks(dir.path())
+            .into_iter()
+            .map(|check| check.item)
+            .collect();
         let report = keel_runtime::AcceptanceVerifier::new(dir.path())
-            .verify(&checks)
+            .verify(&items)
             .await;
 
         assert_eq!(report.evidence.len(), 2, "{report:?}");
         assert!(report.passed(), "{report:?}");
+    }
+
+    #[test]
+    fn a_changed_file_selects_its_project() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("backend")).expect("a project directory");
+        std::fs::write(
+            dir.path().join("backend/Cargo.toml"),
+            "[package]\nname = \"x\"\n",
+        )
+        .expect("a cargo manifest");
+        std::fs::create_dir_all(dir.path().join("frontend")).expect("a project directory");
+        std::fs::write(
+            dir.path().join("frontend/package.json"),
+            r#"{"scripts": {"test": "node test.js"}}"#,
+        )
+        .expect("a node manifest");
+        std::fs::write(dir.path().join("README.md"), "root\n").expect("a readme");
+        let checks = workspace_checks(dir.path());
+
+        let backend = selected_checks(&checks, dir.path(), &[PathBuf::from("backend/src/lib.rs")]);
+        assert_eq!(check_programs(&backend), ["cargo"]);
+
+        let frontend =
+            selected_checks(&checks, dir.path(), &[PathBuf::from("frontend/src/app.ts")]);
+        assert_eq!(check_programs(&frontend), ["npm"]);
+
+        let root = selected_checks(&checks, dir.path(), &[PathBuf::from("README.md")]);
+        assert_eq!(check_programs(&root), ["cargo", "npm"]);
+    }
+
+    #[test]
+    fn a_root_project_yields_to_a_nested_one() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"root\"\n",
+        )
+        .expect("a cargo manifest");
+        std::fs::create_dir_all(dir.path().join("frontend")).expect("a project directory");
+        std::fs::write(
+            dir.path().join("frontend/package.json"),
+            r#"{"scripts": {"test": "node test.js"}}"#,
+        )
+        .expect("a node manifest");
+        let checks = workspace_checks(dir.path());
+
+        let frontend =
+            selected_checks(&checks, dir.path(), &[PathBuf::from("frontend/src/app.ts")]);
+        assert_eq!(check_programs(&frontend), ["npm"]);
+
+        let rust = selected_checks(&checks, dir.path(), &[PathBuf::from("src/lib.rs")]);
+        assert_eq!(check_programs(&rust), ["cargo"]);
+
+        let root = selected_checks(&checks, dir.path(), &[PathBuf::from("README.md")]);
+        assert_eq!(check_programs(&root), ["cargo"]);
+    }
+
+    #[test]
+    fn a_nested_python_change_selects_the_python_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("backend/tests")).expect("a test directory");
+        std::fs::write(
+            dir.path().join("backend/tests/test_stats.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(
+            dir.path().join("backend/pyproject.toml"),
+            "[tool.pytest.ini_options]\n",
+        )
+        .expect("a pytest config");
+        let checks = workspace_checks(dir.path());
+
+        let selected = selected_checks(&checks, dir.path(), &[PathBuf::from("backend/app.py")]);
+
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        assert_eq!(check_programs(&selected), [python]);
     }
 
     #[test]

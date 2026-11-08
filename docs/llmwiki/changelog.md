@@ -922,3 +922,26 @@ policy or the driver.
 M4m found a subproject but still stopped at the first ecosystem, so a
 repository with a Rust core and a Node frontend never checked the frontend.
 The driver already accepts a list; the host was constructing a single item.
+
+## 2026-11-08 — M4o: checks selected by changed paths
+
+- Keel `TurnDriver` gained `with_acceptance_selector`: the host supplies a
+  closure over the paths a turn changed and returns the acceptance items that
+  apply. The driver records `path` for the file tools and `from`/`to` for
+  `move_file`; an empty selection finishes with a passing report.
+- `multi_edit` was missing from `WORKSPACE_MUTATING_TOOLS`, so a turn that
+  only used it skipped the after-changes check. Fixed; a unit test pins it.
+- Keelson pairs each check with its project directory and selects the deepest
+  project for each changed path, falling back to every check when a path
+  belongs to none. `python_project` maps a tests directory to the nearest
+  manifest or virtual environment.
+- Keel: 115 lib tests (+4), full workspace suite, clippy. Keelson: 44 lib
+  tests (+3), clippy. Desktop: 28.
+- ADR 0024 in Keel; task doc `docs/llmwiki/tasks/m4o-check-selection.md`.
+
+### Why
+
+M4n made every check required, so a Rust-only turn in a Rust + Node repository
+could fail on a pre-existing frontend problem. The driver already knew a turn
+changed the workspace; recording which paths changed lets the host run the
+checks that belong to them without a second diff.
