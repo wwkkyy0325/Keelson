@@ -8,6 +8,18 @@ export type ToolLine = {
   output: string | null;
 };
 
+export type VerificationEvidence = {
+  itemId: string;
+  verifier: string;
+  outcome: string;
+  detail: string;
+};
+
+export type Verification = {
+  passed: boolean;
+  evidence: VerificationEvidence[];
+};
+
 export type Turn = {
   seq: number;
   input: string;
@@ -16,6 +28,7 @@ export type Turn = {
   error: string | null;
   durationMs: number;
   verificationPassed: boolean | null;
+  verification: Verification | null;
   tools: ToolLine[];
 };
 

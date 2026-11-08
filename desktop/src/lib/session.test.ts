@@ -11,6 +11,7 @@ function turn(seq: number, input = `in ${seq}`, answer = `out ${seq}`): Turn {
     error: null,
     durationMs: 1,
     verificationPassed: null,
+    verification: null,
     tools: [],
   };
 }
@@ -213,6 +214,34 @@ describe("session reducer", () => {
     });
 
     expect(state.turns[0].verificationPassed).toBe(true);
+  });
+
+  it("carries the verification evidence on a failed turn", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 1,
+      input: "fix it",
+    });
+    state = reduce(state, {
+      type: "turn-finished",
+      turn: {
+        ...turn(1, "fix it"),
+        verificationPassed: false,
+        verification: {
+          passed: false,
+          evidence: [
+            {
+              itemId: "workspace-tests",
+              verifier: "test",
+              outcome: "failed",
+              detail: "FAILED (failures=1)",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(state.turns[0].verification?.evidence[0].detail).toContain("FAILED");
   });
 
   it("carries the archived flag through a row update", () => {

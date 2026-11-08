@@ -47,6 +47,26 @@ pub struct ToolLine {
     pub output: Option<String>,
 }
 
+/// One acceptance item that did not pass, kept for the transcript.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredEvidence {
+    pub item_id: String,
+    pub verifier: String,
+    pub outcome: String,
+    pub detail: String,
+}
+
+/// The acceptance result of a turn. Only non-passing evidence is kept, so a
+/// normal turn does not grow the session with test output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredVerification {
+    pub passed: bool,
+    #[serde(default)]
+    pub evidence: Vec<StoredEvidence>,
+}
+
 /// One finished turn as the session file keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTurn {
@@ -59,6 +79,9 @@ pub struct StoredTurn {
     /// Acceptance result when the host ran a checklist for this turn.
     #[serde(default)]
     pub verification_passed: Option<bool>,
+    /// Why the check did not pass. Absent in older sessions.
+    #[serde(default)]
+    pub verification: Option<StoredVerification>,
     /// Live tool rows. Absent in sessions written before the field existed.
     #[serde(default)]
     pub tools: Vec<ToolLine>,
@@ -154,6 +177,7 @@ mod tests {
                 error: None,
                 duration_ms: 3,
                 verification_passed: None,
+                verification: None,
                 tools: Vec::new(),
                 events: vec![StoredEvent {
                     name: "turn_started".to_owned(),

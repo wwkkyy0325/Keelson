@@ -71,7 +71,9 @@ workspace info.
 
 The window shows the conversation, streams the answer, renders tool lines
 after the turn, prompts for permissions and loads older turns by a stable turn
-cursor. It is a normal window; floating, always-on-top and the tray are next.
+cursor. A failed automatic check keeps the failing output and shows it under
+the turn. It is a normal window; floating, always-on-top and the tray are
+next.
 
 ## CLI diagnostics
 
@@ -130,7 +132,9 @@ search-replace tool in Keel; a turn that changes the workspace runs the
 project's own check (Cargo, Go, Python or Node). The live demo eval repairs
 `examples/demo-workspace`, a second eval adds a discount across two modules
 in `examples/inventory-workspace`, and a larger eval crosses the modules in
-`examples/shop-workspace`.
+`examples/shop-workspace`. A copied GameVault core also accepted a root-level
+save-detection and backup task across two turns; one generated Windows path
+assertion needed a one-line fix.
 
 M4b: the coding rig is usable on a real repository. The output reserve is 8k
 and the working set 64k, lowered when the model window is smaller. `read_file`
@@ -153,6 +157,9 @@ the default, with the same file, depth, result and permission limits.
 M4f: a turn can be undone. The desktop snapshots the workspace in a shadow
 git repository before and after each turn; `撤销本轮` restores the files the
 turn changed, including creates and deletes, and keeps the transcript.
+
+M4i: a failed automatic check keeps only the non-passing evidence, with the
+tail of the output, and shows it under the turn's verification badge.
 
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

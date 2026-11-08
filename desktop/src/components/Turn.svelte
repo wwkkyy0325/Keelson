@@ -3,6 +3,8 @@
   import type { Turn } from "../lib/protocol";
 
   let { turn }: { turn: Turn } = $props();
+
+  let passed = $derived(turn.verification?.passed ?? turn.verificationPassed);
 </script>
 
 <article class="turn">
@@ -16,15 +18,24 @@
   {#if turn.error}
     <div class="error">{turn.error}</div>
   {/if}
-  {#if turn.verificationPassed !== null}
-    <div class="verification" class:passed={turn.verificationPassed}>
-      <span>{turn.verificationPassed ? "✓" : "✗"}</span>
+  {#if passed !== null}
+    <div class="verification" class:passed={passed}>
+      <span>{passed ? "✓" : "✗"}</span>
       <span>
-        {turn.verificationPassed
-          ? $t("app.verified")
-          : $t("app.verificationFailed")}
+        {passed ? $t("app.verified") : $t("app.verificationFailed")}
       </span>
     </div>
+    {#if turn.verification?.evidence.length}
+      <details class="verification-detail">
+        <summary>{$t("app.verificationEvidence")}</summary>
+        {#each turn.verification.evidence as evidence}
+          <div class="verification-item">
+            <span class="dim">{evidence.itemId} · {evidence.outcome}</span>
+            <pre>{evidence.detail}</pre>
+          </div>
+        {/each}
+      </details>
+    {/if}
   {/if}
   {#if turn.tools.length > 0}
     <div class="tools">

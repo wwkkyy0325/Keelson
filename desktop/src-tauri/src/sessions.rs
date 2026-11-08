@@ -473,6 +473,7 @@ mod tests {
                     error: None,
                     duration_ms: 1,
                     verification_passed: None,
+                    verification: None,
                     tools: Vec::new(),
                     events: Vec::new(),
                 })

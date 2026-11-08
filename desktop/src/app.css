@@ -1271,6 +1271,32 @@ header .title {
   color: var(--ok);
 }
 
+.verification-detail {
+  margin-top: 0.35rem;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.verification-detail summary {
+  cursor: pointer;
+}
+
+.verification-item {
+  margin-top: 0.35rem;
+}
+
+.verification-detail pre {
+  margin: 0.25rem 0 0;
+  max-height: 18rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+
 .tools {
   display: flex;
   flex-direction: column;

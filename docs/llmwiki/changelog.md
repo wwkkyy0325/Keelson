@@ -765,3 +765,57 @@ the stored trace also exposed a real transcript bug that a pass/fail
 assertion would not catch: the tool names were right, but the evidence rows
 were crossed. The evals are manual and non-deterministic; the first failure
 and the second pass are both recorded.
+
+## 2026-11-08 — M4i: show why verification failed
+
+- `StoredTurn.verification` keeps a bounded `StoredVerification`: `passed`
+  plus non-passing evidence only, at most eight items, each detail's tail
+  capped at 4000 characters. `verification_passed` remains for old sessions.
+- `TurnView` carries the field; `Turn.svelte` shows the existing badge and,
+  when there is evidence, a `查看失败输出` disclosure with the item id,
+  outcome and output. A passing turn stores no output.
+- Root: 29 tests (+1 tail/filter test) + 3 ignored live evals, clippy.
+  Frontend: 17 tests (+1 evidence reducer test), `svelte-check` 0/0, build.
+  Desktop backend: 28 tests, clippy.
+- The first M4h attempt failed verification and the UI could not say why;
+  this closes that gap. Test failures live at the end of stderr, so the tail
+  is kept instead of the head.
+
+### Why
+
+A failure badge without evidence turns a real test failure into an opaque
+state. The model already receives the report; the user should see the same
+failing output without opening the workspace or asking the model to repeat
+it.
+
+## 2026-11-08 — M4j: a real task in a copied GameVault core
+
+- Ran the coding rig on GameVault's documented limitation: root-level save
+  files (VX Ace `.rvdata2`, Tyrano `.sav`) are not detected. The copy is
+  `D:/workspace-new/wwkkyy0325/keelson-task-gamevault` (core crate only); the
+  real project was read, never written.
+- Turn 1: 182.65 s; the model added `SaveLayout.save_file` plus root-level
+  detection and four tests. The copy had 286 passing tests (282 baseline + 4),
+  existing tests unchanged, directory behavior unchanged.
+- Turn 2: 261.85 s; the model added `SaveProfile.save_file_relative`, the
+  schema-v3 migration, repo/service/backup wiring and end-to-end tests. The
+  host check ran 293 tests: 292 passed, 1 failed.
+- The only failure was the model's own new Windows test: it expected
+  `root.join("Game/Save01.rvdata2")`, mixing the separator, while the
+  production path used `\`. A one-line human fix
+  (`variant_dir.join("Save01.rvdata2")`) gives **293 passed, 0 failed**.
+- All `shell` calls were denied by the eval's deferring interaction port, so
+  the model could not run `cargo test` or see the assertion values; it ended
+  `VerificationFailed` and did not claim a green run.
+- Found and fixed a Keel transcript bug: denied calls emitted
+  `args_preview: None`, so a denied `shell` row showed no command. The
+  dispatcher now keeps the redacted preview; a dispatch test pins it.
+- Task doc: `docs/llmwiki/tasks/m4j-real-task-gamevault.md`.
+
+### Why
+
+This is the first foreign-codebase task run in a copy. Across two turns the
+rig added detection, a schema migration, persistence, file backup/restore and
+tests in a real Rust project. It also showed that a green host check is not
+product acceptance, that a platform-specific test assertion can be the only
+failure, and that an unattended turn cannot self-verify without execution.

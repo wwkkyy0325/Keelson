@@ -161,7 +161,13 @@ in `examples/inventory-workspace`, and a larger shop task in
 `write_file` and `shell` and left the visible tests unchanged (M4g). The shop
 run used regex `code_search` and `multi_edit` and also passed the automatic
 check (M4h); it exposed a transcript bug where parallel tool results were
-paired by tool name, now fixed by pairing on the call id.
+paired by tool name, now fixed by pairing on the call id. A failed check keeps
+only its non-passing evidence (bounded tail) and the transcript shows it under
+the badge (M4i). A copied GameVault core accepted a root-level save-detection
+task and, in a second turn, the schema-v3 persistence/backup path (293 tests
+pass after a one-line Windows path fix); a green host check was not product
+acceptance, and denied calls lost their arguments, now fixed in the dispatcher
+(M4j).
 
 ## Checkpoints
 

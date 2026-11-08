@@ -12,9 +12,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
-    AcceptanceItem, AccessKind, ArgValue, CancelToken, Event, InteractionPort, KernelError,
-    ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList,
-    ToolArgs, ToolCallId, VerifySpec,
+    AcceptanceItem, AccessKind, ArgValue, CancelToken, Event, EvidenceOutcome, InteractionPort,
+    KernelError, ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session,
+    TodoList, ToolArgs, ToolCallId, VerificationReport, VerifySpec,
 };
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
@@ -33,7 +33,9 @@ use tokio::sync::mpsc;
 
 use crate::rig::{self, Rig};
 
-pub use store::{Store, StoredEvent, StoredSession, StoredTurn, ToolLine};
+pub use store::{
+    Store, StoredEvent, StoredEvidence, StoredSession, StoredTurn, StoredVerification, ToolLine,
+};
 
 /// Everything opening a session needs. A host supplies its own interaction
 /// port and, when it wants streamed text, a channel for deltas.
@@ -74,6 +76,8 @@ pub struct TurnView {
     pub error: Option<String>,
     pub duration_ms: u64,
     pub verification_passed: Option<bool>,
+    #[serde(default)]
+    pub verification: Option<StoredVerification>,
     pub tools: Vec<ToolLine>,
 }
 
@@ -87,6 +91,7 @@ impl From<&StoredTurn> for TurnView {
             error: turn.error.clone(),
             duration_ms: turn.duration_ms,
             verification_passed: turn.verification_passed,
+            verification: turn.verification.clone(),
             tools: turn.tools.clone(),
         }
     }
@@ -419,6 +424,7 @@ impl Engine {
             error,
             duration_ms: outcome.duration_ms,
             verification_passed: outcome.verification.as_ref().map(|report| report.passed()),
+            verification: outcome.verification.as_ref().map(stored_verification),
             tools,
             events: stored_events,
         });
@@ -582,8 +588,44 @@ fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
     lines
 }
 
-/// The first supported project check. An unknown ecosystem stays unverified
-/// instead of guessing a command.
+/// Keeps only the evidence a reader needs when a check did not pass, with the
+/// tail of the output (test failures live at the end).
+const MAX_VERIFICATION_DETAIL_CHARS: usize = 4000;
+
+fn stored_verification(report: &VerificationReport) -> StoredVerification {
+    let evidence = report
+        .evidence
+        .iter()
+        .filter(|item| item.outcome != EvidenceOutcome::Passed)
+        .take(8)
+        .map(|item| StoredEvidence {
+            item_id: item.item_id.clone(),
+            verifier: item.verifier.clone(),
+            outcome: match item.outcome {
+                EvidenceOutcome::Passed => "passed",
+                EvidenceOutcome::Failed => "failed",
+                EvidenceOutcome::Unverified => "unverified",
+                EvidenceOutcome::Deferred => "deferred",
+            }
+            .to_owned(),
+            detail: tail_chars(&item.detail, MAX_VERIFICATION_DETAIL_CHARS),
+        })
+        .collect();
+    StoredVerification {
+        passed: report.passed(),
+        evidence,
+    }
+}
+
+fn tail_chars(text: &str, limit: usize) -> String {
+    let count = text.chars().count();
+    if count <= limit {
+        return text.to_owned();
+    }
+    let tail: String = text.chars().skip(count - limit).collect();
+    format!("…{tail}")
+}
+
 const MAX_PROJECT_INSTRUCTIONS_BYTES: usize = 16 * 1024;
 
 /// Reads the workspace's agent instructions. AGENTS.md wins; CLAUDE.md is the
@@ -618,6 +660,8 @@ fn project_instructions(workspace: &Path) -> Option<String> {
     None
 }
 
+/// The first supported project check. An unknown ecosystem stays unverified
+/// instead of guessing a command.
 fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
     if workspace.join("Cargo.toml").is_file() {
         return Some(AcceptanceItem {
@@ -1124,6 +1168,42 @@ system = "prompt.md"
         assert_eq!(lines[1].args.as_deref(), Some("second"));
         assert_eq!(lines[1].output.as_deref(), Some("second output"));
         assert_eq!(lines[1].ok, Some(true));
+    }
+
+    #[test]
+    fn verification_evidence_keeps_failures_and_bounds_the_tail() {
+        let long = "x".repeat(MAX_VERIFICATION_DETAIL_CHARS + 10);
+        let report = VerificationReport {
+            evidence: vec![
+                keel_core::Evidence {
+                    item_id: "tests".to_owned(),
+                    verifier: "test".to_owned(),
+                    outcome: EvidenceOutcome::Passed,
+                    detail: "ok".to_owned(),
+                },
+                keel_core::Evidence {
+                    item_id: "lint".to_owned(),
+                    verifier: "test".to_owned(),
+                    outcome: EvidenceOutcome::Failed,
+                    detail: long,
+                },
+            ],
+            required_failed: vec!["lint".to_owned()],
+            required_unverified: Vec::new(),
+            optional_failed: Vec::new(),
+        };
+
+        let stored = stored_verification(&report);
+
+        assert!(!stored.passed);
+        assert_eq!(stored.evidence.len(), 1);
+        assert_eq!(stored.evidence[0].item_id, "lint");
+        assert_eq!(stored.evidence[0].outcome, "failed");
+        assert!(stored.evidence[0].detail.starts_with('…'));
+        assert_eq!(
+            stored.evidence[0].detail.chars().count(),
+            MAX_VERIFICATION_DETAIL_CHARS + 1
+        );
     }
 
     #[tokio::test]
