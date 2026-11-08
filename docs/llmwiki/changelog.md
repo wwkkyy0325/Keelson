@@ -1143,3 +1143,24 @@ resulting workspace still passes the project check.
 M4n made every detected ecosystem a required check, but every item shared one
 id. A failure with two checks listed `workspace-tests` twice, which told the
 model and the user nothing about which project or ecosystem failed.
+
+## 2026-11-08 — M4aa: ignore-aware search and glob
+
+- Keel `code_search` and `glob` now walk with `ignore::WalkBuilder`, honouring
+  `.gitignore`, `.ignore`, `.git/info/exclude` and global git excludes.
+  `require_git(false)` makes the rules apply to a workspace copy without
+  `.git`; `hidden(false)` keeps hidden files searchable.
+- The walk is deterministic, depth-bounded, off the async thread, and keeps
+  the existing build-directory filter, cancellation and result caps.
+- Added the `ignore` dependency (MIT/Unlicense); `cargo deny check licenses`
+  passes.
+- Keel: 115 lib tests, 39 tool tests (+2), clippy. Keelson: 51 lib tests,
+  polyglot eval 11.65 s, cross-file eval 8.86 s, desktop 28.
+- ADR 0029; task doc `docs/llmwiki/tasks/m4aa-ignore-aware-search.md`.
+
+### Why
+
+The tools skipped a fixed list of build directories but walked everything
+else, including a project's ignored `data/` or `generated/` trees. On a real
+repository that costs time and returns noise; the project's own ignore rules
+are the right filter.

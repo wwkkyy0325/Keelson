@@ -223,5 +223,9 @@ M4y: a live two-file rename uses `apply_edits` and leaves the test alone
 M4z: each check is named (`workspace-tests:<ecosystem>:<project>`), so a
 failing check says which project and ecosystem failed.
 
+M4aa: `code_search` and `glob` respect `.gitignore`, `.ignore` and git
+excludes, and the walk runs off the async thread. Hidden files remain
+searchable.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
