@@ -28,6 +28,6 @@ the one a turn changed, not only the first.
 - A project with several test roots gets one Python check on the shallowest
   root; pytest discovers the rest from there, `unittest` may not. M4q later
   runs each remembered root.
-- Manifests deeper than two directories.
+- Manifests deeper than two directories. M4r extends the depth to three.
 - A root project and a nested project of the same ecosystem are both
   candidates; a changed path selects the nested one, which is intended.

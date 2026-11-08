@@ -146,7 +146,7 @@ one project check (Cargo, Go, nested Python tests, or Node only with a
 `scripts.test`) after the turn. The Python check prefers the project's `.venv`
 and runs `pytest` when the project declares it; `unittest discover` treats a
 pytest module as zero tests and exits 0, which would be a false green. A
-manifest in a subdirectory (depth at most two) is found and the check targets
+manifest in a subdirectory (depth at most three) is found and the check targets
 its directory (`--manifest-path`, `go -C`, `npm --prefix`, `pytest <dir>`);
 the nearest `.venv` and pytest config win. Every project of an ecosystem is a
 candidate: a monorepo with two crates, two packages or two Python projects

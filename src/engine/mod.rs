@@ -767,7 +767,7 @@ fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
 }
 
 /// Project directories (relative to the workspace) that contain `file_name`,
-/// root first, then depth 1, then depth 2.
+/// root first, then depth 1 to 3.
 fn project_directories(workspace: &Path, file_name: &str) -> Vec<PathBuf> {
     let mut found = Vec::new();
     if workspace.join(file_name).is_file() {
@@ -784,7 +784,7 @@ fn project_directories(workspace: &Path, file_name: &str) -> Vec<PathBuf> {
                 continue;
             };
             if file_type.is_dir() {
-                if depth < 2 && !is_skipped_test_directory(&path) {
+                if depth < 3 && !is_skipped_test_directory(&path) {
                     stack.push((path, depth + 1));
                 }
                 continue;
@@ -883,7 +883,7 @@ fn find_python_tests(workspace: &Path) -> Vec<PathBuf> {
                 continue;
             };
             if file_type.is_dir() {
-                if depth < 2 && !is_skipped_test_directory(&path) {
+                if depth < 3 && !is_skipped_test_directory(&path) {
                     stack.push((path, depth + 1));
                 }
                 continue;
@@ -2041,6 +2041,52 @@ system = "prompt.md"
             VerifySpec::Test { args, .. }
                 if args.iter().any(|arg| arg == "tests")
                     && !args.iter().any(|arg| arg == "tests/unit")
+        ));
+    }
+
+    #[test]
+    fn a_deep_cargo_project_gets_a_manifest_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("services/api/backend"))
+            .expect("a project directory");
+        std::fs::write(
+            dir.path().join("services/api/backend/Cargo.toml"),
+            "[package]\nname = \"api\"\n",
+        )
+        .expect("a manifest");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == "cargo"
+                    && args.iter().any(|arg| arg == "services/api/backend/Cargo.toml")
+        ));
+    }
+
+    #[test]
+    fn a_deep_python_test_gets_a_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("backend/src/tests")).expect("a test directory");
+        std::fs::write(
+            dir.path().join("backend/src/tests/test_stats.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(
+            dir.path().join("backend/pyproject.toml"),
+            "[tool.pytest.ini_options]\n",
+        )
+        .expect("a pytest config");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref args, .. }
+                if args.iter().any(|arg| arg == "pytest")
+                    && args.iter().any(|arg| arg == "backend/src/tests")
         ));
     }
 

@@ -981,3 +981,18 @@ M4p kept one Python check per project, so a project with separate unit and
 integration roots only ran the shallowest. The roots are now independent
 checks under the same project, and the M4o selector runs all of them for a
 change in that project.
+
+## 2026-11-08 — M4r: discovery three directories deep
+
+- `project_directories` and `find_python_tests` now descend to depth 3, so
+  `services/api/backend/Cargo.toml` and `backend/src/tests/test_stats.py` are
+  found. The build-directory skip list is unchanged.
+- Keelson: 51 lib tests (+2), clippy. Live two-module eval passed in 24.16 s;
+  desktop tests pass (28).
+- Task doc: `docs/llmwiki/tasks/m4r-deeper-discovery.md`.
+
+### Why
+
+M4m stopped at depth 2, which covers `backend/` and `services/api/` but not a
+service nested one level deeper. The walk is bounded and already skips build
+directories, so one more level is cheap.

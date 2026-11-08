@@ -6,7 +6,8 @@ subdirectory, not only a repository root.
 ## What changed
 
 - `project_directories` finds `Cargo.toml`, `go.mod` and `package.json` at the
-  workspace root, depth 1 or depth 2, root first.
+  workspace root, depth 1 or depth 2, root first (M4r later extends this to
+  three).
 - `find_python_tests` finds the first test file and the directory that holds
   it; the check targets that directory.
 - Commands: `cargo test --manifest-path <dir>/Cargo.toml`,
@@ -32,4 +33,5 @@ subdirectory, not only a repository root.
 - Running every ecosystem in a polyglot repository. The driver takes a list,
   but one check keeps a turn's cost bounded; choosing by changed files needs a
   kernel change.
-- Manifests deeper than two directories, or a project with several test roots.
+- Manifests deeper than two directories and several test roots; M4r and M4q
+  later close these.

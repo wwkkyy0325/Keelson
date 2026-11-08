@@ -193,5 +193,8 @@ path selects the one it belongs to.
 M4q: a Python project with several test roots runs each of them. Nested roots
 are folded into their parent, so `tests/` also covers `tests/unit/`.
 
+M4r: manifests and test files are found up to three directories deep, so a
+service nested under `services/api/backend/` gets its own check.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

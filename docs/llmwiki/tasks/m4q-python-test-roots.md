@@ -24,4 +24,5 @@ both, not only the shallowest.
 
 - `unittest discover` on a parent root may not recurse into a child package;
   the fold keeps the parent command, which is the best single command.
-- Test files deeper than two directories are still not found.
+- Test files deeper than two directories are still not found. M4r extends the
+  depth to three.
