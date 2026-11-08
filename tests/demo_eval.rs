@@ -3,15 +3,20 @@
 //! This test needs a real provider key; it is ignored by default.
 //!
 //! ```text
-//! ANTHROPIC_AUTH_TOKEN=... cargo test --test demo_eval -- --ignored --nocapture
+//! DEEPSEEK_API_KEY=... cargo test --test demo_eval -- --ignored --nocapture
 //! ```
+//!
+//! `ANTHROPIC_AUTH_TOKEN` is accepted as a fallback. The eval uses the
+//! OpenAI-compatible endpoint, the same wire path as the desktop app; the
+//! Anthropic-compatible DeepSeek path currently rejects thinking blocks on a
+//! tool round.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use keel_core::CancelToken;
 use keel_runtime::DeferAllInteractionPort;
-use keelson::engine::{Engine, OpenRequest};
+use keelson::engine::{Engine, ModelOverride, OpenRequest};
 use keelson::rig::Rig;
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -40,14 +45,14 @@ fn python() -> &'static str {
 #[tokio::test]
 #[ignore = "needs a live provider key"]
 async fn demo_workspace_is_repaired_by_the_coding_rig() {
-    if std::env::var("ANTHROPIC_AUTH_TOKEN")
+    let Some(key) = std::env::var("DEEPSEEK_API_KEY")
+        .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .is_none()
-    {
-        eprintln!("skipping: ANTHROPIC_AUTH_TOKEN is not set");
+    else {
+        eprintln!("skipping: DEEPSEEK_API_KEY / ANTHROPIC_AUTH_TOKEN is not set");
         return;
-    }
+    };
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let temp = tempfile::TempDir::new().expect("a temp dir");
@@ -55,12 +60,12 @@ async fn demo_workspace_is_repaired_by_the_coding_rig() {
     copy_dir(&root.join("examples/demo-workspace"), &workspace).expect("copy the demo");
 
     let rig = Rig {
-        name: "coding-live".to_owned(),
-        title: "Coding (live)".to_owned(),
+        name: "coding".to_owned(),
+        title: "Coding".to_owned(),
         description: "Repair the demo workspace.".to_owned(),
-        profile: root.join("profiles/coding-live.toml"),
+        profile: root.join("profiles/coding.toml"),
         extra_roots: Vec::new(),
-        path: root.join("rigs/coding-live.toml"),
+        path: root.join("rigs/coding.toml"),
     };
     let state_dir = temp.path().join("state");
     let store_path = state_dir.join("session.json");
@@ -71,7 +76,13 @@ async fn demo_workspace_is_repaired_by_the_coding_rig() {
         store_path,
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
-        model: None,
+        model: Some(ModelOverride {
+            provider: "openai-compatible".to_owned(),
+            model: "deepseek-flash".to_owned(),
+            base_url: Some("https://api.deepseek.com".to_owned()),
+            api_key: key,
+            context_window: Some(1_048_576),
+        }),
     })
     .expect("the engine opens");
 

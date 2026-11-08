@@ -48,7 +48,7 @@ without a scripted prompt.
       Verify: `code_search` remains the search path; a Cargo or Python
       workspace gets its own check, and a turn with an edit runs it while a
       conversational turn skips it.
-- [ ] Eval on `examples/demo-workspace`: repair a failing test with no
+- [x] Eval on `examples/demo-workspace`: repair a failing test with no
       scripted prompt.
       Verify: `cargo test` plus the eval run. The ignored test is in
       `tests/demo_eval.rs`; the live run needs a provider key.
@@ -77,9 +77,20 @@ without a scripted prompt.
   turn tests pin the skip and the edit path. The host detects `Cargo.toml`
   (`cargo test`) and Python `test_*.py` (`python -m unittest discover -v`);
   `code_search` remains the project search. Root: 20 tests, clippy.
-- `tests/demo_eval.rs` adds the ignored live eval: copy the demo, run one
-  turn, require the demo tests to pass. It compiles and is skipped without
-  `ANTHROPIC_AUTH_TOKEN`; the live run is still pending a key.
+- `tests/demo_eval.rs` adds the live eval: copy the demo, run one turn,
+  require the demo tests to pass. It uses the OpenAI-compatible endpoint with
+  the same key as the desktop. The live run passed on 2026-11-08 in 14.27 s:
+  the model repaired `stats.py`, the automatic `unittest` check passed, and
+  the post-turn test run succeeded.
+- The first live attempts exposed two request-path bugs, both fixed:
+  - the driver stamped requests with the profile's model (`mock-coding`)
+    instead of the override; the host now copies the override provider/model
+    into `config.model_route`;
+  - the OpenAI wire omitted `reasoning_content` on a thinking turn after a
+    tool call; it now includes the field when `thinking_budget > 0`.
+- The Anthropic-compatible DeepSeek endpoint still rejected thinking blocks
+  (`content[].thinking`); the eval uses the OpenAI-compatible endpoint, which
+  is the desktop's live path.
 - The minimal UI for edit/verification is not implemented yet.
 
 ## Not in M4

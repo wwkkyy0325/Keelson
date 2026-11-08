@@ -299,6 +299,13 @@ impl Engine {
                 .saturating_add(config.max_output_tokens);
             config.context_window = capacity.max(floor);
         }
+        // The driver stamps every request with `config.model_route`; the
+        // provider's own model is only a fallback. Keep the two in sync when
+        // the host overrides the connection.
+        if let Some(over) = model.as_ref() {
+            config.model_route.provider = over.provider.clone();
+            config.model_route.model = over.model.clone();
+        }
 
         let model = DeltaModel {
             inner: build_model(&config, model.as_ref())?,
@@ -895,7 +902,7 @@ system = "prompt.md"
             deltas: None,
             model: Some(ModelOverride {
                 provider: "mock".to_owned(),
-                model: "mock".to_owned(),
+                model: "override-model".to_owned(),
                 base_url: None,
                 api_key: String::new(),
                 context_window: Some(1_000_000),
@@ -904,6 +911,8 @@ system = "prompt.md"
         .expect("the engine opens");
 
         assert_eq!(engine.config().context_window, 1_000_000);
+        assert_eq!(engine.config().model_route.provider, "mock");
+        assert_eq!(engine.config().model_route.model, "override-model");
     }
 
     #[tokio::test]

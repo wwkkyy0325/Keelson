@@ -538,3 +538,26 @@ conversational turn expensive and slow. The edit is the trigger, and the
 project's own command is the evidence; the kernel already owns the Verify
 phase and the bounded reprompt loop, so the host only supplies the checklist.
 The unknown-ecosystem rule avoids inventing a check that may not exist.
+
+## 2026-11-08 — M4: the live coding eval passes
+
+- `cargo test --test demo_eval -- --ignored` passed in 14.27 s: the coding rig
+  read the demo, repaired `stats.py`, and the automatic `unittest` check and
+  the post-turn test run both passed.
+- The eval uses the OpenAI-compatible endpoint with the same key as the
+  desktop. The Anthropic-compatible DeepSeek endpoint still rejects thinking
+  blocks on a tool round, so it is not the eval path.
+- Two request-path bugs surfaced and were fixed:
+  - the driver stamped every request with `config.model_route` (the profile's
+    `mock-coding`) while the provider used the override model; the host now
+    copies the override provider/model into the route;
+  - the OpenAI wire omitted `reasoning_content` after a thinking turn with a
+    tool call; it now includes the field when `thinking_budget > 0`.
+
+### Why
+
+The eval is the first end-to-end proof that the coding suite edits and
+verifies without a scripted prompt. It also caught two mismatches that a
+single conversational turn could not: the mock profile's model leaking into a
+live request, and DeepSeek's thinking-mode requirement. Both are host/wire
+bugs, not model failures.
