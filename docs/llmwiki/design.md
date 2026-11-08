@@ -154,7 +154,14 @@ several replacements to one file in memory and writes them as one atomic
 change. The workspace's `AGENTS.md`
 (fallback `CLAUDE.md`) is appended to the system prompt at engine open, capped
 at 16 KiB. Background shell commands run through the kernel's registry, write
-under the project's `outputs/`, and are killed when the engine drops.
+under the project's `outputs/`, and are killed when the engine drops. Three
+live evals exercise the loop: the demo repair, a two-module discount feature
+in `examples/inventory-workspace`, and a larger shop task in
+`examples/shop-workspace`. The two-module run used `glob`, `read_file`,
+`write_file` and `shell` and left the visible tests unchanged (M4g). The shop
+run used regex `code_search` and `multi_edit` and also passed the automatic
+check (M4h); it exposed a transcript bug where parallel tool results were
+paired by tool name, now fixed by pairing on the call id.
 
 ## Checkpoints
 

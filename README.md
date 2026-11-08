@@ -128,7 +128,9 @@ after archiving; archived conversations are read-only. The rail uses stable
 M4: the coding rig edits and verifies. `edit_file` is an exact-match
 search-replace tool in Keel; a turn that changes the workspace runs the
 project's own check (Cargo, Go, Python or Node). The live demo eval repairs
-`examples/demo-workspace`, and the transcript shows the result.
+`examples/demo-workspace`, a second eval adds a discount across two modules
+in `examples/inventory-workspace`, and a larger eval crosses the modules in
+`examples/shop-workspace`.
 
 M4b: the coding rig is usable on a real repository. The output reserve is 8k
 and the working set 64k, lowered when the model window is smaller. `read_file`

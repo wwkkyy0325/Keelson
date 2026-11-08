@@ -706,3 +706,62 @@ no single undo, and a failed or unwanted turn costs a manual recovery. The
 shadow repository gives the turn a unit without touching the user's git
 history or requiring a new dependency, and the diff-and-checkout approach
 handles creates, deletes and renames without a patch grammar.
+
+## 2026-11-08 — M4g: multi-file suite validation
+
+- Added `examples/inventory-workspace`: a small Python package with three
+  modules and six unittest cases; three tests describe a missing `discount`
+  feature and fail with `TypeError`.
+- Added `tests/coding_eval.rs` (ignored by default): the model must add
+  discount support across `service.py` and `report.py` without changing the
+  tests, and the automatic Python check must pass.
+- Live run: passed in 37.20 s with 11 model calls. Tools: `list_dir`, `glob`,
+  `read_file` x5, `shell` x2, `todo` x7, `write_file` x2, `shell`,
+  `read_file` x2, `todo`. The visible tests were byte-identical; both modules
+  changed; the independent unittest run passed.
+- Findings: the model used `glob` for discovery and whole-file `write_file`
+  after reading, not `code_search` or `multi_edit`. A two-file change is too
+  small to force those tools. The read ledger did not block the successful
+  path, and the model did not tamper with the tests.
+- No new tool is justified by this run; the next validation needs a larger
+  repository or file to exercise regex search and multi-edit.
+
+### Why
+
+After adding several tools it is easy to assume they are used. This eval
+measures the actual tool choice on a multi-file task and confirms the
+end-to-end loop: discovery, reads, edits, shell checks and automatic
+verification. It also shows which tools a small task does not need, which is
+useful before adding more.
+
+## 2026-11-08 — M4h: larger workspace and the parallel-result pairing bug
+
+- Added `examples/shop-workspace`: twelve Python modules and 14 unittest
+  cases; twelve tests describe a missing `discount` parameter across
+  `pricing`, `reporting`, `checkout`, `api`, `wholesale`, `inventory` and
+  `shipping`.
+- Added `tests/shop_eval.rs` (ignored): the prompt asks for the feature, a
+  regex `code_search` of the call sites and a `multi_edit` of the several
+  changes in `pricing.py`, and forbids test edits. The workspace is kept
+  under `target/eval/shop` after a failure for inspection.
+- Live run: the first attempt reached `Done` but failed the automatic check
+  after 243 s (diagnostics not retained); the second attempt passed in
+  70.10 s with 13 model calls. Adoption: `code_search=true`,
+  `multi_edit=true`, `edit_file=true`, `write_file=false`. The first search
+  was `query=(total|subtotal)\( regex=true`; the two multi-edits made 4 and 2
+  replacements. The automatic check and the independent unittest run passed;
+  the tests were byte-identical.
+- Found and fixed a host bug: `tool_lines` paired a `ToolFinished` event to
+  the newest unfinished row with the same tool name, so two parallel
+  `code_search` calls could swap args and outputs in the stored transcript.
+  It now pairs by `ToolCallId`; a unit test feeds finishes in reverse order.
+- Root suite: 28 tests + 3 ignored live evals, clippy.
+
+### Why
+
+M4g showed that a two-file task does not force regex search or multi-edit.
+The larger shop task does, and it confirms both tools are usable. Inspecting
+the stored trace also exposed a real transcript bug that a pass/fail
+assertion would not catch: the tool names were right, but the evidence rows
+were crossed. The evals are manual and non-deterministic; the first failure
+and the second pass are both recorded.
