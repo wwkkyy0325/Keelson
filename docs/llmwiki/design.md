@@ -172,7 +172,8 @@ ranged read is recorded as partial, so it cannot authorize a whole-file
 overwrite (M4l). The persona forbids installing packages or changing the
 interpreter to make a check pass; a missing dependency is reported. `multi_edit` validates
 several replacements to one file in memory and writes them as one atomic
-change. The workspace's `AGENTS.md`
+change. `apply_edits` extends the contract across files: every replacement is
+validated before any file is written (M4x). The workspace's `AGENTS.md`
 (fallback `CLAUDE.md`) is appended to the system prompt at engine open, capped
 at 16 KiB. Background shell commands run through the kernel's registry, write
 under the project's `outputs/`, and are killed when the engine drops. Three

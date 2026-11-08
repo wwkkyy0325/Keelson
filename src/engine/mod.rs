@@ -19,11 +19,11 @@ use keel_core::{
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, AcceptanceSelector, BackgroundTasks, CodeSearchTool,
-    ContextBuilder, DeleteFileTool, EchoTool, EditFileTool, EventLog, EventRecord, GlobTool,
-    HistoryStage, InteractionBroker, InterjectionPush, KernelOptions, LatestStage, ListDirTool,
-    ListTrashTool, LocalBackgroundTasks, LocalTrashStore, MakeDirTool, MemoryStage, MockModel,
-    MockStep, MoveFileTool, MultiEditTool, PermissionEngine, ReadFileTool, ReadLedger,
+    load_profile, validate_config, AcceptanceSelector, ApplyEditsTool, BackgroundTasks,
+    CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool, EditFileTool, EventLog, EventRecord,
+    GlobTool, HistoryStage, InteractionBroker, InterjectionPush, KernelOptions, LatestStage,
+    ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore, MakeDirTool, MemoryStage,
+    MockModel, MockStep, MoveFileTool, MultiEditTool, PermissionEngine, ReadFileTool, ReadLedger,
     RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool,
     ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
@@ -1138,6 +1138,9 @@ fn tools(
         EditFileTool::new(trash.clone()).with_ledger(ledger.clone()),
     ))?;
     registry.register(Arc::new(
+        ApplyEditsTool::new(trash.clone()).with_ledger(ledger.clone()),
+    ))?;
+    registry.register(Arc::new(
         MultiEditTool::new(trash.clone()).with_ledger(ledger),
     ))?;
     registry.register(Arc::new(MoveFileTool::new(trash.clone())))?;
@@ -1630,6 +1633,7 @@ system = "prompt.md"
 
         assert!(registry.get("edit_file").is_some());
         assert!(registry.get("multi_edit").is_some());
+        assert!(registry.get("apply_edits").is_some());
         assert!(registry.get("glob").is_some());
     }
 

@@ -213,5 +213,9 @@ verified like a file-tool edit, with every check as the fallback.
 M4w: `read_file` can prefix lines with absolute numbers (`line_numbers`) for
 navigation; the prefix is display-only and never part of the file.
 
+M4x: `apply_edits` applies exact replacements across files. Every replacement
+is validated before any file is written; a failure leaves the workspace
+untouched.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

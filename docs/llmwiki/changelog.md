@@ -1085,3 +1085,26 @@ closes the common case without a second test run after every test command.
 A raw read gives the model the bytes but not the location; a search hit gives
 a line number in a different shape. An opt-in numbered read lets the model
 name a location precisely without changing the default or the edit contract.
+
+## 2026-11-08 — M4x: cross-file atomic edits
+
+- Keel gained `apply_edits`: parallel `paths`, `old` and `new` lists, with the
+  same path allowed to repeat. Every file is read once, the ledger is checked
+  once per file, and every replacement is validated in memory before any
+  backup or write. A missing, ambiguous, empty or identical replacement fails
+  the whole call.
+- Changed files are backed up and written one by one; a write failure restores
+  the previously written files from their backups, best effort. The driver
+  records every path for the check selector.
+- The host registers the tool with the shared ledger and exposes it in both
+  coding profiles; the persona points to it for changes that span files.
+- Keel: 115 lib tests, 37 tool tests (+5), 42 turn tests, clippy. Keelson: 51
+  lib tests, polyglot eval 13.87 s, desktop 28.
+- ADR 0028; task doc `docs/llmwiki/tasks/m4x-cross-file-edits.md`.
+
+### Why
+
+`multi_edit` made one file atomic, but a rename or a small refactor often
+spans files. Applying edits one file at a time can leave a partial rewrite
+when a later snippet does not match. The cross-file tool validates the whole
+set first, so the common failure touches nothing.
