@@ -688,13 +688,18 @@ fn workspace_checks(workspace: &Path) -> Vec<ProjectCheck> {
             project,
         });
     }
-    let mut python_projects = Vec::new();
+    // A test root that contains another one runs both; a nested root is
+    // covered by its parent and is folded into it.
+    let mut python_roots: Vec<PathBuf> = Vec::new();
     for tests in find_python_tests(workspace) {
-        let project = python_project(workspace, &tests);
-        if python_projects.contains(&project) {
+        if python_roots.iter().any(|root| tests.starts_with(root)) {
             continue;
         }
-        python_projects.push(project.clone());
+        python_roots.retain(|root| !root.starts_with(&tests));
+        python_roots.push(tests);
+    }
+    for tests in python_roots {
+        let project = python_project(workspace, &tests);
         checks.push(ProjectCheck {
             project,
             item: python_check(workspace, &tests),
@@ -1964,6 +1969,78 @@ system = "prompt.md"
         assert!(matches!(
             &worker[0].verify,
             VerifySpec::Test { args, .. } if args.iter().any(|arg| arg == "worker/tests")
+        ));
+    }
+
+    #[test]
+    fn a_python_project_runs_each_test_root() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("api/tests")).expect("a test directory");
+        std::fs::create_dir_all(dir.path().join("api/integration")).expect("a test directory");
+        std::fs::write(
+            dir.path().join("api/tests/test_a.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(
+            dir.path().join("api/integration/test_b.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(
+            dir.path().join("api/pyproject.toml"),
+            "[tool.pytest.ini_options]\n",
+        )
+        .expect("a pytest config");
+        let checks = workspace_checks(dir.path());
+        let items: Vec<AcceptanceItem> = checks.iter().map(|check| check.item.clone()).collect();
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        assert_eq!(check_programs(&items), [python, python]);
+
+        let selected = selected_checks(&checks, dir.path(), &[PathBuf::from("api/app.py")]);
+
+        assert_eq!(selected.len(), 2);
+        let args: Vec<String> = selected
+            .iter()
+            .flat_map(|item| match &item.verify {
+                VerifySpec::Test { args, .. } => args.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+        assert!(args.iter().any(|arg| arg == "api/tests"));
+        assert!(args.iter().any(|arg| arg == "api/integration"));
+    }
+
+    #[test]
+    fn a_nested_test_root_folds_into_its_parent() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("tests/unit")).expect("a test directory");
+        std::fs::write(
+            dir.path().join("tests/test_a.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(
+            dir.path().join("tests/unit/test_b.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\n",
+        )
+        .expect("a pytest config");
+
+        let checks = workspace_checks(dir.path());
+        let items: Vec<AcceptanceItem> = checks.iter().map(|check| check.item.clone()).collect();
+
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        assert_eq!(check_programs(&items), [python]);
+        assert!(matches!(
+            &items[0].verify,
+            VerifySpec::Test { args, .. }
+                if args.iter().any(|arg| arg == "tests")
+                    && !args.iter().any(|arg| arg == "tests/unit")
         ));
     }
 

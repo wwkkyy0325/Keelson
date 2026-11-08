@@ -152,7 +152,8 @@ the nearest `.venv` and pytest config win. Every project of an ecosystem is a
 candidate: a monorepo with two crates, two packages or two Python projects
 gets one check per project, and a changed path selects the deepest one. A path
 that belongs to none runs every check. The order is Cargo, Go, Python, Node
-(M4p). `multi_edit` counts as a workspace change.
+(M4p). A Python project with several test roots runs each root; a nested root
+is folded into its parent (M4q). `multi_edit` counts as a workspace change.
 `read_file` can read a 1-based line range
 without altering its bytes; `code_search` can be case-sensitive, filtered by a
 file-name or path glob and match a regex on request; the `glob` tool finds

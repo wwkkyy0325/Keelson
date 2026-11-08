@@ -963,3 +963,21 @@ M4o could only choose among the first project of each ecosystem, so a
 monorepo with `api/` and `worker/` still checked only one of them. The
 selector already knows the changed path; the candidate list now contains every
 project.
+
+## 2026-11-08 — M4q: every Python test root
+
+- `workspace_checks` keeps one Python check per test root that is not nested
+  inside another root. `api/tests` and `api/integration` both run; `tests/unit`
+  folds into `tests/`.
+- Both roots map to the same project, so a change under that project selects
+  every root.
+- Keelson: 49 lib tests (+2), clippy. Live two-module eval passed in 26.64 s;
+  desktop tests pass (28).
+- Task doc: `docs/llmwiki/tasks/m4q-python-test-roots.md`.
+
+### Why
+
+M4p kept one Python check per project, so a project with separate unit and
+integration roots only ran the shallowest. The roots are now independent
+checks under the same project, and the M4o selector runs all of them for a
+change in that project.
