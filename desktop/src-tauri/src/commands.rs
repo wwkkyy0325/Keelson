@@ -232,12 +232,19 @@ pub async fn new_session(
     ensure_idle(&state)?;
     let workspace = resolve_workspace(&state, workspace);
     let state_dir = state_dir_for(&workspace);
+    let rig_name = {
+        let config = state
+            .config
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        rig_name_for(&config.provider)
+    };
     let meta = {
         let _guard = state
             .session_io
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        sessions::create(&state_dir, &workspace)?
+        sessions::create(&state_dir, &workspace, rig_name)?
     };
     open_inner(app, state, workspace, Some(meta.id)).await
 }
@@ -423,11 +430,7 @@ async fn open_inner(
         }
         Some(config::load_key()?.ok_or_else(|| "还没有保存密钥；请重新运行初始化".to_owned())?)
     };
-    let rig_name = if provider == "mock" {
-        "coding"
-    } else {
-        "coding-live"
-    };
+    let rig_name = rig_name_for(&provider);
     let discovery = rig::discover(&rig_dirs());
     let rig = discovery
         .rigs
@@ -560,6 +563,14 @@ fn resolve_workspace(state: &DesktopState, workspace: Option<String>) -> PathBuf
 
 fn state_dir_for(workspace: &Path) -> PathBuf {
     rig::state_dir().unwrap_or_else(|| workspace.join(".keel"))
+}
+
+fn rig_name_for(provider: &str) -> &'static str {
+    if provider == "mock" {
+        "coding"
+    } else {
+        "coding-live"
+    }
 }
 
 fn ensure_idle(state: &DesktopState) -> Result<(), String> {

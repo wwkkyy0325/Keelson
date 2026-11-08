@@ -27,6 +27,7 @@ export type SessionMeta = {
   id: string;
   title: string;
   archived: boolean;
+  rig: string;
   createdAt: number;
   updatedAt: number;
   turns: number;

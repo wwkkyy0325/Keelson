@@ -26,6 +26,8 @@ pub struct SessionMeta {
     pub title: String,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default)]
+    pub rig: String,
     pub created_at: u64,
     pub updated_at: u64,
     pub turns: u32,
@@ -75,7 +77,7 @@ pub fn list(state_dir: &Path, workspace: &Path) -> Vec<SessionMeta> {
 
 /// Creates an empty conversation and writes its document, so the row survives
 /// a restart and the index always points at a real file.
-pub fn create(state_dir: &Path, workspace: &Path) -> Result<SessionMeta, String> {
+pub fn create(state_dir: &Path, workspace: &Path, rig: &str) -> Result<SessionMeta, String> {
     let dir = project_dir(state_dir, workspace);
     fs::create_dir_all(&dir)
         .map_err(|error| format!("cannot create `{}`: {error}", dir.display()))?;
@@ -89,6 +91,7 @@ pub fn create(state_dir: &Path, workspace: &Path) -> Result<SessionMeta, String>
     Store::open(path)
         .save(&StoredSession {
             workspace: workspace.to_path_buf(),
+            rig: rig.to_owned(),
             title: String::new(),
             archived: false,
             snapshot: Default::default(),
@@ -102,6 +105,7 @@ pub fn create(state_dir: &Path, workspace: &Path) -> Result<SessionMeta, String>
         id,
         title: String::new(),
         archived: false,
+        rig: rig.to_owned(),
         created_at: now,
         updated_at: now,
         turns: 0,
@@ -129,6 +133,7 @@ pub fn touch(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta
                 id: id.to_owned(),
                 title: String::new(),
                 archived: false,
+                rig: String::new(),
                 created_at: file_ms(&path).unwrap_or(now),
                 updated_at: now,
                 turns: 0,
@@ -138,6 +143,7 @@ pub fn touch(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta
     };
     meta.title = title_for(&document);
     meta.archived = document.archived;
+    meta.rig = document.rig.clone();
     meta.turns = document.turns.len() as u32;
     meta.updated_at = now;
     let meta = meta.clone();
@@ -227,6 +233,7 @@ pub fn sync(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta>
                 id: id.to_owned(),
                 title: String::new(),
                 archived: false,
+                rig: String::new(),
                 created_at: time,
                 updated_at: time,
                 turns: 0,
@@ -236,6 +243,7 @@ pub fn sync(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta>
     };
     meta.title = title_for(&document);
     meta.archived = document.archived;
+    meta.rig = document.rig.clone();
     meta.turns = document.turns.len() as u32;
     let meta = meta.clone();
     let _ = save_index(&dir, &index);
@@ -391,12 +399,13 @@ fn meta_from_file(path: &Path, id: &str) -> SessionMeta {
         .ok()
         .and_then(|text| serde_json::from_str::<StoredSession>(&text).ok());
     let time = file_ms(path).unwrap_or_else(now_ms);
-    let (title, archived, turns) = document
+    let (title, archived, rig, turns) = document
         .as_ref()
         .map(|document| {
             (
                 title_for(document),
                 document.archived,
+                document.rig.clone(),
                 document.turns.len() as u32,
             )
         })
@@ -405,6 +414,7 @@ fn meta_from_file(path: &Path, id: &str) -> SessionMeta {
         id: id.to_owned(),
         title,
         archived,
+        rig,
         created_at: time,
         updated_at: time,
         turns,
@@ -445,6 +455,7 @@ mod tests {
     fn document(workspace: &Path, first: &str, turns: u32) -> StoredSession {
         StoredSession {
             workspace: workspace.to_path_buf(),
+            rig: "coding".to_owned(),
             title: String::new(),
             archived: false,
             snapshot: SessionSnapshot::default(),
@@ -482,13 +493,14 @@ mod tests {
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
 
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
         assert!(valid_id(&meta.id));
         assert!(session_path(&state, &workspace, &meta.id).is_file());
 
         let rows = list(&state, &workspace);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, meta.id);
+        assert_eq!(rows[0].rig, "coding");
         assert_eq!(rows[0].turns, 0);
     }
 
@@ -516,7 +528,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
         Store::open(session_path(&state, &workspace, &meta.id))
             .save(&document(&workspace, "  a title  ", 3))
             .expect("save");
@@ -534,7 +546,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
 
         let renamed = set_title(&state, &workspace, &meta.id, "  my name  ").expect("rename");
         assert_eq!(renamed.title, "my name");
@@ -549,7 +561,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
         Store::open(session_path(&state, &workspace, &meta.id))
             .save(&document(&workspace, "first question", 1))
             .expect("save");
@@ -565,7 +577,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
 
         let archived = set_archived(&state, &workspace, &meta.id, true).expect("archive");
         assert!(archived.archived);
@@ -582,7 +594,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
 
         assert!(!is_archived(&state, &workspace, &meta.id).expect("read the flag"));
 
@@ -614,9 +626,9 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let first = create(&state, &workspace).expect("first");
+        let first = create(&state, &workspace, "coding").expect("first");
         std::thread::sleep(std::time::Duration::from_millis(2));
-        let second = create(&state, &workspace).expect("second");
+        let second = create(&state, &workspace, "coding").expect("second");
 
         let rows = list(&state, &workspace);
 
@@ -629,7 +641,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
 
         remove(&state, &workspace, &meta.id).expect("remove");
 
@@ -642,7 +654,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        create(&state, &workspace).expect("create");
+        create(&state, &workspace, "coding").expect("create");
         let project = project_dir(&state, &workspace);
         Store::open(project.join("s-external.json"))
             .save(&document(&workspace, "copied in", 1))
@@ -662,7 +674,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
         fs::remove_file(session_path(&state, &workspace, &meta.id)).expect("remove the document");
 
         assert!(list(&state, &workspace).is_empty());
@@ -673,7 +685,7 @@ mod tests {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
-        let meta = create(&state, &workspace).expect("create");
+        let meta = create(&state, &workspace, "coding").expect("create");
         let project = project_dir(&state, &workspace);
         let mut index = read_index(&project).expect("an index");
         let mut older = meta.clone();

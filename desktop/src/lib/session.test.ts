@@ -19,6 +19,7 @@ function meta(id: string, updatedAt: number, title = ""): SessionMeta {
     id,
     title,
     archived: false,
+    rig: "coding",
     createdAt: updatedAt,
     updatedAt,
     turns: 0,

@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredSession {
     pub workspace: PathBuf,
+    /// The rig that created the conversation. Empty in documents written
+    /// before the field existed; the engine fills it on the next open.
+    #[serde(default)]
+    pub rig: String,
     /// Host-owned display name. Empty means "use the first user message".
     #[serde(default)]
     pub title: String,
@@ -134,6 +138,7 @@ mod tests {
     fn session(workspace: PathBuf) -> StoredSession {
         StoredSession {
             workspace,
+            rig: "test".to_owned(),
             title: String::new(),
             archived: false,
             snapshot: SessionSnapshot::default(),

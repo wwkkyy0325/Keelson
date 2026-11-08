@@ -12,18 +12,19 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
-    AccessKind, ArgValue, CancelToken, Event, InteractionPort, KernelError, ModelChunk, ModelError,
-    ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList, ToolArgs,
+    AcceptanceItem, AccessKind, ArgValue, CancelToken, Event, InteractionPort, KernelError,
+    ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList,
+    ToolArgs, VerifySpec,
 };
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
     load_profile, validate_config, CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool,
-    EventLog, EventRecord, HistoryStage, InteractionBroker, InterjectionPush, KernelOptions,
-    LatestStage, ListDirTool, ListTrashTool, LocalTrashStore, MakeDirTool, MemoryStage, MockModel,
-    MockStep, MoveFileTool, PermissionEngine, ReadFileTool, RestoreFileTool, RootScope,
-    RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver,
-    TurnDriverConfig, TurnOutcome, WriteFileTool,
+    EditFileTool, EventLog, EventRecord, HistoryStage, InteractionBroker, InterjectionPush,
+    KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalTrashStore, MakeDirTool,
+    MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine, ReadFileTool,
+    RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool,
+    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -207,6 +208,7 @@ impl Engine {
             model,
         } = request;
 
+        let rig_name = rig.name.clone();
         let workspace = std::fs::canonicalize(&workspace).map_err(|error| KernelError::Io {
             message: format!(
                 "cannot resolve workspace `{}`: {error}",
@@ -225,7 +227,15 @@ impl Engine {
                 state_dir.display()
             ),
         })?;
-        let outputs_dir = state_dir.join("outputs");
+        // Outputs and trash belong to one project, not to the whole account.
+        let project_dir = project_state_dir(&state_dir, &workspace);
+        std::fs::create_dir_all(&project_dir).map_err(|error| KernelError::Io {
+            message: format!(
+                "cannot create project state directory `{}`: {error}",
+                project_dir.display()
+            ),
+        })?;
+        let outputs_dir = project_dir.join("outputs");
 
         let mut config = load_profile(&rig.profile)?;
         let mut permissions = PermissionEngine::new(&workspace, config.permission_level)?;
@@ -240,12 +250,13 @@ impl Engine {
         let permissions = Arc::new(permissions.with_outputs(outputs_dir.clone()));
 
         let store = Store::open(store_path);
-        let (restored, session) = match store.load(&workspace)? {
+        let (restored, mut session) = match store.load(&workspace)? {
             Some(session) => (Some(session.snapshot.clone()), session),
             None => (
                 None,
                 StoredSession {
                     workspace: workspace.clone(),
+                    rig: rig_name.clone(),
                     title: String::new(),
                     archived: false,
                     snapshot: Default::default(),
@@ -254,6 +265,11 @@ impl Engine {
                 },
             ),
         };
+        // Documents written before the field existed belong to the same rig
+        // that opens them; the next persist writes the value.
+        if session.rig.is_empty() {
+            session.rig = rig_name;
+        }
         let todos = Arc::new(Mutex::new(session.todos.clone().unwrap_or_default()));
 
         let events = Arc::new(EventLog::new());
@@ -263,7 +279,7 @@ impl Engine {
             events.clone(),
         ));
 
-        let registry = Arc::new(tools(&state_dir, &config, todos.clone())?);
+        let registry = Arc::new(tools(&project_dir, &config, todos.clone())?);
         let context = ContextBuilder::new(vec![
             Arc::new(SystemStage::new()),
             Arc::new(TaskStateStage::new()),
@@ -308,6 +324,11 @@ impl Engine {
             },
         )
         .with_outputs_dir(outputs_dir);
+        // A turn that edited the workspace is checked by the project's own
+        // command. A conversational turn skips it.
+        if let Some(check) = workspace_check(&workspace) {
+            driver = driver.with_acceptance_after_changes(vec![check], 2);
+        }
         if let Some(snapshot) = restored {
             driver = driver.with_session(Session::restore(snapshot)?);
         }
@@ -524,12 +545,68 @@ fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
     lines
 }
 
+/// The first supported project check. An unknown ecosystem stays unverified
+/// instead of guessing a command.
+fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
+    if workspace.join("Cargo.toml").is_file() {
+        return Some(AcceptanceItem {
+            id: "workspace-tests".to_owned(),
+            description: "cargo test".to_owned(),
+            required: true,
+            verify: VerifySpec::Test {
+                program: "cargo".to_owned(),
+                args: vec!["test".to_owned()],
+            },
+        });
+    }
+    if has_python_tests(workspace) {
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        return Some(AcceptanceItem {
+            id: "workspace-tests".to_owned(),
+            description: "python -m unittest discover -v".to_owned(),
+            required: true,
+            verify: VerifySpec::Test {
+                program: python.to_owned(),
+                args: vec![
+                    "-m".to_owned(),
+                    "unittest".to_owned(),
+                    "discover".to_owned(),
+                    "-v".to_owned(),
+                ],
+            },
+        });
+    }
+    None
+}
+
+fn has_python_tests(workspace: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(workspace) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        name.ends_with(".py") && (name.starts_with("test_") || name.ends_with("_test.py"))
+    })
+}
+
+/// One project's outputs and trash. The account state root is shared, but a
+/// project must not list or restore another project's files.
+fn project_state_dir(state_dir: &Path, workspace: &Path) -> PathBuf {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in workspace.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    state_dir.join("projects").join(format!("{hash:016x}"))
+}
+
 fn tools(
-    state_dir: &Path,
+    project_dir: &Path,
     config: &RuntimeConfig,
     todos: Arc<Mutex<TodoList>>,
 ) -> Result<ToolRegistry, KernelError> {
-    let trash = Arc::new(LocalTrashStore::at(state_dir.join("trash")));
+    let trash = Arc::new(LocalTrashStore::at(project_dir.join("trash")));
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
     registry.register(Arc::new(ReadFileTool::new()))?;
@@ -540,6 +617,7 @@ fn tools(
         ShellTool::coding_defaults().with_timeout(config.limits().tool_timeout),
     ))?;
     registry.register(Arc::new(WriteFileTool::new(trash.clone())))?;
+    registry.register(Arc::new(EditFileTool::new(trash.clone())))?;
     registry.register(Arc::new(MoveFileTool::new(trash.clone())))?;
     registry.register(Arc::new(DeleteFileTool::new(trash.clone())))?;
     registry.register(Arc::new(ListTrashTool::new(trash.clone())))?;
@@ -791,6 +869,7 @@ system = "prompt.md"
 
         let session = fixture.session();
         assert_eq!(session.title, "renamed");
+        assert_eq!(session.rig, "test");
         assert!(session.archived);
 
         let reopened = fixture.engine(Arc::new(DeferAllInteractionPort));
@@ -870,6 +949,57 @@ system = "prompt.md"
             vec![1]
         );
         assert_eq!(older.next_before, None);
+    }
+
+    #[test]
+    fn the_tool_registry_exposes_edit_file() {
+        let fixture = Fixture::new();
+        let config = load_profile(&fixture.rig().profile).expect("the profile loads");
+        let todos = Arc::new(Mutex::new(TodoList::default()));
+
+        let registry = tools(fixture.dir.path(), &config, todos).expect("the registry builds");
+
+        assert!(registry.get("edit_file").is_some());
+    }
+
+    #[test]
+    fn a_cargo_workspace_gets_a_test_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
+            .expect("a manifest");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(check.required);
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == "cargo" && args == &["test".to_owned()]
+        ));
+
+        let python = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(python.path().join("test_stats.py"), "pass\n").expect("a test file");
+        let check = workspace_check(python.path()).expect("a python check");
+        let expected = if cfg!(windows) { "python" } else { "python3" };
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == expected && args.iter().any(|arg| arg == "unittest")
+        ));
+
+        let empty = tempfile::TempDir::new().expect("a temp dir");
+        assert!(workspace_check(empty.path()).is_none());
+    }
+
+    #[test]
+    fn each_workspace_gets_its_own_project_state_directory() {
+        let state = Path::new("state");
+        let first = project_state_dir(state, Path::new("work/first"));
+        let second = project_state_dir(state, Path::new("work/second"));
+
+        assert_ne!(first, second);
+        assert_eq!(first, project_state_dir(state, Path::new("work/first")));
+        assert!(first.starts_with(state.join("projects")));
     }
 
     #[tokio::test]

@@ -492,3 +492,49 @@ changed, and when hover actions replaced the timestamp. Each was a layout
 change, not an animation: a scrollbar appearing, a count changing width, or
 `display: none` on the actions. Reserving space or moving the toolbar out of
 the flow removes the reflow instead of trying to hide it.
+
+## 2026-11-08 — M4 start: project state isolation and `edit_file`
+
+- `outputs/` and `trash/` moved under
+  `<state>/projects/<workspace-hash>/`. Two projects can no longer list or
+  restore each other's trashed files.
+- A conversation document records the `rig` that created it;
+  `SessionMeta`/`SessionView` mirror it. Legacy documents are filled on the
+  next open. The suite picker still waits for a second suite.
+- Keel gains `edit_file { path, old, new, replace_all? }`: a literal
+  search-replace, one occurrence by default, zero or multiple matches fail
+  without writing, UTF-8 regular files only, and the previous version goes to
+  the trash. ADR 0018 and three contract tests.
+- Keelson registers the tool and both coding profiles expose it.
+  `cargo run -- doctor` loads both rigs.
+
+### Why
+
+The edit tool is the first M4 capability, but it multiplies the number of
+writes into the trash. Per-project state is the isolation the editor needs;
+recording the rig now avoids a migration when the second suite arrives.
+The edit contract is deliberately exact: a fuzzy match would hide an
+unintended change, and an ambiguous match must ask for a longer snippet
+rather than guess.
+
+## 2026-11-08 — M4: automatic verification
+
+- Keel `TurnDriver::with_acceptance_after_changes`: the host checklist runs
+  only when the turn successfully used a workspace-changing tool
+  (`write_file`, `edit_file`, `move_file`, `delete_file`, `make_dir`,
+  `restore_file`). A conversational turn skips the check entirely; `shell` is
+  excluded so running tests cannot trigger a second run.
+- Keelson supplies the project's check: `Cargo.toml` → `cargo test`; a
+  Python `test_*.py` file → `python -m unittest discover -v` (or `python3`).
+  Unknown ecosystems stay unverified instead of guessing.
+- `tests/demo_eval.rs`: an ignored live eval that copies
+  `examples/demo-workspace`, runs one turn, and requires the demo tests to
+  pass. It is skipped without `ANTHROPIC_AUTH_TOKEN`.
+
+### Why
+
+Running the full test suite after every chat message would make a
+conversational turn expensive and slow. The edit is the trigger, and the
+project's own command is the evidence; the kernel already owns the Verify
+phase and the bounded reprompt loop, so the host only supplies the checklist.
+The unknown-ecosystem rule avoids inventing a check that may not exist.
