@@ -144,11 +144,14 @@ The coding profile's working set is 64000 tokens and its output reserve is
 than sending a prompt it cannot hold. A turn that changed the workspace runs
 one project check (Cargo, Go, nested Python tests, or Node only with a
 `scripts.test`) after the turn. `read_file` can read a 1-based line range
-without altering its bytes; `code_search` can be case-sensitive and filtered
-by a file-name or path glob; the `glob` tool finds files by path. The engine
-keeps a SHA-256 read ledger: `write_file` on an existing file and `edit_file`
-require a current read, and `edit_file` matches across a CRLF/LF difference
-without changing the file's line endings. The workspace's `AGENTS.md`
+without altering its bytes; `code_search` can be case-sensitive, filtered by a
+file-name or path glob and match a regex on request; the `glob` tool finds
+files by path. The engine
+keeps a SHA-256 read ledger: `write_file` on an existing file, `edit_file` and
+`multi_edit` require a current read, and the edit tools match across a CRLF/LF
+difference without changing the file's line endings. `multi_edit` validates
+several replacements to one file in memory and writes them as one atomic
+change. The workspace's `AGENTS.md`
 (fallback `CLAUDE.md`) is appended to the system prompt at engine open, capped
 at 16 KiB. Background shell commands run through the kernel's registry, write
 under the project's `outputs/`, and are killed when the engine drops.
@@ -214,7 +217,7 @@ M4b — Coding rig capability pass (done)
   set; a catalog model with a smaller window reduces the working set.
 - Keel `read_file` reads a 1-based line range with its exact bytes preserved
   (ADR 0019). Keel `code_search` is case-sensitive on request and accepts a
-  file-name or path glob; it stays a literal substring search.
+  file-name or path glob.
 - `shell` background commands are wired to the kernel's
   `LocalBackgroundTasks`, with output under the project's `outputs/`.
 - Automatic verification detects Cargo, Go, Python (nested) and Node (only
@@ -236,6 +239,25 @@ M4c — Coding rig reliability (done)
   system prompt at engine open, capped at 16 KiB.
 - Verify: the live eval edits a CRLF demo, keeps its line endings and passes
   its tests; kernel and host tests pin the guards.
+
+M4d — Atomic multi-edit (done)
+
+- `multi_edit` applies parallel `old`/`new` lists to one file in memory and
+  writes once; a missing or ambiguous pair fails the whole call before any
+  backup or write (ADR 0022 in Keel). The read ledger is checked once.
+- The persona tells the model to use it for several changes to one file.
+- Verify: kernel tests pin the atomic failure, one backup, unequal lists, the
+  read guard and the line-ending fallback; both profiles expose the tool.
+
+M4e — Regex content search (done)
+
+- `code_search` accepts `regex: true`; the literal substring path remains the
+  default. `case_sensitive` applies in both modes, the pattern is compiled
+  once per call, and an invalid pattern is an argument error before the walk.
+  Matching stays line-oriented with the existing limits (ADR 0023 in Keel).
+- Adds the `regex` dependency (MIT OR Apache-2.0); the license audit passes.
+- Verify: a signature pattern, the case flag in regex mode and an invalid
+  pattern; the literal and glob tests are unchanged.
 
 M5 — A second rig
 

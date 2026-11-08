@@ -1897,6 +1897,7 @@ dependencies = [
  "async-trait",
  "keel-core",
  "keel-policy",
+ "regex",
  "serde",
  "sha2",
  "tokio",

@@ -640,3 +640,44 @@ work, not failures that merely waste a turn. The read ledger and the narrow
 line-ending fallback fix them without adding fuzzy matching that would hide
 an ambiguity. `glob` closes the last obvious discovery gap against the tools
 the major coding agents expose.
+
+## 2026-11-08 — M4d: `multi_edit` is atomic per file
+
+- Keel `MultiEditTool`: `multi_edit { path, old: string_list, new:
+  string_list, replace_all? }`. Parallel lists, applied in order to an
+  in-memory copy. A missing or ambiguous pair fails the whole call before a
+  backup or a write; a successful batch takes one backup and one write.
+- Matching is the `edit_file` contract, including the read ledger and the
+  line-ending fallback. ADR 0022 in Keel records it.
+- Both coding profiles expose the tool; the persona recommends it when one
+  file needs several changes.
+- Keel: 107 lib tests (six new multi-edit cases) and 22 integration tool
+  tests, clippy.
+
+### Why
+
+A three-step edit made through three `edit_file` calls can leave two changes
+on disk when the third fails. The trash recovers a file, but it does not make
+the batch atomic. `multi_edit` closes that gap for the common one-file case;
+a multi-file patch remains a separate decision.
+
+## 2026-11-08 — M4e: regex content search
+
+- `code_search` accepts `regex: true`. The literal substring path remains the
+  default; `case_sensitive` applies in both modes, the pattern is compiled
+  once per call, and an invalid pattern fails before the walk.
+- Matching stays line-oriented with the existing file-size, depth, result and
+  line-length limits, skip list, `glob` filter and read permission.
+- Adds `regex` 1.13 (MIT OR Apache-2.0) to `keel-runtime`; `cargo deny check
+  licenses` passes and the audit table records it. ADR 0023 in Keel records
+  the contract.
+- Three new search tests; Keel 107 lib + 25 integration tool tests, clippy.
+  Keelson 27 tests, desktop 25, clippy; `doctor` loads both profiles.
+
+### Why
+
+Literal search was the last coding component the surveyed agents all have and
+Keelson lacked. A regex search is smaller and more certain than a custom
+multi-file patch format: the model already knows regex, the wire already
+carries booleans, and the existing traversal supplies the limits. Pattern
+search no longer needs a shell confirmation or a platform grep.

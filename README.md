@@ -140,5 +140,12 @@ stale edit is refused instead of applied. `edit_file` matches across CRLF/LF
 without changing the file's line endings; `glob` finds files by path; the
 workspace's `AGENTS.md` (fallback `CLAUDE.md`) is added to the system prompt.
 
+M4d: `multi_edit` applies several replacements to one file atomically. A
+missing or ambiguous pair fails the whole call before anything is written;
+the batch takes one backup and one write.
+
+M4e: `code_search` matches a regex on request; a literal substring remains
+the default, with the same file, depth, result and permission limits.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

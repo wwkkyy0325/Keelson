@@ -22,10 +22,10 @@ use keel_runtime::{
     load_profile, validate_config, BackgroundTasks, CodeSearchTool, ContextBuilder, DeleteFileTool,
     EchoTool, EditFileTool, EventLog, EventRecord, GlobTool, HistoryStage, InteractionBroker,
     InterjectionPush, KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks,
-    LocalTrashStore, MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine,
-    ReadFileTool, ReadLedger, RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage,
-    TaskStateStage, TodoTool, ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome,
-    WriteFileTool,
+    LocalTrashStore, MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, MultiEditTool,
+    PermissionEngine, ReadFileTool, ReadLedger, RestoreFileTool, RootScope, RuntimeConfig,
+    ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver, TurnDriverConfig,
+    TurnOutcome, WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -762,7 +762,10 @@ fn tools(
         WriteFileTool::new(trash.clone()).with_ledger(ledger.clone()),
     ))?;
     registry.register(Arc::new(
-        EditFileTool::new(trash.clone()).with_ledger(ledger),
+        EditFileTool::new(trash.clone()).with_ledger(ledger.clone()),
+    ))?;
+    registry.register(Arc::new(
+        MultiEditTool::new(trash.clone()).with_ledger(ledger),
     ))?;
     registry.register(Arc::new(MoveFileTool::new(trash.clone())))?;
     registry.register(Arc::new(DeleteFileTool::new(trash.clone())))?;
@@ -1146,6 +1149,7 @@ system = "prompt.md"
             tools(fixture.dir.path(), &config, todos, background).expect("the registry builds");
 
         assert!(registry.get("edit_file").is_some());
+        assert!(registry.get("multi_edit").is_some());
         assert!(registry.get("glob").is_some());
     }
 

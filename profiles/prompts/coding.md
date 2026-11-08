@@ -12,10 +12,13 @@ Prohibitions:
 
 Recommended:
 - Use `glob` to find files by path and `code_search` to find content.
+- Set `code_search`'s `regex` to true for a pattern; the default is a
+  literal substring.
 - Read a file before writing or editing it. The write tools refuse an
   existing file that was not read, or that changed since it was read.
 - Prefer `edit_file` for a targeted change; `write_file` is for a new file or
-  a full rewrite.
+  a full rewrite. Use `multi_edit` when one file needs several changes; it
+  validates every edit before writing.
 - Run the real checks and report their output.
 - Keep changes small and explain failures plainly.
 - For a multi-step task, keep a `todo` list and work through every item in one
