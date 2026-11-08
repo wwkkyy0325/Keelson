@@ -1164,3 +1164,22 @@ The tools skipped a fixed list of build directories but walked everything
 else, including a project's ignored `data/` or `generated/` trees. On a real
 repository that costs time and returns noise; the project's own ignore rules
 are the right filter.
+
+## 2026-11-08 — M4ab: read-only git review
+
+- Added host tool `git_diff`: `mode = status|diff` (default diff), optional
+  `path`. It is read-only and needs no permission card.
+- Runs `git -c color.ui=false --no-optional-locks -C <root> ...`; the diff
+  uses `--no-ext-diff`; a 15 s timeout and 32 KiB cap bound it. A directory
+  that is not a repository returns `not a git repository`.
+- Registered in the host and exposed by both coding profiles; the persona asks
+  the model to review the tree before finishing.
+- Keelson: 55 lib tests (+4), clippy. Polyglot eval 11.36 s; cross-file eval
+  12.39 s; desktop 28.
+- Task doc: `docs/llmwiki/tasks/m4ab-git-review-tool.md`.
+
+### Why
+
+The shell tool runs git only after the user confirms. Reviewing the working
+tree is a read operation the model should do before reporting done, and a
+dedicated tool removes that friction without widening write access.

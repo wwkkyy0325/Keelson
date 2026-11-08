@@ -3,6 +3,7 @@
 //! This module owns no output. It returns kernel outcomes; the host decides
 //! what the user sees and where it goes (ADR 0004).
 
+mod git;
 mod store;
 
 use std::path::{Path, PathBuf};
@@ -1149,6 +1150,7 @@ fn tools(
     registry.register(Arc::new(MakeDirTool::new()))?;
     registry.register(Arc::new(CodeSearchTool::new()))?;
     registry.register(Arc::new(GlobTool::new()))?;
+    registry.register(Arc::new(git::GitDiffTool::new()))?;
     registry.register(Arc::new(
         ShellTool::coding_defaults()
             .with_timeout(config.limits().tool_timeout)
@@ -1658,6 +1660,7 @@ system = "prompt.md"
         assert!(registry.get("multi_edit").is_some());
         assert!(registry.get("apply_edits").is_some());
         assert!(registry.get("glob").is_some());
+        assert!(registry.get("git_diff").is_some());
     }
 
     #[test]

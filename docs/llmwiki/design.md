@@ -166,7 +166,8 @@ without altering its bytes, and can prefix absolute line numbers on request
 (M4w); `code_search` can be case-sensitive, filtered by a
 file-name or path glob and match a regex on request; the `glob` tool finds
 files by path. Both walks respect `.gitignore`, `.ignore` and git excludes
-(M4aa). The engine
+(M4aa). A read-only `git_diff` tool shows the workspace status or unstaged
+diff without a shell confirmation (M4ab). The engine
 keeps a SHA-256 read ledger: `write_file` on an existing file needs a full
 read, `edit_file` and `multi_edit` need a current read, and the edit tools
 match across a CRLF/LF difference without changing the file's line endings.

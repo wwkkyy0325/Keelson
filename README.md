@@ -227,5 +227,8 @@ M4aa: `code_search` and `glob` respect `.gitignore`, `.ignore` and git
 excludes, and the walk runs off the async thread. Hidden files remain
 searchable.
 
+M4ab: `git_diff` shows the workspace status or unstaged diff without a
+confirmation; it is read-only, path-limited and capped.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

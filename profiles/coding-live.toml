@@ -16,7 +16,7 @@ stages = ["system", "memory", "history", "latest"]
 budget_tokens = 64000
 
 [tools]
-visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", "list_trash", "restore_file", "list_dir", "glob", "code_search", "make_dir", "move_file", "delete_file", "shell", "todo"]
+visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", "list_trash", "restore_file", "list_dir", "glob", "code_search", "git_diff", "make_dir", "move_file", "delete_file", "shell", "todo"]
 budget = 1000
 
 [verification]

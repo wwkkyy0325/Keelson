@@ -24,6 +24,8 @@ Recommended:
   a full rewrite. Use `multi_edit` when one file needs several changes; it
   validates every edit before writing. Use `apply_edits` when one change
   spans files; it validates every replacement before writing anything.
+- Use `git_diff` to review the working tree before finishing; it is read-only
+  and needs no confirmation.
 - Run the real checks and report their output.
 - Set `shell`'s `mutates` to true when the command writes to the workspace; a
   test-only command leaves it false.
