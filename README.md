@@ -161,5 +161,11 @@ turn changed, including creates and deletes, and keeps the transcript.
 M4i: a failed automatic check keeps only the non-passing evidence, with the
 tail of the output, and shows it under the turn's verification badge.
 
+M4k: the coding rig works on Python. The check prefers the project's `.venv`
+and runs `python -m pytest -q` when the project declares pytest;
+`unittest discover` would report zero tests and pass. A copied ValveGuard
+accepted a `compare_demos.py` comparison harness; the clean run passed 23
+tests (7 new) and skipped 6 in 138.66 s.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

@@ -825,3 +825,31 @@ rig added detection, a schema migration, persistence, file backup/restore and
 tests in a real Rust project. It also showed that a green host check is not
 product acceptance, that a platform-specific test assertion can be the only
 failure, and that an unattended turn cannot self-verify without execution.
+
+## 2026-11-08 — M4k: a real Python task, and pytest verification
+
+- `workspace_check` selects `python -m pytest -q` when the project declares
+  pytest (config files or a requirements file), instead of always running
+  `unittest discover`. On pytest modules the old command exited 0 with zero
+  tests, a false green.
+- The Python check prefers a project `.venv`/`venv` interpreter.
+- The persona asks for platform-neutral expected paths in tests.
+- The real-task harness accepts `KEELSON_TASK_PYTHON`, prepends its directory
+  to `PATH`, prints the resolved interpreter, and denies host-changing
+  commands (package managers, process killers, installers). A test pins the
+  guard.
+- Ran a copied ValveGuard (1.3 MB, baseline 16 passed/6 skipped) on the
+  unchecked `compare_demos.py` task. The first run passed 20/6 but spent
+  1477.76 s: a `D:/...` PATH entry was dropped by Git Bash, so `python`
+  resolved to a broken conda environment and the model installed user-site
+  packages. The clean re-run with `KEELSON_TASK_PYTHON` resolved the project
+  venv, made no host changes, and passed **23 passed (7 new), 6 skipped** in
+  138.66 s.
+- Task doc: `docs/llmwiki/tasks/m4k-real-task-valveguard.md`.
+
+### Why
+
+A test command that discovers zero tests must not count as a pass, and the
+interpreter a project depends on is part of the rig, not an accident of PATH.
+The first run also showed that blanket execution approval is unsafe on a real
+machine; the harness now refuses commands that leave the copy.

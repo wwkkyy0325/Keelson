@@ -20,6 +20,9 @@ Recommended:
   a full rewrite. Use `multi_edit` when one file needs several changes; it
   validates every edit before writing.
 - Run the real checks and report their output.
+- In tests, build expected paths with the language's path API (`Path::join` in
+  Rust, `Path(...) / "name"` in Python, `path.join` in Node), never a
+  mixed-separator string. Run the suite once to confirm.
 - Keep changes small and explain failures plainly.
 - For a multi-step task, keep a `todo` list and work through every item in one
   turn. Do not stop after one item to ask whether to continue.

@@ -686,19 +686,28 @@ fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
         });
     }
     if has_python_tests(workspace) {
-        let python = if cfg!(windows) { "python" } else { "python3" };
+        let python = python_program(workspace);
+        let pytest = uses_pytest(workspace);
         return Some(AcceptanceItem {
             id: "workspace-tests".to_owned(),
-            description: "python -m unittest discover -v".to_owned(),
+            description: if pytest {
+                format!("{python} -m pytest -q")
+            } else {
+                format!("{python} -m unittest discover -v")
+            },
             required: true,
             verify: VerifySpec::Test {
-                program: python.to_owned(),
-                args: vec![
-                    "-m".to_owned(),
-                    "unittest".to_owned(),
-                    "discover".to_owned(),
-                    "-v".to_owned(),
-                ],
+                program: python,
+                args: if pytest {
+                    vec!["-m".to_owned(), "pytest".to_owned(), "-q".to_owned()]
+                } else {
+                    vec![
+                        "-m".to_owned(),
+                        "unittest".to_owned(),
+                        "discover".to_owned(),
+                        "-v".to_owned(),
+                    ]
+                },
             },
         });
     }
@@ -742,6 +751,65 @@ fn has_python_tests(workspace: &Path) -> bool {
         }
     }
     false
+}
+
+/// A project-local virtual environment is the interpreter the project's
+/// dependencies live in; a bare `python` often misses them.
+fn python_program(workspace: &Path) -> String {
+    let (subdirectory, binary) = if cfg!(windows) {
+        ("Scripts", "python.exe")
+    } else {
+        ("bin", "python")
+    };
+    for venv in [".venv", "venv"] {
+        let path = workspace.join(venv).join(subdirectory).join(binary);
+        if path.is_file() {
+            return path.to_string_lossy().into_owned();
+        }
+    }
+    if cfg!(windows) {
+        "python".to_owned()
+    } else {
+        "python3".to_owned()
+    }
+}
+
+/// Pytest-style tests exit `unittest discover` with code 0 and no tests, which
+/// would count as a pass. Run pytest when the project declares it.
+fn uses_pytest(workspace: &Path) -> bool {
+    for name in [
+        "pytest.ini",
+        "conftest.py",
+        "pyproject.toml",
+        "setup.cfg",
+        "tox.ini",
+    ] {
+        if let Ok(text) = std::fs::read_to_string(workspace.join(name)) {
+            if mentions_pytest(&text) {
+                return true;
+            }
+        }
+    }
+    let Ok(entries) = std::fs::read_dir(workspace) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        if !name.starts_with("requirements") || !name.ends_with(".txt") {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(entry.path()) {
+            if mentions_pytest(&text) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn mentions_pytest(text: &str) -> bool {
+    text.lines()
+        .any(|line| !line.trim_start().starts_with('#') && line.contains("pytest"))
 }
 
 fn is_skipped_test_directory(path: &Path) -> bool {
@@ -1396,6 +1464,92 @@ system = "prompt.md"
 
         let empty = tempfile::TempDir::new().expect("a temp dir");
         assert!(workspace_check(empty.path()).is_none());
+    }
+
+    #[test]
+    fn a_pytest_project_gets_a_pytest_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(
+            dir.path().join("test_stats.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+        )
+        .expect("a pytest config");
+
+        let check = workspace_check(dir.path()).expect("a python check");
+        let expected = if cfg!(windows) { "python" } else { "python3" };
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == expected && args == &["-m".to_owned(), "pytest".to_owned(), "-q".to_owned()]
+        ));
+        assert_eq!(check.description, format!("{expected} -m pytest -q"));
+    }
+
+    #[test]
+    fn a_pytest_dependency_selects_pytest() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("tests")).expect("a test directory");
+        std::fs::write(
+            dir.path().join("tests/test_stats.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a test file");
+        std::fs::write(dir.path().join("requirements-dev.txt"), "pytest==7.4.4\n")
+            .expect("a requirements file");
+
+        let check = workspace_check(dir.path()).expect("a python check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref args, .. }
+                if args.iter().any(|arg| arg == "pytest")
+        ));
+    }
+
+    #[test]
+    fn a_commented_pytest_mention_keeps_unittest() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(dir.path().join("test_stats.py"), "pass\n").expect("a test file");
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "# pytest would also work here\n[project]\nname = \"x\"\n",
+        )
+        .expect("a manifest");
+
+        let check = workspace_check(dir.path()).expect("a python check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref args, .. }
+                if args.iter().any(|arg| arg == "unittest")
+        ));
+    }
+
+    #[test]
+    fn a_project_venv_is_preferred() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(dir.path().join("test_stats.py"), "pass\n").expect("a test file");
+        let (subdirectory, binary) = if cfg!(windows) {
+            ("Scripts", "python.exe")
+        } else {
+            ("bin", "python")
+        };
+        let python = dir.path().join(".venv").join(subdirectory).join(binary);
+        std::fs::create_dir_all(python.parent().expect("parent")).expect("a venv directory");
+        std::fs::write(&python, "").expect("an interpreter");
+
+        let check = workspace_check(dir.path()).expect("a python check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, .. }
+                if program == &python.to_string_lossy()
+        ));
     }
 
     #[test]

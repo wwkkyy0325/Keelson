@@ -5,8 +5,13 @@
 //!
 //! ```text
 //! KEELSON_TASK_WORKSPACE=... KEELSON_TASK_PROMPT=... \
+//! KEELSON_TASK_PYTHON=.../.venv/Scripts/python.exe \
 //!   cargo test --test real_task_eval -- --ignored --nocapture
 //! ```
+//!
+//! `KEELSON_TASK_PYTHON` is optional; when set, its directory goes to the
+//! front of `PATH` so the project's interpreter is used by both the model and
+//! the host check.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,6 +28,26 @@ use keelson::rig::Rig;
 /// this on a trusted copy; a `shell` call is not sandboxed.
 struct ApproveExecution;
 
+/// A turn must not change the machine outside the copied workspace. Package
+/// managers, process killers and installers are denied even though the rest of
+/// the execution is approved.
+fn changes_the_host(prompt: &str) -> bool {
+    const BLOCKED: [&str; 11] = [
+        "-m,pip",
+        "pip install",
+        "pip,install",
+        "conda",
+        "taskkill",
+        "wmic",
+        "cargo install",
+        "npm install -g",
+        "rustup",
+        "winget",
+        "choco",
+    ];
+    BLOCKED.iter().any(|needle| prompt.contains(needle))
+}
+
 #[async_trait]
 impl InteractionPort for ApproveExecution {
     async fn request(
@@ -30,14 +55,29 @@ impl InteractionPort for ApproveExecution {
         request: InteractionRequest,
         _cancel: &CancelToken,
     ) -> InteractionResponse {
-        if request.kind == InteractionKind::PermissionApproval {
-            InteractionResponse::Approved {
-                scope: GrantScope::Once,
-            }
-        } else {
-            InteractionResponse::Deferred
+        if request.kind != InteractionKind::PermissionApproval {
+            return InteractionResponse::Deferred;
+        }
+        if changes_the_host(&request.prompt) {
+            return InteractionResponse::Rejected {
+                reason: "the harness denies commands that change the host".to_owned(),
+            };
+        }
+        InteractionResponse::Approved {
+            scope: GrantScope::Once,
         }
     }
+}
+
+#[test]
+fn host_changing_commands_are_blocked() {
+    assert!(changes_the_host(
+        "Allow `shell` to execute `python -m pip install x`? command: args=-m,pip,install"
+    ));
+    assert!(changes_the_host("command: program=taskkill args=/PID,1,/F"));
+    assert!(!changes_the_host(
+        "command: program=python args=-m,pytest,-q"
+    ));
 }
 
 #[tokio::test]
@@ -55,6 +95,27 @@ async fn run_the_task() {
         std::env::var("KEELSON_TASK_WORKSPACE").expect("KEELSON_TASK_WORKSPACE is required"),
     );
     let prompt = std::env::var("KEELSON_TASK_PROMPT").expect("KEELSON_TASK_PROMPT is required");
+    if let Some(python) = std::env::var_os("KEELSON_TASK_PYTHON") {
+        let directory = Path::new(&python)
+            .parent()
+            .expect("KEELSON_TASK_PYTHON must name an interpreter")
+            .to_path_buf();
+        let mut paths = vec![directory];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        std::env::set_var("PATH", std::env::join_paths(paths).expect("a valid PATH"));
+    }
+    match std::process::Command::new("python")
+        .args(["-c", "import sys; print(sys.executable)"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            eprintln!("python: {}", String::from_utf8_lossy(&output.stdout).trim())
+        }
+        Ok(output) => eprintln!("python: exit code {:?}", output.status.code()),
+        Err(error) => eprintln!("python: {error}"),
+    }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let state_dir = root.join("target/real-task-state");
     let _ = std::fs::remove_dir_all(&state_dir);

@@ -143,7 +143,10 @@ The coding profile's working set is 64000 tokens and its output reserve is
 8192; a catalog model with a smaller window lowers the working set rather
 than sending a prompt it cannot hold. A turn that changed the workspace runs
 one project check (Cargo, Go, nested Python tests, or Node only with a
-`scripts.test`) after the turn. `read_file` can read a 1-based line range
+`scripts.test`) after the turn. The Python check prefers the project's `.venv`
+and runs `pytest` when the project declares it; `unittest discover` treats a
+pytest module as zero tests and exits 0, which would be a false green.
+`read_file` can read a 1-based line range
 without altering its bytes; `code_search` can be case-sensitive, filtered by a
 file-name or path glob and match a regex on request; the `glob` tool finds
 files by path. The engine
@@ -167,7 +170,11 @@ the badge (M4i). A copied GameVault core accepted a root-level save-detection
 task and, in a second turn, the schema-v3 persistence/backup path; with an
 approving interaction port, a third turn found and fixed its own Windows path
 test (293 tests pass, 69.47 s). A green host check was not product acceptance,
-and denied calls lost their arguments, now fixed in the dispatcher (M4j).
+and denied calls lost their arguments, now fixed in the dispatcher (M4j). A
+copied ValveGuard then accepted a `compare_demos.py` comparison harness in
+138.66 s (23 passed, 7 new; 6 skipped); the first attempt exposed that a
+dropped PATH made the model repair the global Python instead of the task
+(M4k).
 
 ## Checkpoints
 
