@@ -806,9 +806,23 @@ fn project_directories(workspace: &Path, file_name: &str) -> Vec<PathBuf> {
     found
 }
 
-fn check_item(description: String, program: String, args: Vec<String>) -> AcceptanceItem {
+fn check_id(ecosystem: &str, project: &Path) -> String {
+    let project = if project.as_os_str().is_empty() {
+        "root".to_owned()
+    } else {
+        command_path(project)
+    };
+    format!("workspace-tests:{ecosystem}:{project}")
+}
+
+fn check_item(
+    id: String,
+    description: String,
+    program: String,
+    args: Vec<String>,
+) -> AcceptanceItem {
     AcceptanceItem {
-        id: "workspace-tests".to_owned(),
+        id,
         description,
         required: true,
         verify: VerifySpec::Test { program, args },
@@ -816,8 +830,10 @@ fn check_item(description: String, program: String, args: Vec<String>) -> Accept
 }
 
 fn cargo_check(project: &Path) -> AcceptanceItem {
+    let id = check_id("cargo", project);
     if project.as_os_str().is_empty() {
         return check_item(
+            id,
             "cargo test".to_owned(),
             "cargo".to_owned(),
             vec!["test".to_owned()],
@@ -825,6 +841,7 @@ fn cargo_check(project: &Path) -> AcceptanceItem {
     }
     let manifest = command_path(&project.join("Cargo.toml"));
     check_item(
+        id,
         format!("cargo test --manifest-path {manifest}"),
         "cargo".to_owned(),
         vec!["test".to_owned(), "--manifest-path".to_owned(), manifest],
@@ -832,8 +849,10 @@ fn cargo_check(project: &Path) -> AcceptanceItem {
 }
 
 fn go_check(project: &Path) -> AcceptanceItem {
+    let id = check_id("go", project);
     if project.as_os_str().is_empty() {
         return check_item(
+            id,
             "go test ./...".to_owned(),
             "go".to_owned(),
             vec!["test".to_owned(), "./...".to_owned()],
@@ -841,6 +860,7 @@ fn go_check(project: &Path) -> AcceptanceItem {
     }
     let directory = command_path(project);
     check_item(
+        id,
         format!("go -C {directory} test ./..."),
         "go".to_owned(),
         vec![
@@ -853,8 +873,10 @@ fn go_check(project: &Path) -> AcceptanceItem {
 }
 
 fn node_check(project: &Path) -> AcceptanceItem {
+    let id = check_id("node", project);
     if project.as_os_str().is_empty() {
         return check_item(
+            id,
             "npm test".to_owned(),
             "npm".to_owned(),
             vec!["test".to_owned()],
@@ -862,6 +884,7 @@ fn node_check(project: &Path) -> AcceptanceItem {
     }
     let prefix = command_path(project);
     check_item(
+        id,
         format!("npm --prefix {prefix} test"),
         "npm".to_owned(),
         vec!["--prefix".to_owned(), prefix, "test".to_owned()],
@@ -965,7 +988,7 @@ fn python_check(workspace: &Path, tests: &Path) -> AcceptanceItem {
         args.push("-v".to_owned());
     }
     let description = format!("{python} {}", args.join(" "));
-    check_item(description, python, args)
+    check_item(check_id("python", tests), description, python, args)
 }
 
 /// A project-local virtual environment is the interpreter the project's
@@ -1713,6 +1736,7 @@ system = "prompt.md"
         let check = workspace_check(dir.path()).expect("a check");
 
         assert!(check.required);
+        assert_eq!(check.id, "workspace-tests:cargo:root");
         assert!(matches!(
             check.verify,
             VerifySpec::Test { ref program, ref args }
@@ -1845,6 +1869,7 @@ system = "prompt.md"
             check.description,
             "cargo test --manifest-path backend/Cargo.toml"
         );
+        assert_eq!(check.id, "workspace-tests:cargo:backend");
     }
 
     #[test]
@@ -1962,6 +1987,14 @@ system = "prompt.md"
         let items: Vec<AcceptanceItem> = checks.iter().map(|check| check.item.clone()).collect();
         let python = if cfg!(windows) { "python" } else { "python3" };
         assert_eq!(check_programs(&items), [python, python]);
+        let ids: Vec<&str> = checks.iter().map(|check| check.item.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "workspace-tests:python:api/tests",
+                "workspace-tests:python:worker/tests",
+            ]
+        );
 
         let api = selected_checks(&checks, dir.path(), &[PathBuf::from("api/app.py")]);
         assert!(matches!(
@@ -2000,6 +2033,7 @@ system = "prompt.md"
         let items: Vec<AcceptanceItem> = checks.iter().map(|check| check.item.clone()).collect();
         let python = if cfg!(windows) { "python" } else { "python3" };
         assert_eq!(check_programs(&items), [python, python]);
+        assert_ne!(items[0].id, items[1].id);
 
         let selected = selected_checks(&checks, dir.path(), &[PathBuf::from("api/app.py")]);
 
@@ -2221,6 +2255,15 @@ system = "prompt.md"
         let python = if cfg!(windows) { "python" } else { "python3" };
 
         assert_eq!(programs, ["cargo", python, "npm"]);
+        let ids: Vec<&str> = checks.iter().map(|check| check.item.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "workspace-tests:cargo:root",
+                "workspace-tests:python:root",
+                "workspace-tests:node:root",
+            ]
+        );
         assert!(checks.iter().all(|check| check.item.required));
     }
 

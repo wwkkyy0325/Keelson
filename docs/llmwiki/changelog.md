@@ -1125,3 +1125,21 @@ set first, so the common failure touches nothing.
 M4x is a new tool; a kernel test proves its contract, but only a live turn
 shows the model reaches for it on a real cross-file change and that the
 resulting workspace still passes the project check.
+
+## 2026-11-08 — M4z: named check ids
+
+- `AcceptanceItem.id` is now `workspace-tests:<ecosystem>:<project>`, with
+  `root` for a project at the workspace root. Python uses the test root, so
+  two roots under one project stay distinct.
+- The verdict, `VerificationFinished` event, UI evidence and the model's
+  reprompt now name the failing check instead of repeating
+  `workspace-tests`.
+- Keelson: 51 lib tests, clippy. Polyglot eval 8.36 s; cross-file eval 8.87 s;
+  desktop 28.
+- Task doc: `docs/llmwiki/tasks/m4z-check-ids.md`.
+
+### Why
+
+M4n made every detected ecosystem a required check, but every item shared one
+id. A failure with two checks listed `workspace-tests` twice, which told the
+model and the user nothing about which project or ecosystem failed.

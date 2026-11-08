@@ -148,7 +148,8 @@ and runs `pytest` when the project declares it; `unittest discover` treats a
 pytest module as zero tests and exits 0, which would be a false green. A
 manifest in a subdirectory (depth at most three) is found and the check targets
 its directory (`--manifest-path`, `go -C`, `npm --prefix`, `pytest <dir>`);
-the nearest `.venv` and pytest config win. Every project of an ecosystem is a
+the nearest `.venv` and pytest config win. Each check id names its ecosystem
+and project, so a multi-check failure is attributable (M4z). Every project of an ecosystem is a
 candidate: a monorepo with two crates, two packages or two Python projects
 gets one check per project, and a changed path selects the deepest one. A path
 that belongs to none runs every check. The order is Cargo, Go, Python, Node

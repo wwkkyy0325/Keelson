@@ -220,5 +220,8 @@ untouched.
 M4y: a live two-file rename uses `apply_edits` and leaves the test alone
 (9.59 s).
 
+M4z: each check is named (`workspace-tests:<ecosystem>:<project>`), so a
+failing check says which project and ecosystem failed.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
