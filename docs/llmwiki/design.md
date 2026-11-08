@@ -182,12 +182,15 @@ M3 — Terminal view (removed)
   here and were removed in D2d (ADR 0004). The history remains in the
   changelog; the code is gone.
 
-M4 — Coding rig does the work
+M4 — Coding rig does the work (done)
 
-- A search-replace edit tool, project search over `git`/ripgrep, automatic
-  verification after edits.
-- Verify: an eval case that edits and repairs `examples/demo-workspace` without
-  a scripted prompt.
+- `edit_file` is an exact-match search-replace tool in Keel (ADR 0018),
+  registered by the host; `code_search` remains the project search path.
+- Automatic verification: a turn that changed the workspace runs the
+  project's check (`cargo test`, or Python unittest discovery); a
+  conversational turn skips it (ADR 0004 after-changes mode).
+- Verify: the live eval repaired `examples/demo-workspace` and its `unittest`
+  check passed; the transcript shows a verification badge.
 
 M5 — A second rig
 

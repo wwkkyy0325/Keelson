@@ -119,5 +119,14 @@ D2f: projects own conversations. The left rail lists history, starts a new
 chat and switches recent projects; each conversation is its own document with
 a stable id.
 
-Next: D3 (a floating window) and M4 (the coding tools do the work). See the
-milestones in `docs/llmwiki/design.md`.
+D2g: history operations. Rows can be renamed, archived and permanently deleted
+after archiving; archived conversations are read-only. The rail uses stable
+`对话` / `已归档` tabs.
+
+M4: the coding rig edits and verifies. `edit_file` is an exact-match
+search-replace tool in Keel; a turn that changes the workspace runs the
+project's own check (Cargo tests or Python unittest). The live demo eval
+repairs `examples/demo-workspace`, and the transcript shows the result.
+
+Next: M5 (a second rig) and D3 (a floating window). See the milestones in
+`docs/llmwiki/design.md`.
