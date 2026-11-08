@@ -15,6 +15,7 @@ export type Turn = {
   state: string;
   error: string | null;
   durationMs: number;
+  verificationPassed: boolean | null;
   tools: ToolLine[];
 };
 

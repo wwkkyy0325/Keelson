@@ -52,9 +52,10 @@ without a scripted prompt.
       scripted prompt.
       Verify: `cargo test` plus the eval run. The ignored test is in
       `tests/demo_eval.rs`; the live run needs a provider key.
-- [ ] Minimal UI for edit results and verification.
-      Verify: `npm test`, `npm run check`, `npm run build`; a mock turn shows
-      the changed path and the verification outcome.
+- [x] Minimal UI for edit results and verification.
+      Verify: `npm test`, `npm run check`, `npm run build`; a turn carries
+      `verificationPassed` and the transcript renders a verified/failed badge.
+      The existing tool line already shows the edit path and output.
 
 ## Verification
 
@@ -91,7 +92,11 @@ without a scripted prompt.
 - The Anthropic-compatible DeepSeek endpoint still rejected thinking blocks
   (`content[].thinking`); the eval uses the OpenAI-compatible endpoint, which
   is the desktop's live path.
-- The minimal UI for edit/verification is not implemented yet.
+- Minimal UI: `TurnView` carries `verificationPassed` (persisted on
+  `StoredTurn`), and `Turn.svelte` renders `验证通过` / `验证失败`. The edit
+  already appears as a tool line with its path and output. 16 frontend
+  tests, `svelte-check` 0/0, build; a live UI walkthrough of the badge is
+  still pending.
 
 ## Not in M4
 

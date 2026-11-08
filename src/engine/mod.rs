@@ -71,6 +71,7 @@ pub struct TurnView {
     pub state: String,
     pub error: Option<String>,
     pub duration_ms: u64,
+    pub verification_passed: Option<bool>,
     pub tools: Vec<ToolLine>,
 }
 
@@ -83,6 +84,7 @@ impl From<&StoredTurn> for TurnView {
             state: turn.state.clone(),
             error: turn.error.clone(),
             duration_ms: turn.duration_ms,
+            verification_passed: turn.verification_passed,
             tools: turn.tools.clone(),
         }
     }
@@ -396,6 +398,7 @@ impl Engine {
             answer: outcome.answer.body.clone(),
             error,
             duration_ms: outcome.duration_ms,
+            verification_passed: outcome.verification.as_ref().map(|report| report.passed()),
             tools,
             events: stored_events,
         });

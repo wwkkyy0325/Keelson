@@ -472,6 +472,7 @@ mod tests {
                     answer: "ok".to_owned(),
                     error: None,
                     duration_ms: 1,
+                    verification_passed: None,
                     tools: Vec::new(),
                     events: Vec::new(),
                 })

@@ -1245,6 +1245,18 @@ header .title {
   white-space: pre-wrap;
 }
 
+.verification {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--error);
+  font-size: 0.78rem;
+}
+
+.verification.passed {
+  color: var(--ok);
+}
+
 .tools {
   display: flex;
   flex-direction: column;

@@ -561,3 +561,19 @@ verifies without a scripted prompt. It also caught two mismatches that a
 single conversational turn could not: the mock profile's model leaking into a
 live request, and DeepSeek's thinking-mode requirement. Both are host/wire
 bugs, not model failures.
+
+## 2026-11-08 — M4: verification in the transcript
+
+- `StoredTurn` and `TurnView` carry `verificationPassed`, persisted from the
+  turn outcome's acceptance report. Old turns read as `null`.
+- `Turn.svelte` renders a small `验证通过` / `验证失败` badge when the field is
+  present; the edit already appears as a tool line with its path and output.
+- Frontend: 16 tests, `svelte-check` 0/0, build. A live UI walkthrough of the
+  badge is still pending.
+
+### Why
+
+The eval proved the loop, but the transcript did not show that a check ran.
+Persisting one boolean is enough for the first UI: the model's narrative and
+the verification evidence stay separate, and a failed check is visible next
+to the turn's error.

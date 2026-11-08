@@ -10,6 +10,7 @@ function turn(seq: number, input = `in ${seq}`, answer = `out ${seq}`): Turn {
     state: "Done",
     error: null,
     durationMs: 1,
+    verificationPassed: null,
     tools: [],
   };
 }
@@ -198,6 +199,20 @@ describe("session reducer", () => {
 
     expect(state.sessions.map((item) => item.id)).toEqual(["a", "b"]);
     expect(state.sessions[0].title).toBe("first question");
+  });
+
+  it("keeps the verification result on a finished turn", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 1,
+      input: "fix it",
+    });
+    state = reduce(state, {
+      type: "turn-finished",
+      turn: { ...turn(1, "fix it"), verificationPassed: true },
+    });
+
+    expect(state.turns[0].verificationPassed).toBe(true);
   });
 
   it("carries the archived flag through a row update", () => {

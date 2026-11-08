@@ -56,6 +56,9 @@ pub struct StoredTurn {
     pub answer: String,
     pub error: Option<String>,
     pub duration_ms: u64,
+    /// Acceptance result when the host ran a checklist for this turn.
+    #[serde(default)]
+    pub verification_passed: Option<bool>,
     /// Live tool rows. Absent in sessions written before the field existed.
     #[serde(default)]
     pub tools: Vec<ToolLine>,
@@ -150,6 +153,7 @@ mod tests {
                 answer: "hi".to_owned(),
                 error: None,
                 duration_ms: 3,
+                verification_passed: None,
                 tools: Vec::new(),
                 events: vec![StoredEvent {
                     name: "turn_started".to_owned(),
