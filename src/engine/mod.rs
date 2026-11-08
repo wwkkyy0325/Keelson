@@ -676,32 +676,37 @@ struct ProjectCheck {
 /// stays unverified instead of guessing a command.
 fn workspace_checks(workspace: &Path) -> Vec<ProjectCheck> {
     let mut checks = Vec::new();
-    if let Some(project) = project_directories(workspace, "Cargo.toml")
-        .into_iter()
-        .next()
-    {
+    for project in project_directories(workspace, "Cargo.toml") {
         checks.push(ProjectCheck {
             item: cargo_check(&project),
             project,
         });
     }
-    if let Some(project) = project_directories(workspace, "go.mod").into_iter().next() {
+    for project in project_directories(workspace, "go.mod") {
         checks.push(ProjectCheck {
             item: go_check(&project),
             project,
         });
     }
-    if let Some(tests) = find_python_tests(workspace) {
+    let mut python_projects = Vec::new();
+    for tests in find_python_tests(workspace) {
+        let project = python_project(workspace, &tests);
+        if python_projects.contains(&project) {
+            continue;
+        }
+        python_projects.push(project.clone());
         checks.push(ProjectCheck {
-            project: python_project(workspace, &tests),
+            project,
             item: python_check(workspace, &tests),
         });
     }
-    if let Some(project) = node_project(workspace) {
-        checks.push(ProjectCheck {
-            item: node_check(&project),
-            project,
-        });
+    for project in project_directories(workspace, "package.json") {
+        if has_node_test(&workspace.join(&project)) {
+            checks.push(ProjectCheck {
+                item: node_check(&project),
+                project,
+            });
+        }
     }
     checks
 }
@@ -842,12 +847,6 @@ fn go_check(project: &Path) -> AcceptanceItem {
     )
 }
 
-fn node_project(workspace: &Path) -> Option<PathBuf> {
-    project_directories(workspace, "package.json")
-        .into_iter()
-        .find(|project| has_node_test(&workspace.join(project)))
-}
-
 fn node_check(project: &Path) -> AcceptanceItem {
     if project.as_os_str().is_empty() {
         return check_item(
@@ -865,8 +864,8 @@ fn node_check(project: &Path) -> AcceptanceItem {
 }
 
 /// Directories whose test files the Python check should run, relative to the
-/// workspace. Root-level test files yield an empty path.
-fn find_python_tests(workspace: &Path) -> Option<PathBuf> {
+/// workspace, shallowest first. Root-level test files yield an empty path.
+fn find_python_tests(workspace: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut stack = vec![(workspace.to_path_buf(), 0usize)];
     while let Some((directory, depth)) = stack.pop() {
@@ -895,10 +894,14 @@ fn find_python_tests(workspace: &Path) -> Option<PathBuf> {
         }
     }
     files.sort_by_key(|path| (path.components().count(), path.clone()));
-    files
-        .into_iter()
-        .next()
-        .map(|file| file.parent().map(Path::to_path_buf).unwrap_or_default())
+    let mut directories = Vec::new();
+    for file in files {
+        let directory = file.parent().map(Path::to_path_buf).unwrap_or_default();
+        if !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    directories
 }
 
 /// The directory a Python check belongs to. The nearest ancestor with a
@@ -1836,7 +1839,7 @@ system = "prompt.md"
     }
 
     #[test]
-    fn a_root_manifest_wins_over_a_nested_one() {
+    fn the_root_project_check_comes_first() {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         std::fs::write(
             dir.path().join("Cargo.toml"),
@@ -1850,11 +1853,117 @@ system = "prompt.md"
         )
         .expect("a nested manifest");
 
-        let check = workspace_check(dir.path()).expect("a check");
+        let checks = workspace_checks(dir.path());
 
+        assert_eq!(checks.len(), 2);
         assert!(matches!(
-            check.verify,
-            VerifySpec::Test { ref args, .. } if args == &["test".to_owned()]
+            &checks[0].item.verify,
+            VerifySpec::Test { args, .. } if args == &["test".to_owned()]
+        ));
+        assert!(matches!(
+            &checks[1].item.verify,
+            VerifySpec::Test { args, .. }
+                if args == &[
+                    "test".to_owned(),
+                    "--manifest-path".to_owned(),
+                    "backend/Cargo.toml".to_owned(),
+                ]
+        ));
+    }
+
+    #[test]
+    fn a_cargo_monorepo_runs_each_crate() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        for name in ["api", "worker"] {
+            std::fs::create_dir_all(dir.path().join(name)).expect("a project directory");
+            std::fs::write(
+                dir.path().join(name).join("Cargo.toml"),
+                format!("[package]\nname = \"{name}\"\n"),
+            )
+            .expect("a manifest");
+        }
+
+        let checks = workspace_checks(dir.path());
+        let items: Vec<AcceptanceItem> = checks.iter().map(|check| check.item.clone()).collect();
+        assert_eq!(check_programs(&items), ["cargo", "cargo"]);
+
+        let api = selected_checks(&checks, dir.path(), &[PathBuf::from("api/src/lib.rs")]);
+        assert_eq!(check_programs(&api), ["cargo"]);
+        assert!(matches!(
+            &api[0].verify,
+            VerifySpec::Test { args, .. }
+                if args.iter().any(|arg| arg == "api/Cargo.toml")
+        ));
+
+        let worker = selected_checks(&checks, dir.path(), &[PathBuf::from("worker/src/lib.rs")]);
+        assert!(matches!(
+            &worker[0].verify,
+            VerifySpec::Test { args, .. }
+                if args.iter().any(|arg| arg == "worker/Cargo.toml")
+        ));
+    }
+
+    #[test]
+    fn a_node_monorepo_runs_each_package() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        for name in ["admin", "web"] {
+            std::fs::create_dir_all(dir.path().join(name)).expect("a project directory");
+            std::fs::write(
+                dir.path().join(name).join("package.json"),
+                r#"{"scripts": {"test": "node test.js"}}"#,
+            )
+            .expect("a manifest");
+        }
+
+        let checks = workspace_checks(dir.path());
+        let items: Vec<AcceptanceItem> = checks.iter().map(|check| check.item.clone()).collect();
+        assert_eq!(check_programs(&items), ["npm", "npm"]);
+
+        let web = selected_checks(&checks, dir.path(), &[PathBuf::from("web/src/app.ts")]);
+        assert!(matches!(
+            &web[0].verify,
+            VerifySpec::Test { args, .. } if args.iter().any(|arg| arg == "web")
+        ));
+
+        let admin = selected_checks(&checks, dir.path(), &[PathBuf::from("admin/src/app.ts")]);
+        assert!(matches!(
+            &admin[0].verify,
+            VerifySpec::Test { args, .. } if args.iter().any(|arg| arg == "admin")
+        ));
+    }
+
+    #[test]
+    fn a_python_monorepo_runs_each_project() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        for name in ["api", "worker"] {
+            std::fs::create_dir_all(dir.path().join(name).join("tests")).expect("a test directory");
+            std::fs::write(
+                dir.path().join(name).join("tests/test_stats.py"),
+                "def test_ok():\n    pass\n",
+            )
+            .expect("a test file");
+            std::fs::write(
+                dir.path().join(name).join("pyproject.toml"),
+                "[tool.pytest.ini_options]\n",
+            )
+            .expect("a pytest config");
+        }
+
+        let checks = workspace_checks(dir.path());
+        let items: Vec<AcceptanceItem> = checks.iter().map(|check| check.item.clone()).collect();
+        let python = if cfg!(windows) { "python" } else { "python3" };
+        assert_eq!(check_programs(&items), [python, python]);
+
+        let api = selected_checks(&checks, dir.path(), &[PathBuf::from("api/app.py")]);
+        assert!(matches!(
+            &api[0].verify,
+            VerifySpec::Test { args, .. } if args.iter().any(|arg| arg == "api/tests")
+        ));
+
+        let worker = selected_checks(&checks, dir.path(), &[PathBuf::from("worker/app.py")]);
+        assert!(matches!(
+            &worker[0].verify,
+            VerifySpec::Test { args, .. } if args.iter().any(|arg| arg == "worker/tests")
         ));
     }
 

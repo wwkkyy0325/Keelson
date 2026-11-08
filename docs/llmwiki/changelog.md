@@ -945,3 +945,21 @@ M4n made every check required, so a Rust-only turn in a Rust + Node repository
 could fail on a pre-existing frontend problem. The driver already knew a turn
 changed the workspace; recording which paths changed lets the host run the
 checks that belong to them without a second diff.
+
+## 2026-11-08 — M4p: every project of an ecosystem
+
+- `workspace_checks` now walks every manifest directory per ecosystem: two
+  crates, two packages or two Python projects each get their own check. The
+  M4o selector picks the deepest project for each changed path.
+- `find_python_tests` returns every test directory; one check is kept per
+  project, on the shallowest test root.
+- Keelson: 47 lib tests (+3), clippy. Live two-module eval passed in 43.33 s;
+  desktop tests pass (28).
+- Task doc: `docs/llmwiki/tasks/m4p-all-projects.md`.
+
+### Why
+
+M4o could only choose among the first project of each ecosystem, so a
+monorepo with `api/` and `worker/` still checked only one of them. The
+selector already knows the changed path; the candidate list now contains every
+project.

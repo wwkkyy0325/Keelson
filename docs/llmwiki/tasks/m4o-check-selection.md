@@ -38,4 +38,5 @@ check, so a polyglot repository does not fail on an unrelated ecosystem.
 - A shell call is not a workspace change, so a shell-only mutation still skips
   verification. That is the existing rule; the selector does not change it.
 - A path outside every project runs every check.
-- Several projects of one ecosystem still yield one check.
+- Several projects of one ecosystem still yield one check. M4p later makes
+  every project a candidate.

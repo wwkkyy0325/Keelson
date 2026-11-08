@@ -186,5 +186,9 @@ paths a mutating call changed; the host picks the deepest project for each and
 falls back to every check when a path belongs to none. `multi_edit` now counts
 as a workspace change.
 
+M4p: every project of an ecosystem is a candidate. A monorepo with two crates,
+two packages or two Python projects gets one check per project, and the changed
+path selects the one it belongs to.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
