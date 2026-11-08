@@ -87,6 +87,12 @@ const zh = {
   "app.emptyProject": "在「{project}」中开始新对话。",
   "app.archived": "已归档",
   "app.archivedNotice": "已归档的对话不能继续；取消归档后可以继续。",
+  "app.undoTurn": "撤销本轮",
+  "app.undoTitle": "撤销最近一轮？",
+  "app.undoMessage":
+    "将恢复最近一轮对工作区文件的修改；对话记录会保留。被 .gitignore 忽略的文件和外部编辑不在检查点内。",
+  "app.undoConfirm": "撤销",
+  "app.undone": "已恢复最近一轮的文件修改",
   "app.placeholder": "发给 Keelson…",
   "app.send": "发送",
   "app.cancel": "取消",
@@ -218,6 +224,12 @@ const en: Record<Key, string> = {
   "app.archived": "Archived",
   "app.archivedNotice":
     "This conversation is archived. Unarchive it to continue.",
+  "app.undoTurn": "Undo turn",
+  "app.undoTitle": "Undo the last turn?",
+  "app.undoMessage":
+    "Restore the workspace files changed by the last turn. The transcript is kept. Gitignored files and external edits are not in the checkpoint.",
+  "app.undoConfirm": "Undo",
+  "app.undone": "Restored the last turn's file changes",
   "app.placeholder": "Message Keelson…",
   "app.send": "Send",
   "app.cancel": "Cancel",

@@ -156,6 +156,17 @@ change. The workspace's `AGENTS.md`
 at 16 KiB. Background shell commands run through the kernel's registry, write
 under the project's `outputs/`, and are killed when the engine drops.
 
+## Checkpoints
+
+A shadow git repository per project lives under
+`<state>/checkpoints/<workspace-key>/repo`; it uses the workspace as its work
+tree and never touches the user's `.git`. A snapshot is taken before and
+after each turn and the pair is recorded in `turns.json`. `撤销本轮` diffs the
+two commits and, for each path, restores it from the before commit or deletes
+it when the turn created it. Only the latest turn is offered. A snapshot
+failure is ignored so the turn always runs; gitignored files are outside the
+checkpoint (ADR 0008).
+
 ## Module layout
 
 ```
@@ -171,6 +182,8 @@ desktop/
                  the models.dev fetch, provider allowlist and cache
   src-tauri/src/sessions.rs
                  per-project conversation documents, index and migration
+  src-tauri/src/checkpoints.rs
+                 shadow-git turn snapshots and undo
   src/           controller + components: Wizard, ModelPicker, Chat,
                  Sidebar, AppHeader, Transcript, Turn, Composer,
                  PermissionCard, SettingsPanel
@@ -258,6 +271,17 @@ M4e — Regex content search (done)
 - Adds the `regex` dependency (MIT OR Apache-2.0); the license audit passes.
 - Verify: a signature pattern, the case flag in regex mode and an invalid
   pattern; the literal and glob tests are unchanged.
+
+M4f — Undo a turn (done)
+
+- The desktop keeps a shadow git repository per project and snapshots the
+  workspace before and after each turn. `撤销本轮` restores every path that
+  differs between the two commits, including creates and deletes; the
+  transcript is kept (ADR 0008).
+- The snapshot is best effort and never blocks a turn. Only the latest turn
+  can be undone; a missing git disables the feature.
+- Verify: desktop checkpoint tests restore modify/create/delete and refuse a
+  repeat or missing record; the UI is type-checked and built.
 
 M5 — A second rig
 

@@ -681,3 +681,28 @@ Keelson lacked. A regex search is smaller and more certain than a custom
 multi-file patch format: the model already knows regex, the wire already
 carries booleans, and the existing traversal supplies the limits. Pattern
 search no longer needs a shell confirmation or a platform grep.
+
+## 2026-11-08 — M4f: undo a turn
+
+- `desktop/src-tauri/src/checkpoints.rs`: a shadow git repository per project
+  under `<state>/checkpoints/<workspace-key>/repo`. `send_message` snapshots
+  the workspace before and after each turn and records the commit pair in
+  `turns.json`; a snapshot failure is ignored and never blocks the turn.
+- `undo_last_turn` diffs the two commits with `--no-renames` and, for each
+  path, restores it from the before commit or deletes a file the turn created.
+  Only the latest turn is offered; a repeat or missing record is refused.
+- UI: the header shows `撤销本轮` when the latest turn used a mutating tool;
+  a confirmation explains that the workspace is restored and the transcript
+  is kept. The action hides until the next turn after a successful undo.
+- No new Rust dependency; git is external and the feature is inert without
+  it. ADR 0008 records the design.
+- Desktop: 28 tests (three checkpoint tests), clippy; frontend 16 tests,
+  `svelte-check` 0/0, build.
+
+### Why
+
+The trash restores one file at a time. A turn that touches several files has
+no single undo, and a failed or unwanted turn costs a manual recovery. The
+shadow repository gives the turn a unit without touching the user's git
+history or requiring a new dependency, and the diff-and-checkout approach
+handles creates, deletes and renames without a patch grammar.

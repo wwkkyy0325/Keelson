@@ -97,7 +97,8 @@ settings page covers the model connection and language, not rig behavior.
 - `docs/llmwiki/design.md` — what this is, the layers, the milestones.
 - `docs/kernel.md` — the pinned kernel, the consumed surface, the upgrade path.
 - `docs/adr/` — rigs as files, the desktop shell, the desktop-only face, the
-  model catalog, project conversations and project instructions.
+  model catalog, project conversations, project instructions and turn
+  checkpoints.
 
 ## Status
 
@@ -146,6 +147,10 @@ the batch takes one backup and one write.
 
 M4e: `code_search` matches a regex on request; a literal substring remains
 the default, with the same file, depth, result and permission limits.
+
+M4f: a turn can be undone. The desktop snapshots the workspace in a shadow
+git repository before and after each turn; `撤销本轮` restores the files the
+turn changed, including creates and deletes, and keeps the transcript.
 
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

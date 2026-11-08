@@ -99,6 +99,10 @@ export function cancelTurn(): Promise<boolean> {
   return invoke("cancel_turn");
 }
 
+export function undoLastTurn(): Promise<void> {
+  return invoke("undo_last_turn");
+}
+
 export function loadTurns(
   before: number | null,
   limit = 30,

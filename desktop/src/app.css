@@ -1167,6 +1167,20 @@ header .title {
   color: var(--text);
 }
 
+.undo {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0.28rem 0.55rem;
+  font-size: 0.74rem;
+}
+
+.undo:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .dim {
   color: var(--muted);
 }

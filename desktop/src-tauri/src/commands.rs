@@ -11,6 +11,7 @@ use keelson::rig;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::checkpoints;
 use crate::config::{self, ProjectEntry};
 use crate::sessions::{self, SessionMeta};
 use crate::state::{CurrentSession, DesktopState};
@@ -585,6 +586,27 @@ fn ensure_idle(state: &DesktopState) -> Result<(), String> {
     Ok(())
 }
 
+async fn take_snapshot(current: &CurrentSession) -> Option<String> {
+    let workspace = current.workspace.clone();
+    let state_dir = current.state_dir.clone();
+    tauri::async_runtime::spawn_blocking(move || checkpoints::snapshot(&workspace, &state_dir).ok())
+        .await
+        .ok()
+        .flatten()
+}
+
+async fn record_checkpoint(current: &CurrentSession, seq: u32, before: &str, after: &str) {
+    let workspace = current.workspace.clone();
+    let state_dir = current.state_dir.clone();
+    let session_id = current.id.clone();
+    let before = before.to_owned();
+    let after = after.to_owned();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        checkpoints::record(&state_dir, &workspace, &session_id, seq, &before, &after)
+    })
+    .await;
+}
+
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
@@ -640,8 +662,18 @@ pub async fn send_message(
             input: input.clone(),
         },
     );
+    let checkpoint_session = current.clone();
     tauri::async_runtime::spawn(async move {
+        let before = match checkpoint_session.as_ref() {
+            Some(current) => take_snapshot(current).await,
+            None => None,
+        };
         let result = engine.run_turn(&input, token).await;
+        if let (Some(before), Some(current)) = (before, checkpoint_session.as_ref()) {
+            if let Some(after) = take_snapshot(current).await {
+                record_checkpoint(current, seq, &before, &after).await;
+            }
+        }
         {
             let mut cancel = state
                 .cancel
@@ -706,6 +738,35 @@ pub fn cancel_turn(state: State<'_, SharedState>) -> bool {
     } else {
         false
     }
+}
+
+#[tauri::command]
+pub async fn undo_last_turn(state: State<'_, SharedState>) -> Result<(), String> {
+    let state = state.inner().clone();
+    ensure_idle(&state)?;
+    let current = state
+        .current
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    let engine = state
+        .engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    let seq = engine
+        .history(None, 1)
+        .turns
+        .first()
+        .map(|turn| turn.seq)
+        .ok_or_else(|| "还没有可撤销的回合".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        checkpoints::undo(&current.state_dir, &current.workspace, &current.id, seq)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]

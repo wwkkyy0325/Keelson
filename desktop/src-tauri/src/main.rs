@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod catalog;
+mod checkpoints;
 mod commands;
 mod config;
 mod sessions;
@@ -36,6 +37,7 @@ fn main() {
             commands::archive_session,
             commands::send_message,
             commands::cancel_turn,
+            commands::undo_last_turn,
             commands::load_turns,
             commands::respond_interaction,
         ])

@@ -5,10 +5,14 @@
   let {
     title,
     archived,
+    canUndo,
+    onUndo,
     onSettings,
   }: {
     title: string;
     archived: boolean;
+    canUndo: boolean;
+    onUndo: () => void;
     onSettings: () => void;
   } = $props();
 
@@ -29,6 +33,11 @@
     <span class="archived-badge">{$t("app.archived")}</span>
   {/if}
   <div class="spacer"></div>
+  {#if canUndo}
+    <button class="undo" onclick={onUndo} title={$t("app.undoTurn")}>
+      {$t("app.undoTurn")}
+    </button>
+  {/if}
   <button class="icon" onclick={toggleLocale} title={$t("app.switchLanguage")}>
     {$locale === "zh" ? "EN" : "中"}
   </button>
