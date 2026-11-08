@@ -203,5 +203,9 @@ the result and output caps are unchanged.
 M4t: overlapping search context merges into one block, so a line prints once,
 and the output cap reports itself instead of claiming the result limit.
 
+M4u: the polyglot fixture proves the selector end to end. A live turn that
+fixed only `frontend/` ran the Node check and skipped the fixture's failing
+Python test (10.34 s).
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

@@ -1030,3 +1030,22 @@ the model actually needed, without lifting the output caps.
 M4s printed a block per match, so nearby matches repeated their context lines.
 The byte cap also reused the result-limit message, which told the model the
 wrong limit had been reached.
+
+## 2026-11-08 — M4u: polyglot check selection, end to end
+
+- `examples/polyglot-workspace` pairs a Node package with a passing test and a
+  Python project with a deliberately failing test.
+- `tests/polyglot_eval.rs` (ignored, needs a provider key) runs one live turn
+  that fixes only `frontend/app.js`. It asserts one passing evidence item (the
+  Node check), no Python failure, unchanged test files, and a green
+  `npm --prefix frontend test`.
+- **10.34 s**; the selector ran only the Node check and skipped the failing
+  Python one.
+- Task doc: `docs/llmwiki/tasks/m4u-polyglot-eval.md`.
+
+### Why
+
+M4m–M4t were covered piecewise: the selector, the project walker, the search
+output. This fixture exercises the whole chain with a live model in a
+polyglot workspace, where a selector mistake would turn a green frontend turn
+into a red one.

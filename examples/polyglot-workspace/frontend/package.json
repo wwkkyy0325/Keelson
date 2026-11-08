@@ -1,0 +1,7 @@
+{
+  "name": "polyglot-frontend",
+  "private": true,
+  "scripts": {
+    "test": "node test.js"
+  }
+}
