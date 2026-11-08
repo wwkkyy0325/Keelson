@@ -196,5 +196,9 @@ are folded into their parent, so `tests/` also covers `tests/unit/`.
 M4r: manifests and test files are found up to three directories deep, so a
 service nested under `services/api/backend/` gets its own check.
 
+M4s: `code_search` can show up to five lines around a match. The match keeps
+`path:line:`, neighbors use `path:line-`, and blocks are separated by `--`;
+the result and output caps are unchanged.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

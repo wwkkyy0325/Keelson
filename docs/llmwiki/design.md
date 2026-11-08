@@ -160,7 +160,8 @@ file-name or path glob and match a regex on request; the `glob` tool finds
 files by path. The engine
 keeps a SHA-256 read ledger: `write_file` on an existing file needs a full
 read, `edit_file` and `multi_edit` need a current read, and the edit tools
-match across a CRLF/LF difference without changing the file's line endings. A
+match across a CRLF/LF difference without changing the file's line endings.
+`code_search` can show up to five context lines around a match (M4s). A
 ranged read is recorded as partial, so it cannot authorize a whole-file
 overwrite (M4l). The persona forbids installing packages or changing the
 interpreter to make a check pass; a missing dependency is reported. `multi_edit` validates

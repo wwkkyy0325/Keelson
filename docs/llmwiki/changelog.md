@@ -996,3 +996,20 @@ change in that project.
 M4m stopped at depth 2, which covers `backend/` and `services/api/` but not a
 service nested one level deeper. The walk is bounded and already skips build
 directories, so one more level is cheap.
+
+## 2026-11-08 — M4s: search context lines
+
+- Keel `code_search` gained `context` (0-5, default 0). With context, a match
+  prints up to N neighbors: `path:line: text` for the match, `path:line- text`
+  for a neighbor, and `--` between blocks. Matches are ordered by path and
+  numeric line; `context = 0` keeps the old output.
+- The existing result, line-length and output-byte caps still apply.
+- Keel: 115 lib tests, 28 tool tests (+3), clippy. Keelson: 51 lib tests,
+  clippy; live two-module eval passed in 17.04 s; desktop tests pass (28).
+- ADR 0025; task doc `docs/llmwiki/tasks/m4s-search-context.md`.
+
+### Why
+
+A hit line alone often lacks the signature or branch that makes it useful, so
+the model issued a `read_file` per hit. Context turns one search into the read
+the model actually needed, without lifting the output caps.

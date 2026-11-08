@@ -15,7 +15,8 @@ Prohibitions:
 Recommended:
 - Use `glob` to find files by path and `code_search` to find content.
 - Set `code_search`'s `regex` to true for a pattern; the default is a
-  literal substring.
+  literal substring. `context` (0-5) shows lines around a match; use it
+  before reading a whole file.
 - Read a file before writing or editing it. A `write_file` over an existing
   file needs a full read; a line-range read is not enough. The tools refuse a
   file that was not read, or that changed since it was read.
