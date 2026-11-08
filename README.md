@@ -41,9 +41,10 @@ bundled build uses `$KEELSON_RIGS` or `~/.keelson/rigs`.
 The first launch is a three-page wizard: model + key, language, finish. The
 model list comes from [`models.dev`](https://models.dev), filtered to
 tool-capable, current models of the providers this host can drive. Each row
-shows context, price and vision/PDF capability; the selected model's context
-is what the engine uses. It is cached for an hour and revalidated with its
-ETag; only the key is typed.
+shows context, price and vision/PDF capability. The selected model's hard
+capacity bounds the profile's 64k working set and 8k output reserve; a model
+with a smaller window lowers the working set. It is cached for an hour and
+revalidated with its ETag; only the key is typed.
 
 The catalog is fetched from `models.dev`, with the byte-identical
 `models.opencode.ai` mirror as a fallback. If both are unreachable, a bundled
@@ -96,7 +97,7 @@ settings page covers the model connection and language, not rig behavior.
 - `docs/llmwiki/design.md` — what this is, the layers, the milestones.
 - `docs/kernel.md` — the pinned kernel, the consumed surface, the upgrade path.
 - `docs/adr/` — rigs as files, the desktop shell, the desktop-only face, the
-  model catalog and project conversations.
+  model catalog, project conversations and project instructions.
 
 ## Status
 
@@ -125,8 +126,19 @@ after archiving; archived conversations are read-only. The rail uses stable
 
 M4: the coding rig edits and verifies. `edit_file` is an exact-match
 search-replace tool in Keel; a turn that changes the workspace runs the
-project's own check (Cargo tests or Python unittest). The live demo eval
-repairs `examples/demo-workspace`, and the transcript shows the result.
+project's own check (Cargo, Go, Python or Node). The live demo eval repairs
+`examples/demo-workspace`, and the transcript shows the result.
+
+M4b: the coding rig is usable on a real repository. The output reserve is 8k
+and the working set 64k, lowered when the model window is smaller. `read_file`
+reads line ranges; `code_search` can be case-sensitive and glob-filtered;
+background shell commands are wired to the kernel registry.
+
+M4c: the coding rig is safe to write with. A per-engine read ledger makes
+`write_file` and `edit_file` require a current read, so a blind overwrite or a
+stale edit is refused instead of applied. `edit_file` matches across CRLF/LF
+without changing the file's line endings; `glob` finds files by path; the
+workspace's `AGENTS.md` (fallback `CLAUDE.md`) is added to the system prompt.
 
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

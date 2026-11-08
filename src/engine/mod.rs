@@ -19,12 +19,13 @@ use keel_core::{
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool,
-    EditFileTool, EventLog, EventRecord, HistoryStage, InteractionBroker, InterjectionPush,
-    KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalTrashStore, MakeDirTool,
-    MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine, ReadFileTool,
-    RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool,
-    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
+    load_profile, validate_config, BackgroundTasks, CodeSearchTool, ContextBuilder, DeleteFileTool,
+    EchoTool, EditFileTool, EventLog, EventRecord, GlobTool, HistoryStage, InteractionBroker,
+    InterjectionPush, KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks,
+    LocalTrashStore, MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, PermissionEngine,
+    ReadFileTool, ReadLedger, RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage,
+    TaskStateStage, TodoTool, ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome,
+    WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -240,6 +241,12 @@ impl Engine {
         let outputs_dir = project_dir.join("outputs");
 
         let mut config = load_profile(&rig.profile)?;
+        // Project instructions are context, not a rig setting. AGENTS.md is
+        // the cross-tool name; CLAUDE.md is the fallback.
+        if let Some(instructions) = project_instructions(&workspace) {
+            config.system_prompt.push_str("\n\n");
+            config.system_prompt.push_str(&instructions);
+        }
         let mut permissions = PermissionEngine::new(&workspace, config.permission_level)?;
         for root in &rig.extra_roots {
             permissions = permissions.with_root(&root.path, access_kind(root.access))?;
@@ -281,7 +288,17 @@ impl Engine {
             events.clone(),
         ));
 
-        let registry = Arc::new(tools(&project_dir, &config, todos.clone())?);
+        // Background commands are session-scoped: the engine owns the
+        // registry, and dropping it kills the process tree.
+        let background = Arc::new(
+            LocalBackgroundTasks::new(outputs_dir.join("background")).with_events(events.clone()),
+        );
+        let registry = Arc::new(tools(
+            &project_dir,
+            &config,
+            todos.clone(),
+            background.clone(),
+        )?);
         let context = ContextBuilder::new(vec![
             Arc::new(SystemStage::new()),
             Arc::new(TaskStateStage::new()),
@@ -291,14 +308,16 @@ impl Engine {
         ]);
         validate_config(&config, &registry, &context)?;
 
-        // A catalog model knows its own hard capacity. Keep the profile's
-        // working set and output reserve, but let the driver use the larger
-        // window the model actually has.
+        // A catalog model knows its own hard capacity. The profile owns the
+        // working set, but a model with a smaller window must reduce it rather
+        // than receive a prompt larger than the model can hold.
         if let Some(capacity) = model.as_ref().and_then(|model| model.context_window) {
-            let floor = config
-                .context
-                .budget_tokens
-                .saturating_add(config.max_output_tokens);
+            let output = config.max_output_tokens;
+            let usable = capacity.saturating_sub(output);
+            if usable > 0 {
+                config.context.budget_tokens = config.context.budget_tokens.min(usable);
+            }
+            let floor = config.context.budget_tokens.saturating_add(output);
             config.context_window = capacity.max(floor);
         }
         // The driver stamps every request with `config.model_route`; the
@@ -328,7 +347,7 @@ impl Engine {
                 context_window: config.context_window,
                 limits: config.limits(),
                 todos: Some(todos.clone()),
-                background: None,
+                background: Some(background),
                 options: KernelOptions::default(),
             },
         )
@@ -557,6 +576,40 @@ fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
 
 /// The first supported project check. An unknown ecosystem stays unverified
 /// instead of guessing a command.
+const MAX_PROJECT_INSTRUCTIONS_BYTES: usize = 16 * 1024;
+
+/// Reads the workspace's agent instructions. AGENTS.md wins; CLAUDE.md is the
+/// fallback. The text is bounded so a large file cannot crowd out the turn.
+fn project_instructions(workspace: &Path) -> Option<String> {
+    for name in ["AGENTS.md", "CLAUDE.md"] {
+        let bytes = match std::fs::read(workspace.join(name)) {
+            Ok(bytes) => bytes,
+            Err(_) => continue,
+        };
+        let Ok(mut text) = String::from_utf8(bytes) else {
+            continue;
+        };
+        let truncated = text.len() > MAX_PROJECT_INSTRUCTIONS_BYTES;
+        if truncated {
+            let mut end = MAX_PROJECT_INSTRUCTIONS_BYTES;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+        }
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let mut out = format!("# Project instructions ({name})\n\n{text}");
+        if truncated {
+            out.push_str("\n\n[instructions truncated]");
+        }
+        return Some(out);
+    }
+    None
+}
+
 fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
     if workspace.join("Cargo.toml").is_file() {
         return Some(AcceptanceItem {
@@ -566,6 +619,17 @@ fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
             verify: VerifySpec::Test {
                 program: "cargo".to_owned(),
                 args: vec!["test".to_owned()],
+            },
+        });
+    }
+    if workspace.join("go.mod").is_file() {
+        return Some(AcceptanceItem {
+            id: "workspace-tests".to_owned(),
+            description: "go test ./...".to_owned(),
+            required: true,
+            verify: VerifySpec::Test {
+                program: "go".to_owned(),
+                args: vec!["test".to_owned(), "./...".to_owned()],
             },
         });
     }
@@ -586,18 +650,80 @@ fn workspace_check(workspace: &Path) -> Option<AcceptanceItem> {
             },
         });
     }
+    if has_node_test(workspace) {
+        return Some(AcceptanceItem {
+            id: "workspace-tests".to_owned(),
+            description: "npm test".to_owned(),
+            required: true,
+            verify: VerifySpec::Test {
+                program: "npm".to_owned(),
+                args: vec!["test".to_owned()],
+            },
+        });
+    }
     None
 }
 
 fn has_python_tests(workspace: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(workspace) else {
+    let mut stack = vec![(workspace.to_path_buf(), 0usize)];
+    while let Some((directory, depth)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                if depth < 2 && !is_skipped_test_directory(&path) {
+                    stack.push((path, depth + 1));
+                }
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.ends_with(".py") && (name.starts_with("test_") || name.ends_with("_test.py")) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_skipped_test_directory(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(
+            ".git"
+                | "target"
+                | "node_modules"
+                | "dist"
+                | "build"
+                | ".venv"
+                | "venv"
+                | ".tox"
+                | "__pycache__"
+        )
+    )
+}
+
+fn has_node_test(workspace: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(workspace.join("package.json")) else {
         return false;
     };
-    entries.flatten().any(|entry| {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        name.ends_with(".py") && (name.starts_with("test_") || name.ends_with("_test.py"))
-    })
+    let Ok(package) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    package
+        .get("scripts")
+        .and_then(|scripts| scripts.get("test"))
+        .and_then(|test| test.as_str())
+        .is_some_and(|test| {
+            let test = test.trim();
+            !test.is_empty() && !test.contains("no test specified")
+        })
 }
 
 /// One project's outputs and trash. The account state root is shared, but a
@@ -615,19 +741,29 @@ fn tools(
     project_dir: &Path,
     config: &RuntimeConfig,
     todos: Arc<Mutex<TodoList>>,
+    background: Arc<dyn BackgroundTasks>,
 ) -> Result<ToolRegistry, KernelError> {
     let trash = Arc::new(LocalTrashStore::at(project_dir.join("trash")));
+    // One ledger per engine: a write or edit must follow a current read.
+    let ledger = ReadLedger::new();
     let mut registry = ToolRegistry::new();
     registry.register(Arc::new(EchoTool::new()))?;
-    registry.register(Arc::new(ReadFileTool::new()))?;
+    registry.register(Arc::new(ReadFileTool::new().with_ledger(ledger.clone())))?;
     registry.register(Arc::new(ListDirTool::new()))?;
     registry.register(Arc::new(MakeDirTool::new()))?;
     registry.register(Arc::new(CodeSearchTool::new()))?;
+    registry.register(Arc::new(GlobTool::new()))?;
     registry.register(Arc::new(
-        ShellTool::coding_defaults().with_timeout(config.limits().tool_timeout),
+        ShellTool::coding_defaults()
+            .with_timeout(config.limits().tool_timeout)
+            .with_background(background),
     ))?;
-    registry.register(Arc::new(WriteFileTool::new(trash.clone())))?;
-    registry.register(Arc::new(EditFileTool::new(trash.clone())))?;
+    registry.register(Arc::new(
+        WriteFileTool::new(trash.clone()).with_ledger(ledger.clone()),
+    ))?;
+    registry.register(Arc::new(
+        EditFileTool::new(trash.clone()).with_ledger(ledger),
+    ))?;
     registry.register(Arc::new(MoveFileTool::new(trash.clone())))?;
     registry.register(Arc::new(DeleteFileTool::new(trash.clone())))?;
     registry.register(Arc::new(ListTrashTool::new(trash.clone())))?;
@@ -919,6 +1055,40 @@ system = "prompt.md"
     }
 
     #[tokio::test]
+    async fn a_small_model_window_reduces_the_working_set() {
+        let fixture = Fixture::new();
+        let profile = PROFILE
+            .replace("budget_tokens = 2048", "budget_tokens = 64000")
+            .replace(
+                "thinking_budget = 0",
+                "thinking_budget = 0\nmax_output_tokens = 8192",
+            );
+        std::fs::write(fixture.dir.path().join("large-profile.toml"), profile).expect("a profile");
+        let mut rig = fixture.rig();
+        rig.profile = fixture.dir.path().join("large-profile.toml");
+
+        let engine = Engine::open(OpenRequest {
+            rig,
+            workspace: fixture.dir.path().join("workspace"),
+            state_dir: fixture.dir.path().join("state"),
+            store_path: fixture.dir.path().join("state/sessions/test.json"),
+            interactions: Arc::new(DeferAllInteractionPort),
+            deltas: None,
+            model: Some(ModelOverride {
+                provider: "mock".to_owned(),
+                model: "small-window".to_owned(),
+                base_url: None,
+                api_key: String::new(),
+                context_window: Some(32_000),
+            }),
+        })
+        .expect("the engine opens");
+
+        assert_eq!(engine.config().context.budget_tokens, 32_000 - 8192);
+        assert_eq!(engine.config().context_window, 32_000);
+    }
+
+    #[tokio::test]
     async fn one_engine_runs_many_turns() {
         let fixture = Fixture::new();
         let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
@@ -969,9 +1139,76 @@ system = "prompt.md"
         let config = load_profile(&fixture.rig().profile).expect("the profile loads");
         let todos = Arc::new(Mutex::new(TodoList::default()));
 
-        let registry = tools(fixture.dir.path(), &config, todos).expect("the registry builds");
+        let background: Arc<dyn BackgroundTasks> = Arc::new(LocalBackgroundTasks::new(
+            fixture.dir.path().join("outputs"),
+        ));
+        let registry =
+            tools(fixture.dir.path(), &config, todos, background).expect("the registry builds");
 
         assert!(registry.get("edit_file").is_some());
+        assert!(registry.get("glob").is_some());
+    }
+
+    #[test]
+    fn agents_md_is_appended_to_the_system_prompt() {
+        let fixture = Fixture::new();
+        std::fs::write(
+            fixture.dir.path().join("workspace/AGENTS.md"),
+            "Run cargo test before claiming done.\n",
+        )
+        .expect("project instructions");
+
+        let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
+
+        let prompt = &engine.config().system_prompt;
+        assert!(
+            prompt.contains("Project instructions (AGENTS.md)"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("Run cargo test before claiming done."),
+            "{prompt}"
+        );
+    }
+
+    #[test]
+    fn claude_md_is_the_instructions_fallback() {
+        let fixture = Fixture::new();
+        std::fs::write(
+            fixture.dir.path().join("workspace/CLAUDE.md"),
+            "Use the project formatter.\n",
+        )
+        .expect("project instructions");
+
+        let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
+
+        let prompt = &engine.config().system_prompt;
+        assert!(
+            prompt.contains("Project instructions (CLAUDE.md)"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("Use the project formatter."), "{prompt}");
+    }
+
+    #[test]
+    fn agents_md_wins_over_claude_md() {
+        let fixture = Fixture::new();
+        std::fs::write(
+            fixture.dir.path().join("workspace/AGENTS.md"),
+            "agents instructions\n",
+        )
+        .expect("agents");
+        std::fs::write(
+            fixture.dir.path().join("workspace/CLAUDE.md"),
+            "claude instructions\n",
+        )
+        .expect("claude");
+
+        let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
+
+        let prompt = &engine.config().system_prompt;
+        assert!(prompt.contains("agents instructions"), "{prompt}");
+        assert!(!prompt.contains("claude instructions"), "{prompt}");
     }
 
     #[test]
@@ -979,6 +1216,11 @@ system = "prompt.md"
         let dir = tempfile::TempDir::new().expect("a temp dir");
         std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n")
             .expect("a manifest");
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"test": "node test.js"}}"#,
+        )
+        .expect("a node manifest");
 
         let check = workspace_check(dir.path()).expect("a check");
 
@@ -1001,6 +1243,69 @@ system = "prompt.md"
 
         let empty = tempfile::TempDir::new().expect("a temp dir");
         assert!(workspace_check(empty.path()).is_none());
+    }
+
+    #[test]
+    fn a_go_workspace_gets_a_test_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(dir.path().join("go.mod"), "module example.com/x\n").expect("a manifest");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == "go" && args == &vec!["test".to_owned(), "./...".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn node_needs_a_test_script() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"test": "vitest run"}}"#,
+        )
+        .expect("a manifest");
+
+        let check = workspace_check(dir.path()).expect("a check");
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == "npm" && args == &["test".to_owned()]
+        ));
+
+        let empty = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(
+            empty.path().join("package.json"),
+            r#"{"scripts": {"build": "vite build"}}"#,
+        )
+        .expect("a manifest");
+        assert!(workspace_check(empty.path()).is_none());
+
+        let placeholder = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(
+            placeholder.path().join("package.json"),
+            r#"{"scripts": {"test": "echo \"Error: no test specified\" && exit 1"}}"#,
+        )
+        .expect("a manifest");
+        assert!(workspace_check(placeholder.path()).is_none());
+    }
+
+    #[test]
+    fn a_nested_python_test_gets_a_check() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("tests/unit")).expect("directories");
+        std::fs::write(dir.path().join("tests/unit/test_stats.py"), "pass\n").expect("a test file");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == if cfg!(windows) { "python" } else { "python3" }
+                    && args.iter().any(|arg| arg == "unittest")
+        ));
     }
 
     #[test]

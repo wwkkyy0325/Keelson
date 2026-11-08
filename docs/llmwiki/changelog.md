@@ -577,3 +577,66 @@ The eval proved the loop, but the transcript did not show that a check ran.
 Persisting one boolean is enough for the first UI: the model's narrative and
 the verification evidence stay separate, and a failed check is visible next
 to the turn's error.
+
+## 2026-11-08 — M4b: the coding rig reaches a real repository
+
+- `profiles/coding.toml` and `coding-live.toml`: `max_output_tokens = 8192`,
+  `budget_tokens = 64000`. `Engine::open` now lowers the working set to
+  `model capacity - output reserve` when a catalog model has a smaller
+  window; a 32k model gets a 23808-token working set. The override no longer
+  silently claims capacity the request cannot use.
+- Keel `read_file { path, offset?, limit? }`: 1-based line ranges, exact
+  bytes and CRLF preserved, no line numbers. An offset past the end reports
+  the line count. This is what the persona already told the model to do.
+- Keel `code_search { ..., case_sensitive?, glob? }`: a boolean case switch
+  and a `*`/`?` glob. A glob without a separator matches the file name; with
+  one it matches the relative path. The skipped-directory list now covers
+  `out`, `coverage`, `vendor`, virtualenvs, tool caches and common JS build
+  output. ADR 0019 in Keel records the contract.
+- Background shell is real: the host builds `LocalBackgroundTasks` under the
+  project's `outputs/background`, registers the shell tool through
+  `with_background`, and passes it to the driver. Dropping the engine kills
+  the process tree, matching the persona's session-scoped promise.
+- Automatic verification is an ordered table: Cargo, Go, Python (recursive
+  to depth 2), Node only when `package.json` declares a non-empty
+  `scripts.test` that is not npm's `no test specified` placeholder.
+- `echo` leaves the visible tool list of both coding profiles; it remains
+  registered for the kernel tests and the mock fixture.
+
+### Why
+
+M4 proved the loop but only on a small Python demo. The four limits that
+matter on a real repository were an output cap that truncates edits, a
+working set advertised as 1M but actually 16k, a `read_file` that cannot
+reach a line range, and a `background` flag that the host never backed. The
+live eval passed again in 19.61 s after the changes; the new tool contracts
+have kernel tests and the verification table has host tests.
+
+## 2026-11-08 — M4c: the coding rig writes safely
+
+- Keel `ReadLedger`: a per-engine SHA-256 record of successful reads.
+  `write_file` on an existing file and every `edit_file` require a current
+  read; an unread or changed file is refused with a "read it again" message.
+  New files need no read. The host wires one ledger into the read, write and
+  edit tools. ADR 0020 in Keel records the contract.
+- `edit_file` falls back to a line-ending-normalized literal match when the
+  exact snippet is absent. A CRLF checkout edits with an LF snippet and stays
+  CRLF; `new` is converted to the file's style. ADR 0018 gains the amendment.
+- New Keel `glob` tool: `*` within a segment, `**` across segments, a pattern
+  without a separator matches the file name at any depth; files only, newest
+  first, capped. ADR 0021 records it. Both coding profiles expose it.
+- The workspace's `AGENTS.md` (fallback `CLAUDE.md`) is appended to the
+  system prompt at engine open, capped at 16 KiB.
+- The persona tells the model to read before writing and to prefer
+  `edit_file` for targeted changes.
+- Live eval on a CRLF demo: 11.86 s, tests pass, `stats.py` still CRLF. The
+  model followed read-before-edit; no refusal recovery was needed.
+
+### Why
+
+The M4b tools could edit, but a blind `write_file` could destroy a file and a
+Windows CRLF checkout broke exact-match edits. Both are failures that lose
+work, not failures that merely waste a turn. The read ledger and the narrow
+line-ending fallback fix them without adding fuzzy matching that would hide
+an ambiguity. `glob` closes the last obvious discovery gap against the tools
+the major coding agents expose.

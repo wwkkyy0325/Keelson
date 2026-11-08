@@ -28,7 +28,7 @@ together. A release build switches every `keel-*` entry to the tag and never to
 - `keel-runtime`: `TurnDriver`, `TurnDriverConfig`, `ContextBuilder` and the
   standard stages, `ToolRegistry`, `PermissionEngine`, `EventLog`,
   `InteractionBroker`, the built-in tools, `LocalTrashStore`,
-  `LocalBackgroundTasks`.
+  `LocalBackgroundTasks`, `ReadLedger`.
 - `keel-model-openai`, `keel-model-anthropic`: the two providers.
 
 Anything else in the kernel is out of scope until a rig needs it.

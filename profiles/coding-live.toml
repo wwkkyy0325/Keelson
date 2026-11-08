@@ -7,16 +7,16 @@ model = "deepseek-flash"
 base_url = "https://api.deepseek.com/anthropic"
 api_key_env = "ANTHROPIC_AUTH_TOKEN"
 thinking_budget = 0
-max_output_tokens = 4096
+max_output_tokens = 8192
 # The API model id has no context suffix; capacity is a separate field.
 context_window = 1048576
 
 [context]
 stages = ["system", "memory", "history", "latest"]
-budget_tokens = 16000
+budget_tokens = 64000
 
 [tools]
-visible = ["echo", "read_file", "write_file", "edit_file", "list_trash", "restore_file", "list_dir", "code_search", "make_dir", "move_file", "delete_file", "shell", "todo"]
+visible = ["read_file", "write_file", "edit_file", "list_trash", "restore_file", "list_dir", "glob", "code_search", "make_dir", "move_file", "delete_file", "shell", "todo"]
 budget = 1000
 
 [verification]

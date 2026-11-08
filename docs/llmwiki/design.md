@@ -137,6 +137,22 @@ through `Engine::history`, a keyset page over the in-memory document; it never
 parses the kernel events. A table layer can still be added behind the same
 snapshot if a reader ever needs queries the page API cannot answer.
 
+## Coding turn
+
+The coding profile's working set is 64000 tokens and its output reserve is
+8192; a catalog model with a smaller window lowers the working set rather
+than sending a prompt it cannot hold. A turn that changed the workspace runs
+one project check (Cargo, Go, nested Python tests, or Node only with a
+`scripts.test`) after the turn. `read_file` can read a 1-based line range
+without altering its bytes; `code_search` can be case-sensitive and filtered
+by a file-name or path glob; the `glob` tool finds files by path. The engine
+keeps a SHA-256 read ledger: `write_file` on an existing file and `edit_file`
+require a current read, and `edit_file` matches across a CRLF/LF difference
+without changing the file's line endings. The workspace's `AGENTS.md`
+(fallback `CLAUDE.md`) is appended to the system prompt at engine open, capped
+at 16 KiB. Background shell commands run through the kernel's registry, write
+under the project's `outputs/`, and are killed when the engine drops.
+
 ## Module layout
 
 ```
@@ -191,6 +207,35 @@ M4 — Coding rig does the work (done)
   conversational turn skips it (ADR 0004 after-changes mode).
 - Verify: the live eval repaired `examples/demo-workspace` and its `unittest`
   check passed; the transcript shows a verification badge.
+
+M4b — Coding rig capability pass (done)
+
+- The profile carries an 8192-token output reserve and a 64000-token working
+  set; a catalog model with a smaller window reduces the working set.
+- Keel `read_file` reads a 1-based line range with its exact bytes preserved
+  (ADR 0019). Keel `code_search` is case-sensitive on request and accepts a
+  file-name or path glob; it stays a literal substring search.
+- `shell` background commands are wired to the kernel's
+  `LocalBackgroundTasks`, with output under the project's `outputs/`.
+- Automatic verification detects Cargo, Go, Python (nested) and Node (only
+  with a `scripts.test`), in that order.
+- Verify: the live eval still repairs the demo; the new tool contracts have
+  kernel tests.
+
+M4c — Coding rig reliability (done)
+
+- A per-engine read ledger: `write_file` on an existing file and `edit_file`
+  require a current read; a blind overwrite and a stale edit are refused with
+  a re-read instruction (ADR 0020 in Keel).
+- `edit_file` falls back to a line-ending-normalized literal match, so a CRLF
+  checkout edits with an LF snippet and stays CRLF. Exact match remains the
+  primary path.
+- `glob` finds files by path (`*`, `**`); results are newest first and
+  bounded. ADR 0021 records the contract.
+- The workspace's `AGENTS.md` (fallback `CLAUDE.md`) is appended to the
+  system prompt at engine open, capped at 16 KiB.
+- Verify: the live eval edits a CRLF demo, keeps its line endings and passes
+  its tests; kernel and host tests pin the guards.
 
 M5 — A second rig
 

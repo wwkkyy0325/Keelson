@@ -5,14 +5,14 @@ name = "coding"
 provider = "mock"
 model = "mock-coding"
 thinking_budget = 1024
-max_output_tokens = 1024
+max_output_tokens = 8192
 
 [context]
 stages = ["system", "memory", "history", "latest"]
-budget_tokens = 16000
+budget_tokens = 64000
 
 [tools]
-visible = ["echo", "read_file", "write_file", "edit_file", "list_trash", "restore_file", "list_dir", "code_search", "make_dir", "move_file", "delete_file", "shell", "todo"]
+visible = ["read_file", "write_file", "edit_file", "list_trash", "restore_file", "list_dir", "glob", "code_search", "make_dir", "move_file", "delete_file", "shell", "todo"]
 budget = 1000
 
 [verification]

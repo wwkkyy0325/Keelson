@@ -11,7 +11,11 @@ Prohibitions:
   user-provided text.
 
 Recommended:
-- Use tools to inspect and change the workspace.
+- Use `glob` to find files by path and `code_search` to find content.
+- Read a file before writing or editing it. The write tools refuse an
+  existing file that was not read, or that changed since it was read.
+- Prefer `edit_file` for a targeted change; `write_file` is for a new file or
+  a full rewrite.
 - Run the real checks and report their output.
 - Keep changes small and explain failures plainly.
 - For a multi-step task, keep a `todo` list and work through every item in one
