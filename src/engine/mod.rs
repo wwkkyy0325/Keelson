@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use keel_core::{
     AcceptanceItem, AccessKind, ArgValue, CancelToken, Event, InteractionPort, KernelError,
     ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session, TodoList,
-    ToolArgs, VerifySpec,
+    ToolArgs, ToolCallId, VerifySpec,
 };
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
@@ -28,6 +28,7 @@ use keel_runtime::{
     TurnOutcome, WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 use crate::rig::{self, Rig};
@@ -540,32 +541,39 @@ impl Engine {
 /// omit previews; these rows carry them, bounded by the kernel.
 fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
     let mut lines: Vec<ToolLine> = Vec::new();
+    // Parallel read-only calls finish out of order; the call id, not the tool
+    // name, is what a finished event belongs to.
+    let mut pending: HashMap<ToolCallId, usize> = HashMap::new();
     for record in records {
         match &record.event {
             Event::ToolStarted {
-                tool, args_preview, ..
-            } => lines.push(ToolLine {
-                name: tool.clone(),
-                ok: None,
-                duration_ms: 0,
-                args: args_preview.clone(),
-                output: None,
-            }),
-            Event::ToolFinished {
+                call_id,
                 tool,
+                args_preview,
+                ..
+            } => {
+                pending.insert(*call_id, lines.len());
+                lines.push(ToolLine {
+                    name: tool.clone(),
+                    ok: None,
+                    duration_ms: 0,
+                    args: args_preview.clone(),
+                    output: None,
+                });
+            }
+            Event::ToolFinished {
+                call_id,
                 ok,
                 duration_ms,
                 output_preview,
                 ..
             } => {
-                if let Some(line) = lines
-                    .iter_mut()
-                    .rev()
-                    .find(|line| line.name == *tool && line.ok.is_none())
-                {
-                    line.ok = Some(*ok);
-                    line.duration_ms = *duration_ms;
-                    line.output = output_preview.clone();
+                if let Some(index) = pending.remove(call_id) {
+                    if let Some(line) = lines.get_mut(index) {
+                        line.ok = Some(*ok);
+                        line.duration_ms = *duration_ms;
+                        line.output = output_preview.clone();
+                    }
                 }
             }
             _ => {}
@@ -1055,6 +1063,67 @@ system = "prompt.md"
         assert_eq!(engine.config().context_window, 1_000_000);
         assert_eq!(engine.config().model_route.provider, "mock");
         assert_eq!(engine.config().model_route.model, "override-model");
+    }
+
+    #[test]
+    fn parallel_tool_results_are_paired_by_call_id() {
+        let turn_id = keel_core::TurnId::new(1);
+        let records = vec![
+            EventRecord {
+                seq: 1,
+                event: Event::ToolStarted {
+                    turn_id,
+                    call_id: ToolCallId::new(1),
+                    tool: "code_search".to_owned(),
+                    risk: keel_core::RiskLevel::ReadOnly,
+                    args_preview: Some("first".to_owned()),
+                },
+            },
+            EventRecord {
+                seq: 2,
+                event: Event::ToolStarted {
+                    turn_id,
+                    call_id: ToolCallId::new(2),
+                    tool: "code_search".to_owned(),
+                    risk: keel_core::RiskLevel::ReadOnly,
+                    args_preview: Some("second".to_owned()),
+                },
+            },
+            EventRecord {
+                seq: 3,
+                event: Event::ToolFinished {
+                    turn_id,
+                    call_id: ToolCallId::new(2),
+                    tool: "code_search".to_owned(),
+                    ok: true,
+                    error: None,
+                    duration_ms: 2,
+                    output_preview: Some("second output".to_owned()),
+                },
+            },
+            EventRecord {
+                seq: 4,
+                event: Event::ToolFinished {
+                    turn_id,
+                    call_id: ToolCallId::new(1),
+                    tool: "code_search".to_owned(),
+                    ok: false,
+                    error: None,
+                    duration_ms: 1,
+                    output_preview: Some("first output".to_owned()),
+                },
+            },
+        ];
+
+        let lines = tool_lines(&records);
+
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].args.as_deref(), Some("first"));
+        assert_eq!(lines[0].output.as_deref(), Some("first output"));
+        assert_eq!(lines[0].ok, Some(false));
+        assert_eq!(lines[1].args.as_deref(), Some("second"));
+        assert_eq!(lines[1].output.as_deref(), Some("second output"));
+        assert_eq!(lines[1].ok, Some(true));
     }
 
     #[tokio::test]
