@@ -1221,3 +1221,27 @@ separates deterministic tests from model-run variance.
 The check must use the interpreter the project installed its dependencies
 into, and a path to that interpreter is not a widening of what a check may
 run: the workspace owns the file and its name still has to be allowlisted.
+
+## 2026-11-09 — M4ae: declared workspace checks
+
+- `.keelson/checks.toml` declares `[[check]]` entries (`name`, `program`,
+  `args`). They are appended to the detected candidates and always run; the id
+  is `workspace-check:<name>` and the program still has to be allowlisted.
+- A file that does not parse, or a check with a missing, duplicate or invalid
+  name or an empty program, becomes one required `workspace-checks-file` item
+  whose reason quotes the error, so the turn is visibly not verified instead
+  of silently unchecked.
+- The file is read at engine open with the rest of check detection.
+- Persona: `.keelson/checks.toml` is the user's declaration; do not edit it to
+  make a check pass.
+- Tests: candidate shape, always-runs selection, a passing and a failing
+  declared check through `AcceptanceVerifier`, a broken file, and four invalid
+  declarations. 60 lib tests (+5).
+- Task doc: `docs/llmwiki/tasks/m4ae-declared-checks.md`.
+
+### Why
+
+The four detected ecosystems are the common case, not every case. A project
+with Maven, .NET or a Makefile had no verified turn at all, so the rig could
+report success without anything running. A file the user owns is the smallest
+way to close that gap without inventing a command from a manifest.

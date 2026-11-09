@@ -237,5 +237,10 @@ absolute path inside the workspace when the file name alone is allowlisted.
 Before this, the Python check preferred `.venv` and every turn in such a
 project failed a required check with `not allowlisted`.
 
+M4ae: a workspace can declare its own check in `.keelson/checks.toml`
+(`name`, `program`, `args`). A declared check always runs, its program still
+has to be allowlisted, and a file that does not parse is itself a required
+item so a typo is visible.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

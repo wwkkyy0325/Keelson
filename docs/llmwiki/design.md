@@ -150,7 +150,10 @@ manifest in a subdirectory (depth at most three) is found and the check targets
 its directory (`--manifest-path`, `go -C`, `npm --prefix`, `pytest <dir>`);
 the nearest `.venv` and pytest config win. A venv interpreter is named by its
 path, and the verifier accepts an absolute program path inside the workspace
-when the file name is allowlisted (M4ad). Each check id names its ecosystem
+when the file name is allowlisted (M4ad). A workspace outside those ecosystems
+declares its own check in `.keelson/checks.toml`; the item is named
+`workspace-check:<name>`, always runs, and a file that does not parse is a
+required item carrying the error (M4ae). Each check id names its ecosystem
 and project, so a multi-check failure is attributable (M4z). Every project of an ecosystem is a
 candidate: a monorepo with two crates, two packages or two Python projects
 gets one check per project, and a changed path selects the deepest one. A path

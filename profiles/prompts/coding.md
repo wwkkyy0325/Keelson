@@ -27,6 +27,9 @@ Recommended:
 - Use `git_diff` to review the working tree before finishing; it is read-only
   and needs no confirmation.
 - Run the real checks and report their output.
+- `.keelson/checks.toml` is the user's declaration of the project's own
+  checks. Do not edit it to make a check pass, and only add a check when the
+  user asked for one.
 - Set `shell`'s `mutates` to true when the command writes to the workspace; a
   test-only command leaves it false.
 - Set `read_file`'s `line_numbers` to true when you need to refer to lines;

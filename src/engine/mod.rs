@@ -666,9 +666,10 @@ fn project_instructions(workspace: &Path) -> Option<String> {
 }
 
 /// One project check and the directory it covers. A changed path selects the
-/// check of the deepest project that contains it.
+/// check of the deepest project that contains it. A declared check has no
+/// directory and always runs.
 struct ProjectCheck {
-    project: PathBuf,
+    project: Option<PathBuf>,
     item: AcceptanceItem,
 }
 
@@ -680,13 +681,13 @@ fn workspace_checks(workspace: &Path) -> Vec<ProjectCheck> {
     for project in project_directories(workspace, "Cargo.toml") {
         checks.push(ProjectCheck {
             item: cargo_check(&project),
-            project,
+            project: Some(project),
         });
     }
     for project in project_directories(workspace, "go.mod") {
         checks.push(ProjectCheck {
             item: go_check(&project),
-            project,
+            project: Some(project),
         });
     }
     // A test root that contains another one runs both; a nested root is
@@ -702,7 +703,7 @@ fn workspace_checks(workspace: &Path) -> Vec<ProjectCheck> {
     for tests in python_roots {
         let project = python_project(workspace, &tests);
         checks.push(ProjectCheck {
-            project,
+            project: Some(project),
             item: python_check(workspace, &tests),
         });
     }
@@ -710,15 +711,108 @@ fn workspace_checks(workspace: &Path) -> Vec<ProjectCheck> {
         if has_node_test(&workspace.join(&project)) {
             checks.push(ProjectCheck {
                 item: node_check(&project),
-                project,
+                project: Some(project),
             });
         }
     }
+    checks.extend(declared_checks(workspace));
     checks
+}
+
+/// A workspace may declare its own check in `.keelson/checks.toml` when its
+/// tooling is outside the four detected ecosystems. A file that does not parse
+/// becomes one required item that cannot pass, so a typo is visible instead of
+/// silently leaving the workspace unchecked.
+const DECLARED_CHECKS_FILE: &str = ".keelson/checks.toml";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChecksFile {
+    #[serde(default)]
+    check: Vec<DeclaredCheck>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeclaredCheck {
+    name: String,
+    program: String,
+    #[serde(default)]
+    args: Vec<String>,
+}
+
+fn declared_checks(workspace: &Path) -> Vec<ProjectCheck> {
+    let Ok(bytes) = std::fs::read(workspace.join(DECLARED_CHECKS_FILE)) else {
+        return Vec::new();
+    };
+    let Ok(text) = String::from_utf8(bytes) else {
+        return checks_file_problem("the file is not UTF-8");
+    };
+    match parse_declared_checks(&text) {
+        Ok(checks) => checks,
+        Err(message) => checks_file_problem(&message),
+    }
+}
+
+fn checks_file_problem(message: &str) -> Vec<ProjectCheck> {
+    vec![ProjectCheck {
+        project: None,
+        item: AcceptanceItem {
+            id: "workspace-checks-file".to_owned(),
+            description: format!("{DECLARED_CHECKS_FILE}: {message}"),
+            required: true,
+            verify: VerifySpec::Unverifiable {
+                reason: format!("{DECLARED_CHECKS_FILE}: {message}"),
+            },
+        },
+    }]
+}
+
+fn parse_declared_checks(text: &str) -> Result<Vec<ProjectCheck>, String> {
+    let file: ChecksFile = toml::from_str(text).map_err(|error| error.to_string())?;
+    let mut checks = Vec::new();
+    let mut names: Vec<&str> = Vec::new();
+    for declared in &file.check {
+        let name = declared.name.trim();
+        if name.is_empty() {
+            return Err("a check needs a name".to_owned());
+        }
+        if !name.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        }) {
+            return Err(format!(
+                "check `{name}` may only use letters, digits, `-` and `_`"
+            ));
+        }
+        if names.contains(&name) {
+            return Err(format!("check `{name}` is declared twice"));
+        }
+        names.push(name);
+        let program = declared.program.trim();
+        if program.is_empty() {
+            return Err(format!("check `{name}` needs a program"));
+        }
+        let mut description = program.to_owned();
+        for arg in &declared.args {
+            description.push(' ');
+            description.push_str(arg);
+        }
+        checks.push(ProjectCheck {
+            project: None,
+            item: check_item(
+                format!("workspace-check:{name}"),
+                description,
+                program.to_owned(),
+                declared.args.clone(),
+            ),
+        });
+    }
+    Ok(checks)
 }
 
 /// Picks the checks for the deepest project that contains each changed path.
 /// A path outside every project, such as a shell-only change, runs them all.
+/// A declared check has no project and always runs.
 fn selected_checks(
     checks: &[ProjectCheck],
     workspace: &Path,
@@ -734,7 +828,10 @@ fn selected_checks(
         let mut best = 0usize;
         let mut matched: Vec<&ProjectCheck> = Vec::new();
         for check in checks {
-            let project = workspace.join(&check.project);
+            let Some(relative) = &check.project else {
+                continue;
+            };
+            let project = workspace.join(relative);
             if !absolute.starts_with(&project) {
                 continue;
             }
@@ -751,6 +848,11 @@ fn selected_checks(
             if !selected.contains(&check.item) {
                 selected.push(check.item.clone());
             }
+        }
+    }
+    for check in checks.iter().filter(|check| check.project.is_none()) {
+        if !selected.contains(&check.item) {
+            selected.push(check.item.clone());
         }
     }
     if selected.is_empty() {
@@ -2481,5 +2583,115 @@ system = "prompt.md"
             text.push_str(&delta);
         }
         assert!(text.contains("mock turn complete"), "no deltas: {text:?}");
+    }
+
+    fn declare_checks(dir: &Path, contents: &str) {
+        std::fs::create_dir_all(dir.join(".keelson")).expect("a config directory");
+        std::fs::write(dir.join(".keelson/checks.toml"), contents).expect("a checks file");
+    }
+
+    #[test]
+    fn a_declared_check_is_a_candidate() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        declare_checks(
+            dir.path(),
+            "[[check]]\nname = \"jvm\"\nprogram = \"java\"\nargs = [\"-version\"]\n",
+        );
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert_eq!(check.id, "workspace-check:jvm");
+        assert_eq!(check.description, "java -version");
+        assert!(check.required);
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Test { ref program, ref args }
+                if program == "java" && args == &["-version".to_owned()]
+        ));
+    }
+
+    #[test]
+    fn a_declared_check_always_runs() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::create_dir_all(dir.path().join("backend")).expect("a project directory");
+        std::fs::write(
+            dir.path().join("backend/Cargo.toml"),
+            "[package]\nname = \"x\"\n",
+        )
+        .expect("a cargo manifest");
+        declare_checks(
+            dir.path(),
+            "[[check]]\nname = \"jvm\"\nprogram = \"java\"\nargs = [\"-version\"]\n",
+        );
+
+        let checks = workspace_checks(dir.path());
+        let selected = selected_checks(&checks, dir.path(), &[PathBuf::from("backend/src/lib.rs")]);
+
+        let ids: Vec<&str> = selected.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["workspace-tests:cargo:backend", "workspace-check:jvm"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_declared_check_runs_and_fails_by_its_exit_code() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        declare_checks(
+            dir.path(),
+            "[[check]]\nname = \"toolchain\"\nprogram = \"rustc\"\nargs = [\"--version\"]\n\
+             [[check]]\nname = \"broken\"\nprogram = \"rustc\"\nargs = [\"--no-such-flag\"]\n",
+        );
+
+        let items: Vec<AcceptanceItem> = workspace_checks(dir.path())
+            .into_iter()
+            .map(|check| check.item)
+            .collect();
+        let report = keel_runtime::AcceptanceVerifier::new(dir.path())
+            .verify(&items)
+            .await;
+
+        assert_eq!(report.evidence.len(), 2, "{report:?}");
+        assert_eq!(report.required_failed, vec!["workspace-check:broken"]);
+    }
+
+    #[test]
+    fn a_checks_file_that_does_not_parse_is_a_failing_item() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        declare_checks(dir.path(), "[[check]\nname = \"jvm\"\n");
+
+        let check = workspace_check(dir.path()).expect("a check");
+
+        assert_eq!(check.id, "workspace-checks-file");
+        assert!(check.required);
+        assert!(matches!(
+            check.verify,
+            VerifySpec::Unverifiable { ref reason }
+                if reason.starts_with(".keelson/checks.toml: ")
+        ));
+    }
+
+    #[test]
+    fn a_declared_check_needs_a_unique_name_and_program() {
+        for contents in [
+            "[[check]]\nprogram = \"java\"\n",
+            "[[check]]\nname = \"bad name\"\nprogram = \"java\"\n",
+            "[[check]]\nname = \"jvm\"\nprogram = \"\"\n",
+            "[[check]]\nname = \"jvm\"\nprogram = \"java\"\n[[check]]\nname = \"jvm\"\nprogram = \"java\"\n",
+            "[[check]]\nname = \"jvm\"\nprogram = \"java\"\narg = [\"typo\"]\n",
+        ] {
+            let dir = tempfile::TempDir::new().expect("a temp dir");
+            declare_checks(dir.path(), contents);
+
+            let check = workspace_check(dir.path()).expect("a check");
+
+            assert_eq!(check.id, "workspace-checks-file", "{contents}");
+            assert!(check.required);
+            assert!(matches!(
+                check.verify,
+                VerifySpec::Unverifiable { ref reason }
+                    if reason.starts_with(".keelson/checks.toml: ")
+            ));
+        }
     }
 }

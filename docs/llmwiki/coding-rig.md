@@ -44,6 +44,20 @@ workspace, speak LSP, or execute an arbitrary command without permission.
   contains each changed path (from `write_file`, `edit_file`, `multi_edit`,
   `apply_edits`, `move_file`, `delete_file`, `make_dir`, `restore_file`, or a
   shell call marked `mutates: true`). No match runs every check.
+- A workspace whose tooling is outside those ecosystems can declare its own
+  checks in `.keelson/checks.toml`:
+
+  ```toml
+  [[check]]
+  name = "jvm"
+  program = "java"
+  args = ["-version"]
+  ```
+
+  A declared check always runs, its id is `workspace-check:<name>`, and its
+  program still has to be allowlisted. A file that does not parse becomes one
+  required item (`workspace-checks-file`) whose reason quotes the error, so a
+  typo is visible instead of silently leaving the workspace unchecked.
 - Each item id is `workspace-tests:<ecosystem>:<project>`; a Python id uses
   the test root. A failure names the item.
 - The shell tool is not a workspace change unless the model sets `mutates`.
@@ -102,8 +116,13 @@ defect.
 - Discovery stops at depth 3; a manifest or test root deeper is missed.
 - `read_file` truncates at 8 MiB and the edit tools reject larger files; a
   `write_file` over an existing large file cannot satisfy the full-read guard.
-- One check per project; a project with no recognized manifest is unverified.
-  There is no per-workspace custom check command yet.
+- One check per project; a project with no recognized manifest is unverified
+  unless the workspace declares a check. A declared check runs at the
+  workspace root and cannot name a working directory; it also runs on every
+  verified turn, not only when its files changed.
+- The declared-checks file is read when the engine opens, so an edit takes
+  effect in the next session. It is the user's configuration; the persona
+  tells the model not to edit it to make a check pass.
 - The Node check needs a `scripts.test`; a Python check needs a
   `test_*.py`/`*_test.py` file; Go runs `go test ./...` even with no test
   files; Cargo runs the workspace.
