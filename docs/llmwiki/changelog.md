@@ -1381,3 +1381,16 @@ duration line is what makes the cost of a check measurable at all.
   key.
 - Verified: `npm test` 17, `svelte-check` 0 errors, `npm run build`, and the
   Tauri crate's 28 tests plus clippy.
+
+## 2026-11-09 — a conversation is created by its first turn
+
+- `new_session` wrote a document and a history row the moment 新对话 was
+  pressed, so selecting a workspace and starting a chat left "无题" rows that
+  could not be deleted without archiving first. It now opens a blank
+  conversation with a fresh id and writes nothing.
+- `sessions::list` no longer lists a document with no turns. The first turn
+  writes the document and `touch` adds the row with the first message as its
+  title, so the history matches what the user actually said.
+- `sessions::create` is now a test fixture (`#[cfg(test)]`), and five session
+  tests were updated to the new rule.
+- Verified: 28 desktop tests, clippy clean; the dev app rebuilt and restarted.

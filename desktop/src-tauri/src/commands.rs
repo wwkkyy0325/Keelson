@@ -219,10 +219,12 @@ pub async fn open_session(
 ) -> Result<SessionView, String> {
     let state = state.inner().clone();
     let workspace = resolve_workspace(&state, workspace);
-    open_inner(app, state, workspace, session_id).await
+    open_inner(app, state, workspace, session_id, false).await
 }
 
-/// Creates a conversation and opens it.
+/// Opens a blank conversation without writing a document. The row appears in
+/// the project's history only when the first turn writes the document, so
+/// pressing 新对话 and leaving does not litter the list.
 #[tauri::command]
 pub async fn new_session(
     app: AppHandle,
@@ -232,22 +234,7 @@ pub async fn new_session(
     let state = state.inner().clone();
     ensure_idle(&state)?;
     let workspace = resolve_workspace(&state, workspace);
-    let state_dir = state_dir_for(&workspace);
-    let rig_name = {
-        let config = state
-            .config
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        rig_name_for(&config.provider)
-    };
-    let meta = {
-        let _guard = state
-            .session_io
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        sessions::create(&state_dir, &workspace, rig_name)?
-    };
-    open_inner(app, state, workspace, Some(meta.id)).await
+    open_inner(app, state, workspace, Some(sessions::fresh_id()), true).await
 }
 
 #[tauri::command]
@@ -400,6 +387,7 @@ async fn open_inner(
     state: Arc<DesktopState>,
     workspace: PathBuf,
     session_id: Option<String>,
+    allow_missing: bool,
 ) -> Result<SessionView, String> {
     ensure_idle(&state)?;
     let config = state
@@ -450,7 +438,8 @@ async fn open_inner(
                 if !sessions::valid_id(&id) {
                     return Err("会话 id 不合法".to_owned());
                 }
-                if !sessions::session_path(&state_dir, &workspace, &id).is_file() {
+                if !allow_missing && !sessions::session_path(&state_dir, &workspace, &id).is_file()
+                {
                     return Err("对话不存在".to_owned());
                 }
                 id

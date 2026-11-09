@@ -75,8 +75,12 @@ pub fn list(state_dir: &Path, workspace: &Path) -> Vec<SessionMeta> {
     index.sessions
 }
 
-/// Creates an empty conversation and writes its document, so the row survives
-/// a restart and the index always points at a real file.
+/// Writes an empty conversation document and its row.
+///
+/// The app no longer calls this: pressing 新对话 opens a blank conversation,
+/// and the first turn writes the document. It stays as a fixture builder for
+/// the tests below, which exercise the index against a real file.
+#[cfg(test)]
 pub fn create(state_dir: &Path, workspace: &Path, rig: &str) -> Result<SessionMeta, String> {
     let dir = project_dir(state_dir, workspace);
     fs::create_dir_all(&dir)
@@ -333,12 +337,23 @@ fn read_index(dir: &Path) -> Option<SessionIndex> {
 fn rebuild(dir: &Path) -> SessionIndex {
     let mut sessions = Vec::new();
     for (id, path) in documents(dir) {
-        sessions.push(meta_from_file(&path, &id));
+        let meta = meta_from_file(&path, &id);
+        if is_listed(&meta) {
+            sessions.push(meta);
+        }
     }
     SessionIndex {
         version: INDEX_VERSION,
         sessions,
     }
+}
+
+/// Whether a row belongs in the list. A document with no turns is not a
+/// conversation: pressing 新对话 and leaving used to write one, and the row
+/// then sat in the history forever. The document stays on disk; only the row
+/// is hidden, so a later turn brings it back.
+fn is_listed(meta: &SessionMeta) -> bool {
+    meta.turns > 0
 }
 
 /// Drops rows whose document is gone, adopts documents the index does not
@@ -348,7 +363,8 @@ fn reconcile(dir: &Path, index: &mut SessionIndex) -> bool {
     let present: HashSet<String> = documents(dir).into_iter().map(|(id, _)| id).collect();
     let mut changed = false;
     let before = index.sessions.len();
-    index.sessions.retain(|meta| present.contains(&meta.id));
+    index.sessions
+        .retain(|meta| present.contains(&meta.id) && is_listed(meta));
     changed |= index.sessions.len() != before;
 
     let known: HashSet<String> = index.sessions.iter().map(|meta| meta.id.clone()).collect();
@@ -356,6 +372,7 @@ fn reconcile(dir: &Path, index: &mut SessionIndex) -> bool {
         .into_iter()
         .filter(|id| !known.contains(id))
         .map(|id| meta_from_file(&dir.join(format!("{id}.json")), &id))
+        .filter(is_listed)
         .collect();
     changed |= !added.is_empty();
     index.sessions.extend(added);
@@ -490,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn a_created_conversation_has_a_document_and_a_row() {
+    fn a_document_with_no_turns_is_not_listed() {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
@@ -498,12 +515,16 @@ mod tests {
         let meta = create(&state, &workspace, "coding").expect("create");
         assert!(valid_id(&meta.id));
         assert!(session_path(&state, &workspace, &meta.id).is_file());
+        // No turn yet: the document exists but the history stays empty.
+        assert!(list(&state, &workspace).is_empty());
 
+        Store::open(session_path(&state, &workspace, &meta.id))
+            .save(&document(&workspace, "first question", 1))
+            .expect("save");
         let rows = list(&state, &workspace);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, meta.id);
-        assert_eq!(rows[0].rig, "coding");
-        assert_eq!(rows[0].turns, 0);
+        assert_eq!(rows[0].turns, 1);
     }
 
     #[test]
@@ -549,6 +570,9 @@ mod tests {
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
         let meta = create(&state, &workspace, "coding").expect("create");
+        Store::open(session_path(&state, &workspace, &meta.id))
+            .save(&document(&workspace, "first question", 1))
+            .expect("save");
 
         let renamed = set_title(&state, &workspace, &meta.id, "  my name  ").expect("rename");
         assert_eq!(renamed.title, "my name");
@@ -580,6 +604,9 @@ mod tests {
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
         let meta = create(&state, &workspace, "coding").expect("create");
+        Store::open(session_path(&state, &workspace, &meta.id))
+            .save(&document(&workspace, "first question", 1))
+            .expect("save");
 
         let archived = set_archived(&state, &workspace, &meta.id, true).expect("archive");
         assert!(archived.archived);
@@ -629,8 +656,14 @@ mod tests {
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
         let first = create(&state, &workspace, "coding").expect("first");
+        Store::open(session_path(&state, &workspace, &first.id))
+            .save(&document(&workspace, "first question", 1))
+            .expect("save");
         std::thread::sleep(std::time::Duration::from_millis(2));
         let second = create(&state, &workspace, "coding").expect("second");
+        Store::open(session_path(&state, &workspace, &second.id))
+            .save(&document(&workspace, "second question", 1))
+            .expect("save");
 
         let rows = list(&state, &workspace);
 
@@ -688,13 +721,19 @@ mod tests {
         let workspace = workspace(&dir);
         let state = dir.path().join("state");
         let meta = create(&state, &workspace, "coding").expect("create");
+        Store::open(session_path(&state, &workspace, &meta.id))
+            .save(&document(&workspace, "first question", 1))
+            .expect("save");
+        touch(&state, &workspace, &meta.id).expect("touch");
         let project = project_dir(&state, &workspace);
         let mut index = read_index(&project).expect("an index");
         let mut older = meta.clone();
         older.title = "old".to_owned();
+        older.turns = 1;
         older.updated_at = meta.updated_at.saturating_sub(10);
         let mut newer = meta.clone();
         newer.title = "new".to_owned();
+        newer.turns = 1;
         newer.updated_at = meta.updated_at.saturating_add(10);
         index.sessions = vec![older, newer];
         save_index(&project, &index).expect("save");
