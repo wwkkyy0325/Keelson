@@ -39,7 +39,18 @@ pub struct SetupState {
     pub key_provider: String,
     pub key_providers: Vec<String>,
     pub manual: Option<config::ManualEndpoint>,
+    /// The rig that will run, and every rig the host found.
+    pub rig: String,
+    pub rigs: Vec<RigOption>,
     pub problems: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RigOption {
+    pub name: String,
+    pub title: String,
+    pub description: String,
 }
 
 #[derive(Serialize)]
@@ -100,6 +111,16 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         .ok()
         .flatten()
         .is_some();
+    let rigs: Vec<RigOption> = discovery
+        .rigs
+        .iter()
+        .map(|rig| RigOption {
+            name: rig.name.clone(),
+            title: rig.title.clone(),
+            description: rig.description.clone(),
+        })
+        .collect();
+    let rig = chosen_rig(&config, rig_name_for(&config.provider));
     SetupState {
         onboarded: config.onboarded,
         has_key,
@@ -113,6 +134,8 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         key_provider: config.key_provider,
         key_providers: config.key_providers,
         manual: config.manual,
+        rig,
+        rigs,
         problems: discovery
             .errors
             .iter()
@@ -422,13 +445,16 @@ async fn open_inner(
                 .ok_or_else(|| "还没有保存密钥；请重新运行初始化".to_owned())?,
         )
     };
-    let rig_name = rig_name_for(&provider);
+    let fallback = rig_name_for(&provider);
+    let preferred = chosen_rig(&config, fallback);
     let discovery = rig::discover(&rig_dirs());
     let rig = discovery
         .rigs
-        .into_iter()
-        .find(|rig| rig.name == rig_name)
-        .ok_or_else(|| format!("找不到 rig `{rig_name}`"))?;
+        .iter()
+        .find(|rig| rig.name == preferred)
+        .or_else(|| discovery.rigs.iter().find(|rig| rig.name == fallback))
+        .cloned()
+        .ok_or_else(|| format!("找不到 rig `{preferred}`"))?;
 
     let state_dir = state_dir_for(&workspace);
     let (session_id, session_list) = {
@@ -468,6 +494,7 @@ async fn open_inner(
         context_window: config.model_context,
     });
 
+    let rig_label = rig.name.clone();
     let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel(256);
     let engine = Engine::open(OpenRequest {
         rig,
@@ -524,7 +551,7 @@ async fn open_inner(
     });
 
     Ok(SessionView {
-        rig: rig_name.to_owned(),
+        rig: rig_label,
         workspace: workspace_label,
         session_id,
         turns: page.turns,
@@ -556,6 +583,32 @@ fn resolve_workspace(state: &DesktopState, workspace: Option<String>) -> PathBuf
 
 fn state_dir_for(workspace: &Path) -> PathBuf {
     rig::state_dir().unwrap_or_else(|| workspace.join(".keel"))
+}
+
+/// The rig to run: the chosen file when it is set, otherwise the one the
+/// provider implies (offline runs the mock profile).
+fn chosen_rig(config: &config::DesktopConfig, fallback: &str) -> String {
+    let chosen = config.rig.trim();
+    if chosen.is_empty() {
+        fallback.to_owned()
+    } else {
+        chosen.to_owned()
+    }
+}
+
+#[tauri::command]
+pub fn save_rig(state: State<'_, SharedState>, name: String) -> Result<(), String> {
+    let name = name.trim();
+    let discovery = rig::discover(&rig_dirs());
+    if !discovery.rigs.iter().any(|rig| rig.name == name) {
+        return Err(format!("找不到 rig `{name}`"));
+    }
+    let mut config = state
+        .config
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    config.rig = name.to_owned();
+    config::save_config(&config)
 }
 
 fn rig_name_for(provider: &str) -> &'static str {

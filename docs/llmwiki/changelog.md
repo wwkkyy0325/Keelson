@@ -1445,3 +1445,18 @@ duration line is what makes the cost of a check measurable at all.
   `模型列表 | 手动填写` — placed directly under the section heading and above the
   picker or the manual form.
 - Removed the dead `.settings-mode` style and four now-unused strings.
+
+## 2026-11-09 — the rig is a choice, not a side effect
+
+- The desktop picked the rig from the provider (`mock` → `coding`, everything
+  else → `coding-live`), so a second rig file could never be run and the user
+  could not see which one was running.
+- `DesktopConfig.rig` records the chosen rig file; `setup_state` returns the
+  discovered rigs and the one that will run; the settings panel gains a Rig
+  section that lists them and saves + reconnects on change. An empty value
+  keeps the old provider-derived rule, so existing installs are unchanged, and
+  a rig file that disappeared falls back the same way.
+- CLAUDE.md and the README are updated: the app chooses which rig file runs,
+  never its behavior.
+- Verified: 30 desktop tests, clippy and fmt clean, svelte-check 0 errors,
+  17 frontend tests.

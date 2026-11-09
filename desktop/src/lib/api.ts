@@ -60,6 +60,10 @@ export function openSession(
   return invoke("open_session", { workspace, sessionId });
 }
 
+export function saveRig(name: string): Promise<void> {
+  return invoke("save_rig", { name });
+}
+
 export function newSession(workspace: string | null): Promise<SessionView> {
   return invoke("new_session", { workspace });
 }

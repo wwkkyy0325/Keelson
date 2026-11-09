@@ -24,8 +24,9 @@ desktop/         Tauri shell + Svelte frontend            (the only face)
 - The desktop is a separate binary because Tauri owns its event loop and
   bundler; it consumes the same library engine and adds no engine branch
   (ADR 0003). The CLI starts no session and runs no turn.
-- Rigs are files. Do not add a rig form, a theme picker or a per-rig toggle
-  panel. The settings page covers the model connection and language only.
+- Rigs are files. Do not add a rig editor or per-rig behavior toggles: the
+  app only chooses which rig file runs (settings → Rig), never what it does.
+  There is no theme picker.
 - Do not add a terminal UI or keep a hidden fallback face. A second face
   returns only with a concrete need and a new ADR.
 - The only non-model network request is the models.dev catalog in

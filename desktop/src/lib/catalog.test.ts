@@ -73,6 +73,8 @@ function setup(overrides: Partial<SetupState> = {}): SetupState {
     lastWorkspace: "",
     keyProvider: "",
     keyProviders: [],
+    rig: "coding-live",
+    rigs: [],
     problems: [],
     ...overrides,
   };

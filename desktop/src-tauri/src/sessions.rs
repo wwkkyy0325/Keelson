@@ -363,7 +363,8 @@ fn reconcile(dir: &Path, index: &mut SessionIndex) -> bool {
     let present: HashSet<String> = documents(dir).into_iter().map(|(id, _)| id).collect();
     let mut changed = false;
     let before = index.sessions.len();
-    index.sessions
+    index
+        .sessions
         .retain(|meta| present.contains(&meta.id) && is_listed(meta));
     changed |= index.sessions.len() != before;
 

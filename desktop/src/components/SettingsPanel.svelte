@@ -5,6 +5,7 @@
     saveKey,
     saveLocale,
     saveModel,
+    saveRig,
     setupState,
   } from "../lib/api";
   import { defaultSelection, findSelection, type ModelRow } from "../lib/catalog";
@@ -34,6 +35,7 @@
   let baseUrl = $state("");
   let modelName = $state("");
   let keyDraft = $state("");
+  let rigName = $state("");
   let revealKey = $state(false);
   let busy = $state(false);
   let loading = $state(true);
@@ -78,6 +80,9 @@
   );
   let activeModel = $derived(manual ? modelName : selectedModelId);
   let isMock = $derived(activeProviderKind === "mock");
+  let activeRig = $derived(
+    setup?.rigs.find((rig) => rig.name === rigName) ?? null,
+  );
   let hasKeyForSelection = $derived(
     !!setup?.keyProviders?.includes(activeProviderId),
   );
@@ -94,6 +99,7 @@
             : "openai-compatible";
       baseUrl = state.baseUrl;
       modelName = state.model;
+      rigName = state.rig;
       await loadCatalog(false, state);
     } catch (cause) {
       error = errText(cause);
@@ -217,6 +223,24 @@
         activeModel,
         manual ? null : (selectedModel?.context ?? null),
       );
+      const reconnectError = await onReconnect();
+      if (reconnectError) {
+        error = reconnectError;
+        return;
+      }
+      onClose();
+    } catch (cause) {
+      error = $t("wizard.error.save", { message: errText(cause) });
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function changeRig(): Promise<void> {
+    error = null;
+    busy = true;
+    try {
+      await saveRig(rigName);
       const reconnectError = await onReconnect();
       if (reconnectError) {
         error = reconnectError;
@@ -355,6 +379,24 @@
           {#if manual}
             <p class="hint">{$t("settings.keyLocalHint")}</p>
           {/if}
+        {/if}
+      </section>
+
+      <section>
+        <h3>{$t("settings.rig")}</h3>
+        <p class="muted">{$t("settings.rigHint")}</p>
+        <select
+          bind:value={rigName}
+          onchange={changeRig}
+          disabled={busy || (setup?.rigs.length ?? 0) < 2}
+          aria-label={$t("settings.rig")}
+        >
+          {#each setup?.rigs ?? [] as rig (rig.name)}
+            <option value={rig.name}>{rig.title} · {rig.name}</option>
+          {/each}
+        </select>
+        {#if activeRig}
+          <p class="hint">{activeRig.description}</p>
         {/if}
       </section>
 

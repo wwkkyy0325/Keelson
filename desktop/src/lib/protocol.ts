@@ -76,6 +76,8 @@ export type SetupState = {
   keyProvider: string;
   keyProviders: string[];
   manual?: { provider: string; baseUrl: string; model: string } | null;
+  rig: string;
+  rigs: { name: string; title: string; description: string }[];
   problems: string[];
 };
 

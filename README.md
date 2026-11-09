@@ -93,8 +93,10 @@ whose name is claimed by an earlier directory is reported as shadowed.
 ## Rigs are files, not settings
 
 There is no rig form in the app. `keelson rig show <name>` prints a rig as the
-host resolves it; a rig is diffable, shareable and reproducible. The in-app
-settings page covers the model connection and language, not rig behavior.
+host resolves it; a rig is diffable, shareable and reproducible. The settings
+page names the rig that will run and offers the rigs the host discovered —
+choosing one is choosing a file, not editing it. Everything else about a rig
+stays in the file; the page covers the model connection and language besides.
 
 ## Docs
 

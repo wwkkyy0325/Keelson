@@ -27,6 +27,7 @@ fn main() {
             commands::model_catalog,
             commands::save_key,
             commands::save_model,
+            commands::save_rig,
             commands::save_locale,
             commands::complete_onboarding,
             commands::open_session,

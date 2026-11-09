@@ -22,6 +22,8 @@
     keyProvider: "",
     keyProviders: [],
     manual: null,
+    rig: "",
+    rigs: [],
     problems: [],
   };
 

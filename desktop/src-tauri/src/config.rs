@@ -53,6 +53,9 @@ pub struct DesktopConfig {
     pub key_providers: Vec<String>,
     /// The last manual endpoint, if one was ever saved.
     pub manual: Option<ManualEndpoint>,
+    /// The rig file to run. Empty means "whichever rig the provider implies",
+    /// which is what an install from before the picker gets.
+    pub rig: String,
 }
 
 impl Default for DesktopConfig {
@@ -71,6 +74,7 @@ impl Default for DesktopConfig {
             key_provider: String::new(),
             key_providers: Vec::new(),
             manual: None,
+            rig: String::new(),
         }
     }
 }
