@@ -1404,3 +1404,11 @@ duration line is what makes the cost of a check measurable at all.
   taller, `ArrowUp`/`ArrowDown` resize it from the keyboard, the height is
   clamped to 64px–60% of the window, and it is remembered in `localStorage`.
 - Verified: `svelte-check` 0 errors 0 warnings, `npm run build`, 17 tests.
+
+## 2026-11-09 — the composer sizes itself
+
+- The manual grip is gone. The text area grows with the draft and stops at 40%
+  of the window, where it scrolls; sending clears the draft and the box shrinks
+  back. No handle, no remembered height, nothing to drag.
+- Removed the grip markup, its CSS, its `localStorage` key and the
+  `app.resizeComposer` string.

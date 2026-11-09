@@ -1367,54 +1367,17 @@ footer {
 
 .composer {
   display: flex;
-  flex-direction: column;
+  gap: 0.6rem;
+  align-items: flex-end;
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
 }
 
-.composer-grip {
-  width: 100%;
-  height: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  padding: 0;
-  border-radius: 0;
-  background: transparent;
-  cursor: ns-resize;
-  touch-action: none;
-  user-select: none;
-}
-
-.composer-grip::before {
-  content: "";
-  width: 42px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--border);
-}
-
-.composer-grip:hover::before,
-.composer-grip:focus-visible::before,
-.composer-grip.dragging::before {
-  background: var(--accent);
-}
-
-.composer-grip:focus-visible {
-  outline: none;
-}
-
-.composer-row {
-  display: flex;
-  gap: 0.6rem;
-  align-items: flex-end;
-}
-
-.composer-row textarea {
+.composer textarea {
   flex: 1;
   resize: none;
+  overflow-y: hidden;
 }
 
 .permission {
