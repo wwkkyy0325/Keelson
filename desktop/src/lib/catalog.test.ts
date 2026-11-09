@@ -72,6 +72,7 @@ function setup(overrides: Partial<SetupState> = {}): SetupState {
     locale: "zh",
     lastWorkspace: "",
     keyProvider: "",
+    keyProviders: [],
     problems: [],
     ...overrides,
   };

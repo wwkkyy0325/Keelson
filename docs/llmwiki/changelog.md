@@ -1412,3 +1412,18 @@ duration line is what makes the cost of a check measurable at all.
   back. No handle, no remembered height, nothing to drag.
 - Removed the grip markup, its CSS, its `localStorage` key and the
   `app.resizeComposer` string.
+
+## 2026-11-09 — switching providers keeps the key and the endpoint
+
+- Keys now live in one keychain slot per provider (`api-key:<provider_id>`).
+  Switching from the local server to a cloud provider no longer overwrites the
+  other key. A key saved before the slots existed is moved into its slot on
+  first read, and only the provider recorded when it was saved can claim it.
+- `DesktopConfig` records `key_providers` (which providers have a key) and the
+  last manual endpoint (`manual: { provider, baseUrl, model }`). The settings
+  panel asks for a key only when the selected provider has none, and prefills
+  the manual form from the remembered endpoint.
+- `open_inner` no longer rejects a key that belongs to another provider: the
+  lookup is per provider, so a mismatch cannot happen.
+- Verified: 30 desktop tests (two new config tests), clippy clean, svelte-check
+  0 errors, 17 frontend tests.

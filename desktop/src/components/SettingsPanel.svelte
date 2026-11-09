@@ -78,17 +78,8 @@
   );
   let activeModel = $derived(manual ? modelName : selectedModelId);
   let isMock = $derived(activeProviderKind === "mock");
-  let connectionChanged = $derived(
-    !!setup &&
-      (activeProviderKind !== setup.provider ||
-        activeBaseUrl !== setup.baseUrl ||
-        activeModel !== setup.model),
-  );
   let hasKeyForSelection = $derived(
-    !!setup?.hasKey &&
-      (setup?.keyProvider
-        ? setup.keyProvider === activeProviderId
-        : !connectionChanged),
+    !!setup?.keyProviders?.includes(activeProviderId),
   );
 
   onMount(async () => {
@@ -160,7 +151,12 @@
         if (choice) choose(choice);
       }
     } else {
-      if (selectedProvider) {
+      const remembered = setup?.manual;
+      if (remembered) {
+        providerKind = remembered.provider;
+        baseUrl = remembered.baseUrl;
+        modelName = remembered.model;
+      } else if (selectedProvider) {
         providerKind = selectedProvider.kind;
         baseUrl = selectedProvider.baseUrl;
         modelName = selectedModelId;
@@ -332,8 +328,6 @@
           </label>
           {#if hasKeyForSelection}
             <p class="hint">{$t("settings.keySavedHint")}</p>
-          {:else if setup?.hasKey}
-            <p class="hint">{$t("settings.keyOther")}</p>
           {/if}
           {#if manual}
             <p class="hint">{$t("settings.keyLocalHint")}</p>

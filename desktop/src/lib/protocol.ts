@@ -74,6 +74,8 @@ export type SetupState = {
   locale: string;
   lastWorkspace: string;
   keyProvider: string;
+  keyProviders: string[];
+  manual?: { provider: string; baseUrl: string; model: string } | null;
   problems: string[];
 };
 

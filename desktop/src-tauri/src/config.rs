@@ -20,6 +20,16 @@ pub struct ProjectEntry {
     pub opened_at: u64,
 }
 
+/// The last manual connection, so switching back to a local or self-hosted
+/// server does not mean retyping its address and model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualEndpoint {
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct DesktopConfig {
@@ -36,8 +46,13 @@ pub struct DesktopConfig {
     pub last_workspace: String,
     /// Newest first, capped at eight.
     pub projects: Vec<ProjectEntry>,
-    /// Which provider the stored key belongs to. Empty means "unknown".
+    /// Which provider the key was last saved for.
     pub key_provider: String,
+    /// Providers that have a key in the keychain. The keychain is the truth;
+    /// this list only lets the settings panel skip asking for a saved key.
+    pub key_providers: Vec<String>,
+    /// The last manual endpoint, if one was ever saved.
+    pub manual: Option<ManualEndpoint>,
 }
 
 impl Default for DesktopConfig {
@@ -54,6 +69,8 @@ impl Default for DesktopConfig {
             last_workspace: String::new(),
             projects: Vec::new(),
             key_provider: String::new(),
+            key_providers: Vec::new(),
+            manual: None,
         }
     }
 }
@@ -111,10 +128,20 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn load_config() -> DesktopConfig {
-    fs::read_to_string(config_path())
+    let mut config: DesktopConfig = fs::read_to_string(config_path())
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    seed_key_providers(&mut config);
+    config
+}
+
+/// An install from before the per-provider slots kept one key; its owner is
+/// the provider recorded when it was saved.
+fn seed_key_providers(config: &mut DesktopConfig) {
+    if config.key_providers.is_empty() && !config.key_provider.trim().is_empty() {
+        config.key_providers.push(config.key_provider.clone());
+    }
 }
 
 pub fn save_config(config: &DesktopConfig) -> Result<(), String> {
@@ -126,13 +153,47 @@ pub fn save_config(config: &DesktopConfig) -> Result<(), String> {
     fs::write(&path, text).map_err(|error| error.to_string())
 }
 
-pub fn save_key(key: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|error| error.to_string())?;
+/// Keys live in one keychain slot per provider, so switching between the
+/// local server and a cloud provider keeps both instead of overwriting one.
+fn account_for(provider: &str) -> String {
+    let provider = provider.trim();
+    if provider.is_empty() {
+        ACCOUNT.to_owned()
+    } else {
+        format!("{ACCOUNT}:{provider}")
+    }
+}
+
+pub fn save_key(provider: &str, key: &str) -> Result<(), String> {
+    write_key(&account_for(provider), key)
+}
+
+/// The key for one provider.
+///
+/// A key saved before the slots existed lives in the single account and is
+/// moved into its slot on first read; only the provider recorded when it was
+/// saved can claim it.
+pub fn load_key(provider: &str, owner: &str) -> Result<Option<String>, String> {
+    if let Some(key) = read_key(&account_for(provider))? {
+        return Ok(Some(key));
+    }
+    if provider.trim().is_empty() || owner != provider {
+        return Ok(None);
+    }
+    let Some(key) = read_key(ACCOUNT)? else {
+        return Ok(None);
+    };
+    let _ = write_key(&account_for(provider), &key);
+    Ok(Some(key))
+}
+
+fn write_key(account: &str, key: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(SERVICE, account).map_err(|error| error.to_string())?;
     entry.set_password(key).map_err(|error| error.to_string())
 }
 
-pub fn load_key() -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|error| error.to_string())?;
+fn read_key(account: &str) -> Result<Option<String>, String> {
+    let entry = keyring::Entry::new(SERVICE, account).map_err(|error| error.to_string())?;
     match entry.get_password() {
         Ok(key) if !key.trim().is_empty() => Ok(Some(key)),
         Ok(_) => Ok(None),
@@ -167,6 +228,31 @@ mod tests {
 
         assert_eq!(config.projects.len(), RECENT_PROJECTS);
         assert_eq!(config.projects[0].path, "C:/work/11");
+    }
+
+    #[test]
+    fn an_old_install_seeds_its_key_providers() {
+        let mut config = DesktopConfig {
+            key_provider: "deepseek".to_owned(),
+            ..DesktopConfig::default()
+        };
+
+        seed_key_providers(&mut config);
+
+        assert_eq!(config.key_providers, ["deepseek"]);
+    }
+
+    #[test]
+    fn recorded_key_providers_are_kept() {
+        let mut config = DesktopConfig {
+            key_provider: "deepseek".to_owned(),
+            key_providers: vec!["custom".to_owned(), "deepseek".to_owned()],
+            ..DesktopConfig::default()
+        };
+
+        seed_key_providers(&mut config);
+
+        assert_eq!(config.key_providers, ["custom", "deepseek"]);
     }
 
     #[test]

@@ -20,6 +20,8 @@
     locale: "zh",
     lastWorkspace: "",
     keyProvider: "",
+    keyProviders: [],
+    manual: null,
     problems: [],
   };
 

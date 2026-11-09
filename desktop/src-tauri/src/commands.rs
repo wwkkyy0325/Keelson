@@ -37,6 +37,8 @@ pub struct SetupState {
     pub locale: String,
     pub last_workspace: String,
     pub key_provider: String,
+    pub key_providers: Vec<String>,
+    pub manual: Option<config::ManualEndpoint>,
     pub problems: Vec<String>,
 }
 
@@ -94,10 +96,10 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
     let discovery = rig::discover(&rig_dirs());
-    let has_key = config::load_key().ok().flatten().is_some()
-        && (config.key_provider.is_empty()
-            || config.provider_id.is_empty()
-            || config.key_provider == config.provider_id);
+    let has_key = config::load_key(&config.provider_id, &config.key_provider)
+        .ok()
+        .flatten()
+        .is_some();
     SetupState {
         onboarded: config.onboarded,
         has_key,
@@ -109,6 +111,8 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         locale: config.locale,
         last_workspace: config.last_workspace,
         key_provider: config.key_provider,
+        key_providers: config.key_providers,
+        manual: config.manual,
         problems: discovery
             .errors
             .iter()
@@ -137,12 +141,15 @@ pub fn save_key(
     if provider_id.is_empty() {
         return Err("密钥必须对应一个提供方".to_owned());
     }
-    config::save_key(key)?;
+    config::save_key(provider_id, key)?;
     let mut config = state
         .config
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     config.key_provider = provider_id.to_owned();
+    if !config.key_providers.iter().any(|id| id == provider_id) {
+        config.key_providers.push(provider_id.to_owned());
+    }
     config::save_config(&config)
 }
 
@@ -178,6 +185,13 @@ pub fn save_model(
     config.base_url = base_url.trim().to_owned();
     config.model = model.trim().to_owned();
     config.model_context = context.filter(|value| *value > 0);
+    if config.provider_id == "custom" {
+        config.manual = Some(config::ManualEndpoint {
+            provider: config.provider.clone(),
+            base_url: config.base_url.clone(),
+            model: config.model.clone(),
+        });
+    }
     config::save_config(&config)
 }
 
@@ -403,21 +417,10 @@ async fn open_inner(
     let key = if provider == "mock" {
         None
     } else {
-        if !config.key_provider.is_empty()
-            && !config.provider_id.is_empty()
-            && config.key_provider != config.provider_id
-        {
-            let provider_label = if config.provider_name.is_empty() {
-                config.provider_id.clone()
-            } else {
-                config.provider_name.clone()
-            };
-            return Err(format!(
-                "当前密钥属于 `{}`，请先在设置里填写 `{}` 的密钥",
-                config.key_provider, provider_label
-            ));
-        }
-        Some(config::load_key()?.ok_or_else(|| "还没有保存密钥；请重新运行初始化".to_owned())?)
+        Some(
+            config::load_key(&config.provider_id, &config.key_provider)?
+                .ok_or_else(|| "还没有保存密钥；请重新运行初始化".to_owned())?,
+        )
     };
     let rig_name = rig_name_for(&provider);
     let discovery = rig::discover(&rig_dirs());
