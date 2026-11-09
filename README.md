@@ -97,6 +97,8 @@ settings page covers the model connection and language, not rig behavior.
 ## Docs
 
 - `docs/llmwiki/design.md` — what this is, the layers, the milestones.
+- `docs/llmwiki/coding-rig.md` — the first rig's tools, checks, safety and
+  known limits.
 - `docs/kernel.md` — the pinned kernel, the consumed surface, the upgrade path.
 - `docs/adr/` — rigs as files, the desktop shell, the desktop-only face, the
   model catalog, project conversations, project instructions and turn

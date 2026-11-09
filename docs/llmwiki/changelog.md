@@ -1183,3 +1183,19 @@ are the right filter.
 The shell tool runs git only after the user confirms. Reviewing the working
 tree is a read operation the model should do before reporting done, and a
 dedicated tool removes that friction without widening write access.
+
+## 2026-11-08 — M4ac: coding rig audit
+
+- Added `docs/llmwiki/coding-rig.md`: the rig boundary, tool contracts,
+  verification rules, safety model, persona, test matrix, live record, known
+  limits and next candidates. `README.md` links it.
+- Full live run: `coding_eval` first attempt failed (13.03 s) and passed on a
+  rerun (30.45 s); `shop_eval` 85.76 s; `polyglot_eval` 8.63 s;
+  `cross_file_eval` 11.71 s; `keelson doctor` loads 2 rigs.
+- Task doc: `docs/llmwiki/tasks/m4ac-rig-audit.md`.
+
+### Why
+
+The first rig is spread across a long series of task docs. A single map makes
+the capability boundary and the remaining gaps explicit, and the live record
+separates deterministic tests from model-run variance.
