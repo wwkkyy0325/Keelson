@@ -348,12 +348,13 @@ fn rebuild(dir: &Path) -> SessionIndex {
     }
 }
 
-/// Whether a row belongs in the list. A document with no turns is not a
-/// conversation: pressing 新对话 and leaving used to write one, and the row
-/// then sat in the history forever. The document stays on disk; only the row
-/// is hidden, so a later turn brings it back.
+/// Whether a row belongs in the list. A document with no turns and no name is
+/// not a conversation: pressing 新对话 and leaving used to write one, and the
+/// row then sat in the history forever. A named empty document is different —
+/// a branch starts with no turns and a name — so it stays visible from the
+/// moment it exists.
 fn is_listed(meta: &SessionMeta) -> bool {
-    meta.turns > 0
+    meta.turns > 0 || !meta.title.trim().is_empty()
 }
 
 /// Drops rows whose document is gone, adopts documents the index does not
@@ -670,6 +671,21 @@ mod tests {
 
         assert_eq!(rows[0].id, second.id);
         assert_eq!(rows[1].id, first.id);
+    }
+
+    #[test]
+    fn a_named_branch_is_listed_before_its_first_turn() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let meta = create(&state, &workspace, "coding").expect("create");
+
+        set_title(&state, &workspace, &meta.id, "首条（分支）").expect("name it");
+        let rows = list(&state, &workspace);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "首条（分支）");
+        assert_eq!(rows[0].turns, 0);
     }
 
     #[test]

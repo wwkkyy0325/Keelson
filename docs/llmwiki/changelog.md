@@ -1493,3 +1493,16 @@ duration line is what makes the cost of a check measurable at all.
 - 复制 and 从这里迁出 are 20px icon buttons with a hover tooltip (`data-tip`,
   drawn in CSS above the button) and an `aria-label`; a successful copy turns
   the icon green and its tooltip says 已复制 for a moment.
+
+## 2026-11-09 — an empty branch is visible, and starters stay quiet
+
+- Branching from the first turn creates a conversation with no turns yet. It
+  was hidden by the zero-turn rule, so the app switched to a conversation that
+  the sidebar did not show, and the starter chips appeared on top of the
+  prefilled draft.
+- A document with no turns but a name is now listed: the branch is visible from
+  the moment it is created, while an abandoned untitled conversation stays
+  hidden.
+- The starter chips hide as soon as the composer has text, so a branch opens
+  with just the turn's input and no suggestions.
+- One new session test.

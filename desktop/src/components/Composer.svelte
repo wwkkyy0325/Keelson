@@ -81,7 +81,7 @@
 </script>
 
 <div class="composer-block">
-  {#if showStarters}
+  {#if showStarters && !draft.trim()}
     <div class="starters">
       <button type="button" onclick={() => useStarter($t("app.starterFixTests"))}>
         {$t("app.starterFixTests")}
