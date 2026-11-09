@@ -1394,3 +1394,13 @@ duration line is what makes the cost of a check measurable at all.
 - `sessions::create` is now a test fixture (`#[cfg(test)]`), and five session
   tests were updated to the new rule.
 - Verified: 28 desktop tests, clippy clean; the dev app rebuilt and restarted.
+
+## 2026-11-09 — the composer resizes from its top edge
+
+- The text area used the browser's bottom-right handle, but the composer is
+  anchored at the bottom of the window, so dragging down made it grow upward
+  from an edge the user was not touching.
+- The handle is now a grip on the composer's top edge: dragging up makes it
+  taller, `ArrowUp`/`ArrowDown` resize it from the keyboard, the height is
+  clamped to 64px–60% of the window, and it is remembered in `localStorage`.
+- Verified: `svelte-check` 0 errors 0 warnings, `npm run build`, 17 tests.
