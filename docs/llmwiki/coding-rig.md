@@ -35,7 +35,9 @@ workspace, speak LSP, or execute an arbitrary command without permission.
 - Cargo uses `--manifest-path`; Go uses `-C`; Node uses `npm --prefix`;
   Python runs `pytest` when the project declares it (config file or
   requirements) and `unittest discover` otherwise, with a project `.venv`
-  preferred over the bare interpreter.
+  preferred over the bare interpreter. The venv interpreter runs from its
+  workspace path: a check may name a program by an absolute path inside the
+  workspace when the file name is allowlisted.
 - Every project of an ecosystem is a candidate; every Python test root that is
   not nested inside another is a candidate.
 - After a turn that changed files, the host selects the deepest project that

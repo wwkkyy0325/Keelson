@@ -1199,3 +1199,25 @@ dedicated tool removes that friction without widening write access.
 The first rig is spread across a long series of task docs. A single map makes
 the capability boundary and the remaining gaps explicit, and the live record
 separates deterministic tests from model-run variance.
+
+## 2026-11-09 — M4ad: a venv interpreter runs
+
+- Kernel: `AcceptanceVerifier` accepts an absolute program path inside the
+  workspace when the file name alone is allowlisted and the path has no `..`.
+  A project venv's interpreter now runs; the shell allowlist is unchanged.
+  ADR 0030 records it.
+- The host already preferred `.venv/Scripts/python.exe`; before this every
+  turn in such a project failed a required check with `not allowlisted`
+  before any test ran. The copied repositories in earlier live runs had their
+  venv left out, which is why the gap survived.
+- Contract tests: an allowlisted workspace path runs, a path outside the
+  workspace is refused, a path with an unlisted name is refused.
+- A temporary project with a real `python -m venv` passed the check through
+  the venv interpreter; the same scratch check fails on the stashed kernel.
+- Task doc: `docs/llmwiki/tasks/m4ad-venv-check-path.md`.
+
+### Why
+
+The check must use the interpreter the project installed its dependencies
+into, and a path to that interpreter is not a widening of what a check may
+run: the workspace owns the file and its name still has to be allowlisted.

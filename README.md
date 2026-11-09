@@ -232,5 +232,10 @@ searchable.
 M4ab: `git_diff` shows the workspace status or unstaged diff without a
 confirmation; it is read-only, path-limited and capped.
 
+M4ad: a project venv's interpreter runs. A check may name its program by an
+absolute path inside the workspace when the file name alone is allowlisted.
+Before this, the Python check preferred `.venv` and every turn in such a
+project failed a required check with `not allowlisted`.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
