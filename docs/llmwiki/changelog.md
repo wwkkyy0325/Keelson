@@ -1306,3 +1306,24 @@ duration line is what makes the cost of a check measurable at all.
   to confirm `ErrorKind` variants before editing.
 - Patch: `target/docfusion-exit-code.patch`. The original repository was not
   touched.
+
+## 2026-11-09 — a feature task on a copied ValveGuard
+
+- `real_task_eval` ran one turn on a clone of the user's ValveGuard. The repo is
+  genuinely multi-ecosystem for the rig: it detected `workspace-tests:cargo:desktop`,
+  `workspace-tests:cargo:desktop-ui/src-tauri` and
+  `workspace-tests:python:tests`.
+- The task was the repo's own open item (`docs/llmwiki/tasks/demo-artifact.md`):
+  implement `compare_demos.py`, the human / synthetic / cheater harness.
+- The turn took 137.20 s over 41 tool calls and passed acceptance. It added
+  `src/valveguard/scripts/compare_demos.py` (197 lines) and
+  `tests/test_compare_demos.py` (6 tests), and touched no existing module or
+  test.
+- Selection was correct on a real tree: a changed path under `src/` or `tests/`
+  selects only the Python check, while `desktop/src/lib.rs` selects
+  `workspace-tests:cargo:desktop`.
+- Independent check: 15 passed / 6 skipped (the 9 existing tests still pass); a
+  hand-built two-label tree plus an empty label produced the expected counts,
+  rate and mean/median/p95/max, and `--csv` matched the table.
+- Two bookkeeping slips: the task doc still says "(15 tests)" although the suite
+  now runs 21, and the new changelog entry reuses 2026-10-21 rather than today.
