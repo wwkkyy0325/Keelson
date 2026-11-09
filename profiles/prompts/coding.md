@@ -21,9 +21,9 @@ Recommended:
   file needs a full read; reading every line in ranges counts, but a single
   range does not. The tools refuse a file that was not read, or that changed
   since it was read.
-- A read without `offset` stops at 1000 lines and names the next offset. For a
-  longer file, page through the rest before rewriting it; a ranged read starts
-  with a `[file: N lines; showing a-b]` header that is not part of the file.
+- Every read stops at 1000 lines and names the next offset. For a longer file,
+  page through the rest before rewriting it; a ranged read starts with a
+  `[file: N lines; showing a-b]` header that is not part of the file.
 - Prefer `edit_file` for a targeted change; `write_file` is for a new file or
   a full rewrite. Use `multi_edit` when one file needs several changes; it
   validates every edit before writing. Use `apply_edits` when one change

@@ -15,7 +15,7 @@ workspace, speak LSP, or execute an arbitrary command without permission.
 
 | Tool | Contract |
 |---|---|
-| `read_file` | UTF-8, `offset`/`limit`, optional `line_numbers`; a default read stops at 1000 lines and names the next offset; a ranged read names the file's line count; 8 MiB head cap; the ledger records line coverage, so ranges that cover every line allow a rewrite. |
+| `read_file` | UTF-8, `offset`/`limit`, optional `line_numbers`; every read stops at 1000 lines and names the next offset; a ranged read names the file's line count; 8 MiB head cap; the ledger records line coverage, so ranges that cover every line allow a rewrite. |
 | `write_file` | Creates or replaces a file; an existing file needs a full read; the previous version goes to the trash. |
 | `edit_file` | One exact replacement, optional `replace_all`; CRLF/LF fallback preserves the file's endings; needs a current read. |
 | `multi_edit` | Several replacements to one file; validates all in memory, one backup, one write. |
