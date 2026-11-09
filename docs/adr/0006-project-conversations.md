@@ -47,6 +47,10 @@ with every turn, so it cannot be a primary key.
   the open conversation opens the newest active one, or a blank view when none
   remains. Opening a project without an explicit id chooses the newest
   **active** conversation.
+- **Amended 2026-11-09.** The read-only archived view is gone: the composer
+  stays, and `send_message`'s refusal is met by unarchiving first, so the first
+  message brings the conversation back instead of explaining itself above the
+  composer. Everything else in this ADR stands.
 - Recent projects live in `desktop.json` (`projects`, newest first, at most
   eight). Opening a folder upserts it. The list is a shortcut, not a grant:
   the engine's reach still comes from the workspace that was opened.

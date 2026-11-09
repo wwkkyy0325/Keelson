@@ -1413,28 +1413,6 @@ footer {
   font-size: 0.78rem;
 }
 
-.archived-notice {
-  max-width: 860px;
-  width: 100%;
-  min-height: 4rem;
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.55rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel-2);
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-.archived-notice button {
-  padding: 0.3rem 0.65rem;
-  font-size: 0.78rem;
-}
-
 .composer {
   display: flex;
   gap: 0.6rem;

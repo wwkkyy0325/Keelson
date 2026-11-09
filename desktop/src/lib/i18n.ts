@@ -89,7 +89,6 @@ const zh = {
   "app.empty": "还没有对话，直接输入就好。",
   "app.emptyProject": "在「{project}」中开始新对话。",
   "app.archived": "已归档",
-  "app.archivedNotice": "已归档的对话不能继续；取消归档后可以继续。",
   "app.undoTurn": "撤销本轮",
   "app.undoTitle": "撤销最近一轮？",
   "app.undoMessage":
@@ -236,8 +235,6 @@ const en: Record<Key, string> = {
   "app.empty": "No conversation yet. Start typing.",
   "app.emptyProject": "Start a new conversation in “{project}”.",
   "app.archived": "Archived",
-  "app.archivedNotice":
-    "This conversation is archived. Unarchive it to continue.",
   "app.undoTurn": "Undo turn",
   "app.undoTitle": "Undo the last turn?",
   "app.undoMessage":

@@ -84,9 +84,10 @@ src/lib.rs engine: turn loop, permissions, storage, tools   (no UI types)
   and switches projects from the recent list; the list has two tabs, `对话`
   and `已归档 · N`, and archived rows are the only ones that offer permanent
   delete. Both tabs fill the same area, so switching never changes the rail's
-  height. An archived conversation opens read-only: the composer is replaced
-  by an unarchive notice and the backend refuses a turn until it is
-  unarchived. Delete confirmation is a centered dialog, not an inline row.
+  height. An archived conversation opens with its history and its composer;
+  the first turn unarchives it, and `send_message` still refuses an archived
+  conversation so the unarchive is explicit. Delete confirmation is a centered
+  dialog, not an inline row.
   The rail reserves its scrollbar gutter, a fixed count width and an overlay
   action bar, so archiving the last row or changing counts does not reflow it.
   The header shows the conversation title and an `已归档` badge. A

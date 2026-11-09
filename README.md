@@ -62,9 +62,9 @@ home path is migrated to that landing folder. Each project keeps its own
 conversation list, so switching projects never mixes them; a conversation is
 one JSON document with an immutable id, and the rail lists it by the first
 user message. Rows can be renamed and archived behind a `已归档 · N` tab;
-an archived conversation opens read-only until it is unarchived, and only
-archived conversations can be permanently deleted, after a `永久删除对话?`
-dialog.
+an archived conversation opens with its history and comes back the moment you
+write in it, and only archived conversations can be permanently deleted, after
+a `永久删除对话?` dialog.
 The header's 中/EN switch changes the interface language; the gear opens a
 single-page settings panel with the same model picker, key, language and
 workspace info. A custom OpenAI-compatible endpoint — a local model server, for
@@ -235,6 +235,10 @@ searchable.
 
 M4ab: `git_diff` shows the workspace status or unstaged diff without a
 confirmation; it is read-only, path-limited and capped.
+
+M4aj: an archived conversation opens with its history and its composer. The
+notice that used to replace the composer is gone; writing in an archived
+conversation unarchives it first, so there is no read-only dead end.
 
 M4ad: a project venv's interpreter runs. A check may name its program by an
 absolute path inside the workspace when the file name alone is allowlisted.

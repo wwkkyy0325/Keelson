@@ -204,12 +204,14 @@
     }
   }
 
-  async function unarchiveCurrent(): Promise<void> {
-    if (!$session.sessionId) return;
-    await archiveConversation($session.sessionId, false);
-  }
-
   async function send(text: string): Promise<void> {
+    // Writing to an archived conversation brings it back: the alternative was
+    // a read-only view that explained itself above the composer.
+    if (currentArchived && $session.sessionId) {
+      await archiveSession($session.workspace, $session.sessionId, false);
+      const sessions = await listSessions($session.workspace);
+      dispatch({ type: "sessions-loaded", sessions });
+    }
     await sendMessage(text);
   }
 
@@ -295,24 +297,15 @@
         </div>
       {/if}
 
-      {#if currentArchived}
-        <div class="archived-notice" role="status">
-          <span>{$t("app.archivedNotice")}</span>
-          <button onclick={unarchiveCurrent}>
-            {$t("sidebar.unarchive")}
-          </button>
-        </div>
-      {:else}
-        {#key $session.sessionId}
-          <Composer
-            running={$session.running !== null}
-            onSend={send}
-            onCancel={cancel}
-            onError={(message) => (uiError = message)}
-            initialDraft={prefillDraft}
-          />
-        {/key}
-      {/if}
+      {#key $session.sessionId}
+        <Composer
+          running={$session.running !== null}
+          onSend={send}
+          onCancel={cancel}
+          onError={(message) => (uiError = message)}
+          initialDraft={prefillDraft}
+        />
+      {/key}
     </footer>
   </div>
 
