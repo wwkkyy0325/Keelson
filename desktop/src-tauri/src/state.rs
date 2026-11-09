@@ -79,6 +79,8 @@ pub struct InteractionRequested {
     pub kind: String,
     pub prompt: String,
     pub options: Vec<InteractionOptionView>,
+    /// Id of the option the model recommends, when it named one.
+    pub recommended: Option<String>,
 }
 
 /// Kernel interactions become Tauri events. The turn waits on a oneshot until
@@ -137,6 +139,7 @@ impl InteractionPort for DesktopInteractions {
                     label: option.label.clone(),
                 })
                 .collect(),
+            recommended: request.recommended.clone(),
         };
         let (reply, answer) = oneshot::channel();
         self.pending

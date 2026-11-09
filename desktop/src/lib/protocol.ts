@@ -117,6 +117,7 @@ export type Interaction = {
   kind: string;
   prompt: string;
   options: InteractionOption[];
+  recommended?: string | null;
 };
 
 export type TurnStarted = { seq: number; input: string };

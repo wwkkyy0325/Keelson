@@ -117,6 +117,8 @@ a `choice` needs no new UI.
 The persona uses it narrowly: ask once, before editing, only when the
 repository cannot answer a choice that changes the result — which file holds
 the behavior, whether a test may change, which reading of the request is meant.
+The model names the option it would pick in `recommended`, and the card marks
+it (`推荐` / `Recommended`), so the answer is one click.
 Everything else keeps existing behavior, states the assumption, and continues.
 A fixed questionnaire before every turn was rejected: it taxes every small
 task to help a few large ones.

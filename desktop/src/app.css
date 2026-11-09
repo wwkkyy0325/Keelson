@@ -1408,6 +1408,21 @@ footer {
   gap: 0.45rem;
 }
 
+.permission-options button.recommended {
+  border-color: var(--accent);
+}
+
+.permission-options .badge {
+  margin-left: 0.45rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  letter-spacing: 0;
+  text-transform: none;
+  background: var(--accent);
+  color: var(--bg);
+}
+
 .banner {
   max-width: 860px;
   width: 100%;

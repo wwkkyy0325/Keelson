@@ -26,8 +26,15 @@
   <div class="permission-prompt">{interaction.prompt}</div>
   <div class="permission-options">
     {#each interaction.options as option (option.id)}
-      <button onclick={() => onAnswer(option.id)} disabled={answering !== null}>
+      <button
+        class:recommended={interaction.recommended === option.id}
+        onclick={() => onAnswer(option.id)}
+        disabled={answering !== null}
+      >
         {$permissionLabel(option.id, option.label)}
+        {#if interaction.recommended === option.id}
+          <span class="badge">{$t("app.recommended")}</span>
+        {/if}
       </button>
     {/each}
   </div>

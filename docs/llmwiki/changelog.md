@@ -1359,3 +1359,15 @@ duration line is what makes the cost of a check measurable at all.
   repository. The model asked one `choice` with three options and finished the
   turn with the answer (26.24 s); a second run asked whether the two existing
   render assertions may change.
+
+## 2026-11-09 — the card marks the recommended option
+
+- Kernel: `InteractionRequest::default` — a field no provider parsed — becomes
+  `recommended: Option<String>`; both providers parse it and advertise it in
+  the control tool schema. ADR 0033.
+- Persona: when the rig asks, it names the option it would pick in
+  `recommended`.
+- Desktop: the matching option gets a `推荐` / `Recommended` badge and an accent
+  border; a typo'd id simply marks nothing.
+- `ask_eval` run: the model asked three options and set
+  `recommended="configurable"` (34.44 s).

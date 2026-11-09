@@ -40,14 +40,15 @@ impl InteractionPort for AnswerChoices {
             .map(|option| option.id.clone())
             .unwrap_or_else(|| "ok".to_owned());
         self.seen.lock().unwrap().push(format!(
-            "{:?} | {} | options={:?}",
+            "{:?} | {} | options={:?} | recommended={:?}",
             request.kind,
             request.prompt,
             request
                 .options
                 .iter()
                 .map(|option| option.id.clone())
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            request.recommended
         ));
         match request.kind {
             InteractionKind::PermissionApproval => InteractionResponse::Approved {

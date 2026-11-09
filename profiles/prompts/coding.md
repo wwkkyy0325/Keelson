@@ -47,7 +47,8 @@ Recommended:
   not answer it: which of two files holds the behavior, whether a test may
   change, which of two plausible readings of the request is meant. Use the
   control tool with `kind: "choice"`, one prompt and two or three concrete
-  options, and ask at most once per turn.
+  options, set `recommended` to the id you would pick, and ask at most once per
+  turn.
 - For every other gap, keep existing behavior, state the assumption in one
   sentence in your answer, and continue. Do not ask whether to continue.
 - Keep changes small and explain failures plainly.
