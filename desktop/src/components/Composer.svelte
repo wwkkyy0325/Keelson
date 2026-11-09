@@ -7,11 +7,15 @@
     onSend,
     onCancel,
     onError,
+    showStarters = false,
   }: {
     running: boolean;
     onSend: (text: string) => Promise<void>;
     onCancel: () => void;
     onError: (message: string) => void;
+    // An empty conversation offers a few things to start from, so nobody has
+    // to decide what to say first.
+    showStarters?: boolean;
   } = $props();
 
   // The composer grows with its content and stops at 40% of the window, where
@@ -54,6 +58,11 @@
     }
   }
 
+  function useStarter(text: string): void {
+    draft = text;
+    textarea?.focus();
+  }
+
   function onKeydown(event: KeyboardEvent): void {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -68,17 +77,35 @@
   }
 </script>
 
-<div class="composer">
-  <textarea
-    bind:this={textarea}
-    bind:value={draft}
-    onkeydown={onKeydown}
-    placeholder={$t("app.placeholder")}
-    rows="2"
-  ></textarea>
-  {#if running}
-    <button onclick={onCancel}>{$t("app.cancel")}</button>
-  {:else}
-    <button onclick={send} disabled={!draft.trim()}>{$t("app.send")}</button>
+<div class="composer-block">
+  {#if showStarters}
+    <div class="starters">
+      <button type="button" onclick={() => useStarter($t("app.starterFixTests"))}>
+        {$t("app.starterFixTests")}
+      </button>
+      <button type="button" onclick={() => useStarter($t("app.starterRunProject"))}>
+        {$t("app.starterRunProject")}
+      </button>
+      <button type="button" onclick={() => useStarter($t("app.starterExplain"))}>
+        {$t("app.starterExplain")}
+      </button>
+      <button type="button" onclick={() => useStarter($t("app.starterAddFeature"))}>
+        {$t("app.starterAddFeature")}
+      </button>
+    </div>
   {/if}
+  <div class="composer">
+    <textarea
+      bind:this={textarea}
+      bind:value={draft}
+      onkeydown={onKeydown}
+      placeholder={$t("app.placeholder")}
+      rows="2"
+    ></textarea>
+    {#if running}
+      <button onclick={onCancel}>{$t("app.cancel")}</button>
+    {:else}
+      <button onclick={send} disabled={!draft.trim()}>{$t("app.send")}</button>
+    {/if}
+  </div>
 </div>

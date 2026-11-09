@@ -240,14 +240,14 @@
     <AppHeader
       title={currentTitle}
       archived={currentArchived}
-      {canUndo}
-      onUndo={() => (confirmUndo = true)}
       {onSettings}
     />
 
     <Transcript
       onError={(message) => (uiError = message)}
       {projectName}
+      {canUndo}
+      onUndo={() => (confirmUndo = true)}
     />
 
     <footer>
@@ -286,6 +286,7 @@
             onSend={send}
             onCancel={cancel}
             onError={(message) => (uiError = message)}
+            showStarters={$session.turns.length === 0 && !$session.running}
           />
         {/key}
       {/if}

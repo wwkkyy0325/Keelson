@@ -1460,3 +1460,13 @@ duration line is what makes the cost of a check measurable at all.
   never its behavior.
 - Verified: 30 desktop tests, clippy and fmt clean, svelte-check 0 errors,
   17 frontend tests.
+
+## 2026-11-09 — the flow starts from what the user sees
+
+- An empty conversation now offers four starters above the composer (fix the
+  tests, get it running, explain a file, add a feature). A click fills the
+  draft and focuses it; nothing is sent automatically. A user who does not know
+  what to ask only has to recognise something close.
+- 撤销本轮 moved from the window header to the turn it would undo, next to the
+  verification badge. The header keeps only the title, language and settings.
+- Removed the dead `.undo` style.

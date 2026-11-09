@@ -1167,20 +1167,6 @@ header .title {
   color: var(--text);
 }
 
-.undo {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--muted);
-  border-radius: 8px;
-  padding: 0.28rem 0.55rem;
-  font-size: 0.74rem;
-}
-
-.undo:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
 .dim {
   color: var(--muted);
 }
@@ -1269,6 +1255,18 @@ header .title {
 
 .verification.passed {
   color: var(--ok);
+}
+
+.turn-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-top: 0.4rem;
+}
+
+.turn-undo {
+  font-size: 0.78rem;
+  padding: 0.1rem 0;
 }
 
 .verification-detail {
@@ -1365,13 +1363,37 @@ footer {
   font-size: 0.78rem;
 }
 
+.composer-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+}
+
 .composer {
   display: flex;
   gap: 0.6rem;
   align-items: flex-end;
-  max-width: 860px;
   width: 100%;
-  margin: 0 auto;
+}
+
+.starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.starters button {
+  font-size: 0.78rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.starters button:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .composer textarea {

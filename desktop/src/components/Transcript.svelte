@@ -8,9 +8,14 @@
   let {
     onError,
     projectName,
+    canUndo = false,
+    onUndo = () => {},
   }: {
     onError: (message: string) => void;
     projectName: string;
+    /// Undo belongs to the turn it would undo, not to the window header.
+    canUndo?: boolean;
+    onUndo?: () => void;
   } = $props();
 
   let scroller = $state<HTMLDivElement | null>(null);
@@ -84,8 +89,12 @@
     </p>
   {/if}
 
-  {#each $session.turns as turn (turn.seq)}
-    <Turn {turn} />
+  {#each $session.turns as turn, index (turn.seq)}
+    <Turn
+      {turn}
+      canUndo={canUndo && index === $session.turns.length - 1}
+      {onUndo}
+    />
   {/each}
 
   {#if $session.running}

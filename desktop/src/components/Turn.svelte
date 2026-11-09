@@ -2,7 +2,11 @@
   import { t } from "../lib/i18n";
   import type { Turn } from "../lib/protocol";
 
-  let { turn }: { turn: Turn } = $props();
+  let {
+    turn,
+    canUndo = false,
+    onUndo = () => {},
+  }: { turn: Turn; canUndo?: boolean; onUndo?: () => void } = $props();
 
   let passed = $derived(turn.verification?.passed ?? turn.verificationPassed);
 </script>
@@ -18,12 +22,21 @@
   {#if turn.error}
     <div class="error">{turn.error}</div>
   {/if}
-  {#if passed !== null}
-    <div class="verification" class:passed={passed}>
-      <span>{passed ? "✓" : "✗"}</span>
-      <span>
-        {passed ? $t("app.verified") : $t("app.verificationFailed")}
-      </span>
+  {#if passed !== null || canUndo}
+    <div class="turn-foot">
+      {#if passed !== null}
+        <div class="verification" class:passed={passed}>
+          <span>{passed ? "✓" : "✗"}</span>
+          <span>
+            {passed ? $t("app.verified") : $t("app.verificationFailed")}
+          </span>
+        </div>
+      {/if}
+      {#if canUndo}
+        <button class="link turn-undo" onclick={onUndo}>
+          {$t("app.undoTurn")}
+        </button>
+      {/if}
     </div>
     {#if turn.verification?.evidence.length}
       <details class="verification-detail">
