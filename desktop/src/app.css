@@ -1532,12 +1532,6 @@ footer {
   height: 196px;
 }
 
-.settings-mode {
-  align-self: flex-start;
-  padding: 0.2rem 0;
-  font-size: 0.78rem;
-}
-
 .settings-foot {
   display: flex;
   align-items: center;

@@ -262,6 +262,29 @@
         <h3>{$t("settings.model")}</h3>
         <p class="muted">{$t("settings.modelHint")}</p>
 
+        <div class="segmented" role="group" aria-label={$t("settings.model")}>
+          <button
+            type="button"
+            class:active={!manual}
+            onclick={() => {
+              if (manual) toggleManual();
+            }}
+            disabled={busy}
+          >
+            {$t("model.modeList")}
+          </button>
+          <button
+            type="button"
+            class:active={manual}
+            onclick={() => {
+              if (!manual) toggleManual();
+            }}
+            disabled={busy}
+          >
+            {$t("model.modeManual")}
+          </button>
+        </div>
+
         {#if manual}
           <div class="manual-fields">
             <label>
@@ -307,10 +330,6 @@
             onRefresh={() => loadCatalog(true)}
           />
         {/if}
-
-        <button class="link settings-mode" onclick={toggleManual} disabled={busy}>
-          {manual ? $t("settings.fromList") : $t("settings.advanced")}
-        </button>
 
         {#if !isMock}
           <label>

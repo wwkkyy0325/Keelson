@@ -1436,3 +1436,12 @@ duration line is what makes the cost of a check measurable at all.
 - The form now starts empty with examples as placeholders
   (`http://127.0.0.1:8080/v1`, `q2_0`), and fills only from a remembered manual
   endpoint. The same applies to the first-run wizard.
+
+## 2026-11-09 — the model/list switch is a segmented control
+
+- 手动填写接口 was a small text link below the form, so the way back to the
+  model list was easy to miss and sat far from the thing it switched.
+- Both surfaces now use the same two-state control as the language switch —
+  `模型列表 | 手动填写` — placed directly under the section heading and above the
+  picker or the manual form.
+- Removed the dead `.settings-mode` style and four now-unused strings.

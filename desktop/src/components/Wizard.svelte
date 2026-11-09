@@ -291,6 +291,31 @@
         <h1>{$t("wizard.connect.title")}</h1>
         <p class="muted">{$t("wizard.connect.subtitle")}</p>
 
+        {#if catalog}
+          <div class="segmented" role="group" aria-label={$t("wizard.connect.title")}>
+            <button
+              type="button"
+              class:active={!manual}
+              onclick={() => {
+                if (manual) toggleManual();
+              }}
+              disabled={busy}
+            >
+              {$t("model.modeList")}
+            </button>
+            <button
+              type="button"
+              class:active={manual}
+              onclick={() => {
+                if (!manual) toggleManual();
+              }}
+              disabled={busy}
+            >
+              {$t("model.modeManual")}
+            </button>
+          </div>
+        {/if}
+
         {#if manual}
           <div class="manual-fields fill">
             <label>
@@ -369,13 +394,6 @@
             <button class="link" onclick={useOffline} disabled={busy}>
               {$t("wizard.connect.offline")}
             </button>
-            {#if catalog}
-              <button class="link" onclick={toggleManual} disabled={busy}>
-                {manual
-                  ? $t("wizard.connect.fromList")
-                  : $t("wizard.connect.manual")}
-              </button>
-            {/if}
           </div>
           <button
             class="primary"
