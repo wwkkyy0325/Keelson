@@ -1427,3 +1427,12 @@ duration line is what makes the cost of a check measurable at all.
   lookup is per provider, so a mismatch cannot happen.
 - Verified: 30 desktop tests (two new config tests), clippy clean, svelte-check
   0 errors, 17 frontend tests.
+
+## 2026-11-09 — the manual form starts empty
+
+- Opening 手动填写接口 used to copy the currently selected provider's values in
+  as real text, so a first look at the form showed DeepSeek's URL and model as
+  if they were the manual endpoint.
+- The form now starts empty with examples as placeholders
+  (`http://127.0.0.1:8080/v1`, `q2_0`), and fills only from a remembered manual
+  endpoint. The same applies to the first-run wizard.

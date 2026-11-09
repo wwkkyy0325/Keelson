@@ -41,8 +41,8 @@
         : "openai-compatible",
     ),
   );
-  let baseUrl = $state(untrack(() => initial.baseUrl));
-  let modelName = $state(untrack(() => initial.model));
+  let baseUrl = $state(untrack(() => initial.manual?.baseUrl ?? ""));
+  let modelName = $state(untrack(() => initial.manual?.model ?? ""));
   let error = $state<string | null>(untrack(() => initialError));
   let busy = $state(false);
 
@@ -145,10 +145,17 @@
 
   function toggleManual(): void {
     if (!manual) {
-      if (selectedProvider) {
-        providerKind = selectedProvider.kind;
-        baseUrl = selectedProvider.baseUrl;
-        modelName = selectedModelId;
+      const remembered = initial.manual;
+      if (remembered) {
+        providerKind = remembered.provider;
+        baseUrl = remembered.baseUrl;
+        modelName = remembered.model;
+      } else {
+        // Nothing has been saved by hand yet: an empty form with examples is
+        // clearer than another provider's address pre-filled.
+        providerKind = selectedProvider?.kind ?? providerKind;
+        baseUrl = "";
+        modelName = "";
       }
       manual = true;
     } else {
@@ -299,11 +306,19 @@
             </label>
             <label>
               <span>{$t("wizard.model.baseUrl")}</span>
-              <input bind:value={baseUrl} spellcheck="false" />
+              <input
+                bind:value={baseUrl}
+                placeholder={$t("wizard.model.baseUrlPlaceholder")}
+                spellcheck="false"
+              />
             </label>
             <label>
               <span>{$t("wizard.model.model")}</span>
-              <input bind:value={modelName} spellcheck="false" />
+              <input
+                bind:value={modelName}
+                placeholder={$t("wizard.model.modelPlaceholder")}
+                spellcheck="false"
+              />
             </label>
             <p class="hint">{$t("wizard.manual.hint")}</p>
           </div>

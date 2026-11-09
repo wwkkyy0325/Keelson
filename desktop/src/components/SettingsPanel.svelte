@@ -156,10 +156,12 @@
         providerKind = remembered.provider;
         baseUrl = remembered.baseUrl;
         modelName = remembered.model;
-      } else if (selectedProvider) {
-        providerKind = selectedProvider.kind;
-        baseUrl = selectedProvider.baseUrl;
-        modelName = selectedModelId;
+      } else {
+        // Nothing has been saved by hand yet: an empty form with examples is
+        // clearer than another provider's address pre-filled.
+        providerKind = selectedProvider?.kind ?? providerKind;
+        baseUrl = "";
+        modelName = "";
       }
       manual = true;
     }
@@ -279,6 +281,7 @@
               <input
                 bind:value={baseUrl}
                 disabled={providerKind === "mock"}
+                placeholder={$t("wizard.model.baseUrlPlaceholder")}
                 spellcheck="false"
               />
             </label>
@@ -287,6 +290,7 @@
               <input
                 bind:value={modelName}
                 disabled={providerKind === "mock"}
+                placeholder={$t("wizard.model.modelPlaceholder")}
                 spellcheck="false"
               />
             </label>
