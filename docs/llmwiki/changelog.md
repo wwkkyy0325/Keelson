@@ -1288,3 +1288,21 @@ duration line is what makes the cost of a check measurable at all.
   in 17.76 s over 12 model calls, `messy_eval` passed in 132.47 s with the
   1274-line Python module and 570-line Java class both repaired.
 - The endpoint answered a 256,285-token needle prompt correctly.
+
+## 2026-11-09 — a real task on a copied DocFusion
+
+- `real_task_eval` ran one turn on a clone of the user's DocFusion (211 tests
+  green, clippy clean) and found a contract violation: `docfusion show` with no
+  document and `docfusion --bogus` exited 2, which `docfusion schema` publishes
+  as "some inputs succeeded and some did not".
+- The turn changed `main` to `Cli::try_parse` with an `argument_error` that
+  exits 1 for a bad command line and 0 for `--help`/`--version`, added
+  `crates/docfusion-cli/tests/argument_errors.rs` (4 cases, runs the binary),
+  and wrote the project's changelog entry.
+- Verified independently: 576 tests pass, clippy clean, `show`/`--bogus` exit
+  1, `--help`/`--version` exit 0, a mixed `add` still exits 2, and
+  `docfusion schema` is byte-identical to the original build.
+- The turn took 617.79 s and read the clap crate source from the cargo registry
+  to confirm `ErrorKind` variants before editing.
+- Patch: `target/docfusion-exit-code.patch`. The original repository was not
+  touched.

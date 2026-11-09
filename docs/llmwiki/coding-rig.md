@@ -105,6 +105,7 @@ Live eval record on 2026-11-09 against a local OpenAI-compatible endpoint
 |---|---|
 | `coding_eval` | passed (17.76 s, 12 model calls) |
 | `messy_eval` | passed (132.47 s) — both indentation regions and both braces repaired; python check 0.09 s, `javac` 0.58 s |
+| `real_task_eval` on a copied DocFusion | passed (617.79 s) — found and fixed `docfusion` exiting 2 on an argument error, a code its own schema reserves for a partial run; 576 tests and clippy pass, `schema` output unchanged |
 
 The same endpoint held a 256,285-token prompt with a leading needle
 (`4739281`) and answered it correctly; prefill 28.7 s for 187k fresh tokens,
