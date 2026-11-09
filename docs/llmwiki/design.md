@@ -153,7 +153,13 @@ path, and the verifier accepts an absolute program path inside the workspace
 when the file name is allowlisted (M4ad). A workspace outside those ecosystems
 declares its own check in `.keelson/checks.toml`; the item is named
 `workspace-check:<name>`, always runs, and a file that does not parse is a
-required item carrying the error (M4ae). Each check id names its ecosystem
+required item carrying the error (M4ae). A default read stops at 1000 lines
+and names the next offset; the ledger counts ranges that cover every line as a
+full read, so a large file can be paged and then rewritten (M4af). Each check
+reports its own run time in the evidence (M4ag). `examples/messy-workspace`
+pairs a 1274-line Python module with broken indentation and a 570-line Java
+class with unbalanced braces, checked by `unittest` detection and a declared
+`javac` (M4ah). Each check id names its ecosystem
 and project, so a multi-check failure is attributable (M4z). Every project of an ecosystem is a
 candidate: a monorepo with two crates, two packages or two Python projects
 gets one check per project, and a changed path selects the deepest one. A path

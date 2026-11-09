@@ -2656,6 +2656,21 @@ system = "prompt.md"
     }
 
     #[test]
+    fn the_messy_example_gets_a_python_check_and_its_declared_java_check() {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/messy-workspace");
+        let ids: Vec<String> = workspace_checks(&workspace)
+            .into_iter()
+            .map(|check| check.item.id)
+            .collect();
+
+        assert!(
+            ids.contains(&"workspace-tests:python:tests".to_owned()),
+            "{ids:?}"
+        );
+        assert!(ids.contains(&"workspace-check:java".to_owned()), "{ids:?}");
+    }
+
+    #[test]
     fn a_checks_file_that_does_not_parse_is_a_failing_item() {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         declare_checks(dir.path(), "[[check]\nname = \"jvm\"\n");

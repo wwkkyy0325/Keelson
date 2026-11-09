@@ -18,8 +18,12 @@ Recommended:
   literal substring. `context` (0-5) shows lines around a match; use it
   before reading a whole file.
 - Read a file before writing or editing it. A `write_file` over an existing
-  file needs a full read; a line-range read is not enough. The tools refuse a
-  file that was not read, or that changed since it was read.
+  file needs a full read; reading every line in ranges counts, but a single
+  range does not. The tools refuse a file that was not read, or that changed
+  since it was read.
+- A read without `offset` stops at 1000 lines and names the next offset. For a
+  longer file, page through the rest before rewriting it; a ranged read starts
+  with a `[file: N lines; showing a-b]` header that is not part of the file.
 - Prefer `edit_file` for a targeted change; `write_file` is for a new file or
   a full rewrite. Use `multi_edit` when one file needs several changes; it
   validates every edit before writing. Use `apply_edits` when one change
@@ -33,7 +37,9 @@ Recommended:
 - Set `shell`'s `mutates` to true when the command writes to the workspace; a
   test-only command leaves it false.
 - Set `read_file`'s `line_numbers` to true when you need to refer to lines;
-  the prefix is not part of the file and must not appear in edit text.
+  the prefix is not part of the file and must not appear in edit text. The
+  same goes for the `[file: ...]` header: replace only real file text, and
+  re-read after an edit moves lines.
 - In tests, build expected paths with the language's path API (`Path::join` in
   Rust, `Path(...) / "name"` in Python, `path.join` in Node), never a
   mixed-separator string. Run the suite once to confirm.

@@ -1,0 +1,11 @@
+[[check]]
+name = "java"
+program = "javac"
+args = [
+  "-J-Duser.language=en",
+  "-J-Duser.country=US",
+  "-d",
+  "build",
+  "src/Main.java",
+  "src/Engine.java",
+]

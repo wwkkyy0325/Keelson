@@ -1245,3 +1245,34 @@ The four detected ecosystems are the common case, not every case. A project
 with Maven, .NET or a Makefile had no verified turn at all, so the rig could
 report success without anything running. A file the user owns is the smallest
 way to close that gap without inventing a command from a manifest.
+
+## 2026-11-09 — M4af–M4ah: large files
+
+- Kernel: a default `read_file` stops at 1000 lines and names the next offset;
+  a ranged read opens with a display-only `[file: N lines; showing a-b]`
+  header. The ledger records line ranges and counts coverage of every line as
+  a full read, so a large file can be paged and then rewritten (ADR 0031).
+- Kernel: every command or test check appends `[duration: 0.42 s]` to its
+  evidence, on pass and on failure (ADR 0032).
+- Host: `examples/messy-workspace` — a 1274-line Python module whose rules
+  010-040 sit at the `def` column and five later methods are one space too
+  far, plus a 570-line Java class with a missing and a stray brace. The Java
+  check is declared in `.keelson/checks.toml` with English `javac`
+  diagnostics.
+- Host: `messy_eval` runs one turn to repair both files and asserts both
+  checks pass, the reference test and `Main.java` are unchanged, and a direct
+  `unittest` and `javac` run also pass.
+- Deterministic: the fixture's detected ids are `workspace-tests:python:tests`
+  and `workspace-check:java`; a manual verifier run showed both failing with
+  their real output before a repair.
+- 61 host tests, Keel 42 tool tests and 10 verification tests; clippy clean.
+- Task docs: `m4af-read-paging.md`, `m4ag-check-duration.md`,
+  `m4ah-messy-large-file.md`.
+
+### Why
+
+An edit can re-indent a block or drop a brace, and the rig has to repair a
+file that no longer parses or compiles. Before this, a 1274-line file could not
+be read in one call without filling the working set, and could never be
+rewritten after paging. The fixture is the regression test for both, and the
+duration line is what makes the cost of a check measurable at all.

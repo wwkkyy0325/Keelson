@@ -242,5 +242,19 @@ M4ae: a workspace can declare its own check in `.keelson/checks.toml`
 has to be allowlisted, and a file that does not parse is itself a required
 item so a typo is visible.
 
+M4af: a large file is readable and writable. A default `read_file` stops at
+1000 lines and names the next offset; a ranged read starts with a
+`[file: N lines; showing a-b]` header; the ledger counts ranges that cover
+every line as a full read, so a large file can be paged and then rewritten.
+
+M4ag: every command or test check reports its own run time in the evidence
+(`[duration: 0.42 s]`), on pass and on failure, so the cost of a check is
+visible where its result is.
+
+M4ah: `examples/messy-workspace` holds a 1274-line Python module with two
+broken indentation regions and a 570-line Java class with two unbalanced
+braces. Java has no detector, so its check is declared in
+`.keelson/checks.toml`; the live `messy_eval` repairs both in one turn.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

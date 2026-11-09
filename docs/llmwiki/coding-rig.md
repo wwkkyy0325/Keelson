@@ -15,7 +15,7 @@ workspace, speak LSP, or execute an arbitrary command without permission.
 
 | Tool | Contract |
 |---|---|
-| `read_file` | UTF-8, `offset`/`limit`, optional `line_numbers`; 8 MiB head cap; records raw bytes in the ledger. |
+| `read_file` | UTF-8, `offset`/`limit`, optional `line_numbers`; a default read stops at 1000 lines and names the next offset; a ranged read names the file's line count; 8 MiB head cap; the ledger records line coverage, so ranges that cover every line allow a rewrite. |
 | `write_file` | Creates or replaces a file; an existing file needs a full read; the previous version goes to the trash. |
 | `edit_file` | One exact replacement, optional `replace_all`; CRLF/LF fallback preserves the file's endings; needs a current read. |
 | `multi_edit` | Several replacements to one file; validates all in memory, one backup, one write. |
@@ -60,6 +60,9 @@ workspace, speak LSP, or execute an arbitrary command without permission.
   typo is visible instead of silently leaving the workspace unchecked.
 - Each item id is `workspace-tests:<ecosystem>:<project>`; a Python id uses
   the test root. A failure names the item.
+- A command or test item reports its own run time as `[duration: 0.42 s]` in
+  the evidence, on pass and on failure, so the cost of a check is visible
+  where its result is.
 - The shell tool is not a workspace change unless the model sets `mutates`.
   A shell-only turn that omits the hint skips verification.
 
@@ -92,8 +95,8 @@ for a writing shell command, `apply_edits` for a cross-file change, a
 |---|---|
 | Keel kernel | Tool contracts: read ledger, CRLF, multi-edit, apply-edits, glob, regex/context search, ignore walk, shell, trash, verification, turn driver, acceptance selector. |
 | Keelson host | Engines, stores, rig schema, check detection/selection, named ids, git tool, registry, persona/instructions. |
-| Deterministic evals | `examples/demo-workspace`, `inventory-workspace`, `shop-workspace`, `polyglot-workspace`, `cross-file-workspace`. |
-| Live evals | `coding_eval` (Python two-module), `shop_eval` (Rust multi-file), `polyglot_eval` (Node vs failing Python), `cross_file_eval` (two-file rename), `real_task_eval` (external copy). |
+| Deterministic evals | `examples/demo-workspace`, `inventory-workspace`, `shop-workspace`, `polyglot-workspace`, `cross-file-workspace`, `messy-workspace`. |
+| Live evals | `coding_eval` (Python two-module), `shop_eval` (Rust multi-file), `polyglot_eval` (Node vs failing Python), `cross_file_eval` (two-file rename), `messy_eval` (1274-line Python plus 570-line Java repair), `real_task_eval` (external copy). |
 
 Live eval record on 2026-11-08:
 
@@ -114,8 +117,8 @@ defect.
 
 - No LSP, no symbol graph, no semantic rename. `apply_edits` is textual.
 - Discovery stops at depth 3; a manifest or test root deeper is missed.
-- `read_file` truncates at 8 MiB and the edit tools reject larger files; a
-  `write_file` over an existing large file cannot satisfy the full-read guard.
+- A file larger than 8 MiB cannot be read whole: the recorded digest is of the
+  prefix, so neither an edit nor a rewrite matches it. Only inspection works.
 - One check per project; a project with no recognized manifest is unverified
   unless the workspace declares a check. A declared check runs at the
   workspace root and cannot name a working directory; it also runs on every
