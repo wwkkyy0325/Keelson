@@ -67,7 +67,9 @@ archived conversations can be permanently deleted, after a `永久删除对话?`
 dialog.
 The header's 中/EN switch changes the interface language; the gear opens a
 single-page settings panel with the same model picker, key, language and
-workspace info.
+workspace info. A custom OpenAI-compatible endpoint — a local model server, for
+example — is entered there under `手动填写接口`; an endpoint that needs no key
+accepts any placeholder.
 
 The window shows the conversation, streams the answer, renders tool lines
 after the turn, prompts for permissions and loads older turns by a stable turn

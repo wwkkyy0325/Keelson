@@ -1371,3 +1371,13 @@ duration line is what makes the cost of a check measurable at all.
   border; a typo'd id simply marks nothing.
 - `ask_eval` run: the model asked three options and set
   `recommended="configurable"` (34.44 s).
+
+## 2026-11-09 — closing the desktop for daily use
+
+- Settings: the manual-endpoint form says that a local or self-hosted endpoint
+  with no authentication accepts any placeholder key, so pointing the app at a
+  LAN model server is one save, not a guess.
+- README: the desktop section names the manual endpoint path and the placeholder
+  key.
+- Verified: `npm test` 17, `svelte-check` 0 errors, `npm run build`, and the
+  Tauri crate's 28 tests plus clippy.

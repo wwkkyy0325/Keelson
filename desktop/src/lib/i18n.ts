@@ -75,6 +75,7 @@ const zh = {
   "settings.advanced": "手动填写接口",
   "settings.fromList": "从模型列表选择",
   "settings.keyOther": "当前密钥属于另一个提供方，请重新填写。",
+  "settings.keyLocalHint": "本地或自建端点若不需要鉴权，密钥填任意占位（例如 not-needed）即可。",
   "settings.save": "保存并重连",
   "settings.saving": "正在保存…",
   "settings.close": "关闭",
@@ -215,6 +216,7 @@ const en: Record<Key, string> = {
   "settings.fromList": "Choose from the model list",
   "settings.keyOther":
     "The saved key belongs to another provider; enter the new one.",
+  "settings.keyLocalHint": "A local or self-hosted endpoint that needs no authentication accepts any placeholder key (for example, not-needed).",
   "settings.save": "Save & reconnect",
   "settings.saving": "Saving…",
   "settings.close": "Close",

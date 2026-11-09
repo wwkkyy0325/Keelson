@@ -335,6 +335,9 @@
           {:else if setup?.hasKey}
             <p class="hint">{$t("settings.keyOther")}</p>
           {/if}
+          {#if manual}
+            <p class="hint">{$t("settings.keyLocalHint")}</p>
+          {/if}
         {/if}
       </section>
 
