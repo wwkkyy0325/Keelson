@@ -6,15 +6,58 @@
     turn,
     canUndo = false,
     onUndo = () => {},
-  }: { turn: Turn; canUndo?: boolean; onUndo?: () => void } = $props();
+    onBranch = () => {},
+  }: {
+    turn: Turn;
+    canUndo?: boolean;
+    onUndo?: () => void;
+    onBranch?: () => void;
+  } = $props();
 
   let passed = $derived(turn.verification?.passed ?? turn.verificationPassed);
+  let copied = $state<string | null>(null);
+
+  async function copy(text: string, key: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = key;
+      setTimeout(() => {
+        if (copied === key) copied = null;
+      }, 1500);
+    } catch {
+      // The clipboard can be unavailable; the text is still on screen.
+    }
+  }
+
+  function copyLabel(key: string): string {
+    return copied === key ? $t("turn.copied") : $t("turn.copy");
+  }
 </script>
 
 <article class="turn">
-  <div class="user">{turn.input}</div>
+  <div class="turn-line user-line">
+    <div class="turn-actions">
+      <button class="link turn-action" onclick={() => copy(turn.input, "input")}>
+        {copyLabel("input")}
+      </button>
+    </div>
+    <div class="user">{turn.input}</div>
+  </div>
   {#if turn.answer}
-    <div class="answer">{turn.answer}</div>
+    <div class="turn-line answer-line">
+      <div class="answer">{turn.answer}</div>
+      <div class="turn-actions">
+        <button
+          class="link turn-action"
+          onclick={() => copy(turn.answer, "answer")}
+        >
+          {copyLabel("answer")}
+        </button>
+        <button class="link turn-action" onclick={onBranch}>
+          {$t("turn.branch")}
+        </button>
+      </div>
+    </div>
   {/if}
   {#if turn.state !== "Done" && !turn.answer}
     <div class="state">{turn.state}</div>

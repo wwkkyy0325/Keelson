@@ -1470,3 +1470,17 @@ duration line is what makes the cost of a check measurable at all.
 - 撤销本轮 moved from the window header to the turn it would undo, next to the
   verification badge. The header keeps only the title, language and settings.
 - Removed the dead `.undo` style.
+
+## 2026-11-09 — copy and branch from a turn
+
+- A turn now shows its actions on hover: 复制 on the question and on the
+  answer, and 从这里迁出 on the answer. The action row keeps its space so the
+  layout does not jump when it appears.
+- 迁出 is a host command (`branch_session`): it copies the turns before the
+  chosen one into a new conversation, leaves the source untouched, opens the
+  branch, and the composer starts with that turn's input so it can be edited.
+  The new row is named `<title>（分支）`.
+- Deletion of turns is deliberately not offered yet: it has to rewrite the
+  document, renumber `seq`, and reopen the engine, and it would not roll back
+  the files the turn changed. The confirm flow for that is a separate change.
+- Verified: 30 desktop tests, clippy, svelte-check 0 errors, 17 frontend tests.

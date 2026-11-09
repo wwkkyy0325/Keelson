@@ -4,18 +4,21 @@
   import { dispatch, session } from "../lib/session-store";
   import { t } from "../lib/i18n";
   import Turn from "./Turn.svelte";
+  import type { Turn as TurnData } from "../lib/protocol";
 
   let {
     onError,
     projectName,
     canUndo = false,
     onUndo = () => {},
+    onBranch = () => {},
   }: {
     onError: (message: string) => void;
     projectName: string;
     /// Undo belongs to the turn it would undo, not to the window header.
     canUndo?: boolean;
     onUndo?: () => void;
+    onBranch?: (turn: TurnData) => void;
   } = $props();
 
   let scroller = $state<HTMLDivElement | null>(null);
@@ -94,6 +97,7 @@
       {turn}
       canUndo={canUndo && index === $session.turns.length - 1}
       {onUndo}
+      onBranch={() => onBranch(turn)}
     />
   {/each}
 

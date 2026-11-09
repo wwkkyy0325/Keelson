@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     archiveSession,
+    branchSession,
     cancelTurn,
     deleteSession,
     listSessions,
@@ -20,6 +21,7 @@
   import PermissionCard from "./PermissionCard.svelte";
   import Sidebar from "./Sidebar.svelte";
   import Transcript from "./Transcript.svelte";
+  import type { Turn } from "../lib/protocol";
 
   let { onSettings }: { onSettings: () => void } = $props();
 
@@ -28,6 +30,8 @@
   let toast = $state<string | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let confirmUndo = $state(false);
+  /// Text a branch opens with, handed to the composer through its keyed mount.
+  let prefillDraft = $state("");
   let undoDone = $state(false);
 
   const MUTATING_TOOLS = new Set([
@@ -105,6 +109,7 @@
   async function newConversation(): Promise<void> {
     if ($session.running) return;
     uiError = null;
+    prefillDraft = "";
     try {
       const view = await newSession($session.workspace);
       dispatch({ type: "session-opened", view });
@@ -116,9 +121,26 @@
   async function selectConversation(id: string): Promise<void> {
     if (id === $session.sessionId || $session.running) return;
     uiError = null;
+    prefillDraft = "";
     try {
       const view = await openSession($session.workspace, id);
       dispatch({ type: "session-opened", view });
+    } catch (error) {
+      uiError = errText(error);
+    }
+  }
+
+  async function branchFrom(turn: Turn): Promise<void> {
+    if ($session.running) return;
+    uiError = null;
+    const name = `${currentTitle}${$t("turn.branchTitle")}`;
+    try {
+      const view = await branchSession(turn.seq);
+      prefillDraft = turn.input;
+      dispatch({ type: "session-opened", view });
+      await renameSession(view.workspace, view.sessionId, name);
+      const sessions = await listSessions(view.workspace);
+      dispatch({ type: "sessions-loaded", sessions });
     } catch (error) {
       uiError = errText(error);
     }
@@ -248,6 +270,7 @@
       {projectName}
       {canUndo}
       onUndo={() => (confirmUndo = true)}
+      onBranch={branchFrom}
     />
 
     <footer>
@@ -287,6 +310,7 @@
             onCancel={cancel}
             onError={(message) => (uiError = message)}
             showStarters={$session.turns.length === 0 && !$session.running}
+            initialDraft={prefillDraft}
           />
         {/key}
       {/if}

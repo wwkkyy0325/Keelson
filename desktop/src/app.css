@@ -1219,6 +1219,42 @@ header .title {
   line-height: 1.55;
 }
 
+.turn-line {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.user-line {
+  justify-content: flex-end;
+  align-items: flex-start;
+}
+
+.answer-line {
+  align-items: flex-start;
+}
+
+.answer-line .answer {
+  flex: 1;
+  min-width: 0;
+}
+
+.turn-actions {
+  display: flex;
+  gap: 0.55rem;
+  white-space: nowrap;
+  visibility: hidden;
+}
+
+.turn-line:hover .turn-actions,
+.turn-actions:focus-within {
+  visibility: visible;
+}
+
+.turn-action {
+  font-size: 0.75rem;
+  padding: 0.2rem 0;
+}
+
 .running .answer {
   color: var(--text);
 }

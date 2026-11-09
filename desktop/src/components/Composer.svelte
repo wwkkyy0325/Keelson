@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { t } from "../lib/i18n";
 
   let {
@@ -8,6 +8,7 @@
     onCancel,
     onError,
     showStarters = false,
+    initialDraft = "",
   }: {
     running: boolean;
     onSend: (text: string) => Promise<void>;
@@ -16,6 +17,8 @@
     // An empty conversation offers a few things to start from, so nobody has
     // to decide what to say first.
     showStarters?: boolean;
+    /// Text a branch opens with, so the user can edit the turn they moved from.
+    initialDraft?: string;
   } = $props();
 
   // The composer grows with its content and stops at 40% of the window, where
@@ -24,7 +27,7 @@
   const MAX_SHARE = 0.4;
   const MIN_HEIGHT = 96;
 
-  let draft = $state("");
+  let draft = $state(untrack(() => initialDraft));
   let textarea = $state<HTMLTextAreaElement | null>(null);
 
   function autosize(): void {

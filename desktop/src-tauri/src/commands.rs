@@ -6,7 +6,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use keel_core::CancelToken;
-use keelson::engine::{Engine, ModelOverride, OpenRequest, TurnPage, TurnView};
+use keelson::engine::{Engine, ModelOverride, OpenRequest, Store, TurnPage, TurnView};
 use keelson::rig;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -257,6 +257,44 @@ pub async fn open_session(
     let state = state.inner().clone();
     let workspace = resolve_workspace(&state, workspace);
     open_inner(app, state, workspace, session_id, false).await
+}
+
+/// Copies the conversation up to a turn into a new one and opens it.
+///
+/// A branch keeps the source intact: the turns before `seq` are copied, the
+/// turn's own input is not, so the caller can reopen the branch with that text
+/// in the composer and edit it. The workspace is not touched, and the source
+/// conversation keeps its turns.
+#[tauri::command]
+pub async fn branch_session(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    seq: u32,
+) -> Result<SessionView, String> {
+    let state = state.inner().clone();
+    ensure_idle(&state)?;
+    let current = state
+        .current
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    let source = sessions::session_path(&current.state_dir, &current.workspace, &current.id);
+    let mut document = Store::open(source)
+        .load(&current.workspace)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "对话不存在".to_owned())?;
+    if !document.turns.iter().any(|turn| turn.seq == seq) {
+        return Err("找不到这一轮".to_owned());
+    }
+    document.turns.retain(|turn| turn.seq < seq);
+    let id = sessions::fresh_id();
+    let path = sessions::session_path(&current.state_dir, &current.workspace, &id);
+    Store::open(path)
+        .save(&document)
+        .map_err(|error| error.to_string())?;
+    sessions::touch(&current.state_dir, &current.workspace, &id);
+    open_inner(app, state, current.workspace, Some(id), false).await
 }
 
 /// Opens a blank conversation without writing a document. The row appears in

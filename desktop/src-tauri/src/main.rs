@@ -32,6 +32,7 @@ fn main() {
             commands::complete_onboarding,
             commands::open_session,
             commands::new_session,
+            commands::branch_session,
             commands::list_sessions,
             commands::delete_session,
             commands::rename_session,
