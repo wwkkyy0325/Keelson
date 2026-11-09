@@ -21,7 +21,7 @@ workspace, speak LSP, or execute an arbitrary command without permission.
 | `multi_edit` | Several replacements to one file; validates all in memory, one backup, one write. |
 | `apply_edits` | Parallel `paths`/`old`/`new` lists across files; validates every replacement before any write; a write failure restores earlier files from backups. |
 | `glob` | `*` and `**`, newest first, bounded; ignores `.gitignore` and build directories. |
-| `code_search` | Literal or regex, case flag, glob filter, `context` 0-5 with merged blocks; bounded by matches, line length and output bytes; ignore-aware. |
+| `code_search` | Literal or regex, case flag, glob filter, `context` 0-5 with merged blocks; bounded by matches, line length and output bytes; ignore-aware. A file above 8 MiB is not searched and is named in the output. |
 | `git_diff` | Read-only `status` or unstaged `diff`, optional `path`; 15 s timeout and 32 KiB cap; no permission card. |
 | `shell` | Fixed argv, no shell; allowlisted programs; optional background and `mutates` hint; confirm-only. |
 | `list_dir`, `make_dir`, `move_file`, `delete_file` | Bounded directory and file operations; delete and overwrite keep a trash copy. |

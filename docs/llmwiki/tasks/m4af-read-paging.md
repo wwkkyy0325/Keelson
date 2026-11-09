@@ -26,6 +26,14 @@ Kernel only; the host needed no wiring.
 - `cargo test --workspace`, `clippy -D warnings`, `fmt --check` pass; the tools
   suite is 42 tests.
 
+## Follow-up: search reached less than read
+
+`code_search` skipped every file above 1 MiB silently. A 40,000-line module is
+about 1.2 MB, so it could be read and edited but not searched, and a search
+that found nothing there was indistinguishable from an empty file. The cap is
+now the same 8 MiB as `read_file`, and a skipped file is named in the output.
+A 40,000-line file (1.2 MB) now takes 0.06 s for a ranged read plus an edit.
+
 ## Not in M4af
 
 - A file over 8 MiB still cannot be edited or rewritten: the recorded digest
