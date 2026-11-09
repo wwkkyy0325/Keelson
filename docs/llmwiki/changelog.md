@@ -1484,3 +1484,12 @@ duration line is what makes the cost of a check measurable at all.
   document, renumber `seq`, and reopen the engine, and it would not roll back
   the files the turn changed. The confirm flow for that is a separate change.
 - Verified: 30 desktop tests, clippy, svelte-check 0 errors, 17 frontend tests.
+
+## 2026-11-09 — turn actions sit under the message, as icons
+
+- The action row moved from beside the text to under it, left-aligned under the
+  answer and right-aligned under the question, which is where chat interfaces
+  put them.
+- 复制 and 从这里迁出 are 20px icon buttons with a hover tooltip (`data-tip`,
+  drawn in CSS above the button) and an `aria-label`; a successful copy turns
+  the icon green and its tooltip says 已复制 for a moment.

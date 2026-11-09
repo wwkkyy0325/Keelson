@@ -1219,40 +1219,76 @@ header .title {
   line-height: 1.55;
 }
 
-.turn-line {
+.turn-block {
   display: flex;
-  gap: 0.45rem;
+  flex-direction: column;
+  gap: 0.15rem;
 }
 
-.user-line {
-  justify-content: flex-end;
-  align-items: flex-start;
-}
-
-.answer-line {
-  align-items: flex-start;
-}
-
-.answer-line .answer {
-  flex: 1;
-  min-width: 0;
+.turn-block .user {
+  align-self: flex-end;
 }
 
 .turn-actions {
   display: flex;
-  gap: 0.55rem;
-  white-space: nowrap;
+  gap: 0.2rem;
   visibility: hidden;
 }
 
-.turn-line:hover .turn-actions,
+.user-actions {
+  justify-content: flex-end;
+}
+
+.turn-block:hover .turn-actions,
 .turn-actions:focus-within {
   visibility: visible;
 }
 
 .turn-action {
-  font-size: 0.75rem;
-  padding: 0.2rem 0;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.turn-action:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.turn-action.copied {
+  color: var(--ok);
+}
+
+.turn-action::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.7rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+
+.turn-action:hover::after,
+.turn-action:focus-visible::after {
+  opacity: 1;
 }
 
 .running .answer {

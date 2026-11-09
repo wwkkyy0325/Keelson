@@ -29,36 +29,63 @@
     }
   }
 
-  function copyLabel(key: string): string {
+  function copyTip(key: string): string {
     return copied === key ? $t("turn.copied") : $t("turn.copy");
   }
 </script>
 
 <article class="turn">
-  <div class="turn-line user-line">
-    <div class="turn-actions">
-      <button class="link turn-action" onclick={() => copy(turn.input, "input")}>
-        {copyLabel("input")}
+  <div class="turn-block">
+    <div class="user">{turn.input}</div>
+    <div class="turn-actions user-actions">
+      <button
+        class="turn-action"
+        class:copied={copied === "input"}
+        aria-label={copyTip("input")}
+        data-tip={copyTip("input")}
+        onclick={() => copy(turn.input, "input")}
+      >
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="11" height="11" rx="2" />
+          <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+        </svg>
       </button>
     </div>
-    <div class="user">{turn.input}</div>
   </div>
+
   {#if turn.answer}
-    <div class="turn-line answer-line">
+    <div class="turn-block">
       <div class="answer">{turn.answer}</div>
       <div class="turn-actions">
         <button
-          class="link turn-action"
+          class="turn-action"
+          class:copied={copied === "answer"}
+          aria-label={copyTip("answer")}
+          data-tip={copyTip("answer")}
           onclick={() => copy(turn.answer, "answer")}
         >
-          {copyLabel("answer")}
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="11" height="11" rx="2" />
+            <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+          </svg>
         </button>
-        <button class="link turn-action" onclick={onBranch}>
-          {$t("turn.branch")}
+        <button
+          class="turn-action"
+          aria-label={$t("turn.branch")}
+          data-tip={$t("turn.branch")}
+          onclick={onBranch}
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="6" y1="3" x2="6" y2="15" />
+            <circle cx="18" cy="6" r="3" />
+            <circle cx="6" cy="18" r="3" />
+            <path d="M18 9a9 9 0 0 1-9 9" />
+          </svg>
         </button>
       </div>
     </div>
   {/if}
+
   {#if turn.state !== "Done" && !turn.answer}
     <div class="state">{turn.state}</div>
   {/if}
