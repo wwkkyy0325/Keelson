@@ -24,7 +24,7 @@ workspace, speak LSP, or execute an arbitrary command without permission.
 | `code_search` | Literal or regex, case flag, glob filter, `context` 0-5 with merged blocks; bounded by matches, line length and output bytes; ignore-aware. A file above 8 MiB is not searched and is named in the output. |
 | `git_diff` | Read-only `status` or unstaged `diff`, optional `path`; 15 s timeout and 32 KiB cap; no permission card. |
 | `shell` | Fixed argv, no shell; allowlisted programs; optional background and `mutates` hint; confirm-only. |
-| `list_dir`, `make_dir`, `move_file`, `delete_file` | Bounded directory and file operations; delete and overwrite keep a trash copy. |
+| `list_dir`, `move_file`, `delete_file` | Bounded directory and file operations; delete and overwrite keep a trash copy. The kernel also has `make_dir`, but the coding profiles do not expose it: `write_file` already creates missing parent directories. |
 | `list_trash`, `restore_file` | Inspect and restore recoverable versions. |
 | `todo` | A turn-scoped task list; the kernel continues while it is open. |
 
@@ -88,6 +88,27 @@ interpreter to make a check pass, and mixed-separator test paths. It asks for
 a full read before `write_file`, `line_numbers` when lines matter, `mutates`
 for a writing shell command, `apply_edits` for a cross-file change, a
 `git_diff` review before finishing, and a completed `todo` list in one turn.
+
+## Writing a brief
+
+A turn costs what its brief does. The same rig spent 617.79 s on a one-line bug
+report and 137.20 s on a feature whose five elements were written down.
+
+Say five things:
+
+1. **Goal** — what must be true when the turn ends.
+2. **Where** — the files, modules or symptoms you already know; "start in X"
+   when you do not.
+3. **Constraints** — what must not change: tests, public API, other modules.
+4. **Acceptance** — the check that decides it, when it is more than the suite.
+5. **Evidence** — "run the suite and report the real result" is already the
+   persona; say it when the task is about a specific failing case.
+
+Leave out how to do it. The expensive part of a vague brief is the model
+discovering the requirement space: in the DocFusion run it extracted the clap
+crate source to confirm an enum before editing. A choice the brief leaves open
+is where a turn goes wrong, so the persona now says: keep existing behavior,
+state the assumption in one sentence, and continue.
 
 ## Test matrix
 

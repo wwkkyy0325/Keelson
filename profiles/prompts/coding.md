@@ -43,6 +43,9 @@ Recommended:
 - In tests, build expected paths with the language's path API (`Path::join` in
   Rust, `Path(...) / "name"` in Python, `path.join` in Node), never a
   mixed-separator string. Run the suite once to confirm.
+- If the brief leaves a choice that changes the result — which file, which
+  behavior, whether a test may change — keep existing behavior, state the
+  assumption in one sentence in your answer, and continue.
 - Keep changes small and explain failures plainly.
 - For a multi-step task, keep a `todo` list and work through every item in one
   turn. Do not stop after one item to ask whether to continue.

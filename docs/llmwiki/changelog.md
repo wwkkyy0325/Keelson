@@ -1327,3 +1327,17 @@ duration line is what makes the cost of a check measurable at all.
   rate and mean/median/p95/max, and `--csv` matched the table.
 - Two bookkeeping slips: the task doc still says "(15 tests)" although the suite
   now runs 21, and the new changelog entry reuses 2026-10-21 rather than today.
+
+## 2026-11-09 — closing the first rig for daily use
+
+- Tool count measured rather than guessed: the coding profile exposed 16 tools;
+  across three real runs (DocFusion, ValveGuard, the fixtures) 10 were used and
+  none was chosen wrongly. `make_dir` was the one redundant entry — `write_file`
+  already creates missing parent directories, which is how the DocFusion run
+  created `crates/docfusion-cli/tests/` — so it is no longer visible in either
+  coding profile. The kernel keeps it.
+- Added "Writing a brief" to `coding-rig.md`: goal, where, constraints,
+  acceptance, evidence, with the 617.79 s versus 137.20 s contrast as the
+  reason.
+- Persona: when the brief leaves a choice that changes the result, keep
+  existing behavior, state the assumption in one sentence, and continue.
