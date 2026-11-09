@@ -14,8 +14,10 @@ use std::sync::Arc;
 
 use keel_core::CancelToken;
 use keel_runtime::DeferAllInteractionPort;
-use keelson::engine::{Engine, ModelOverride, OpenRequest, Store};
+use keelson::engine::{Engine, OpenRequest, Store};
 use keelson::rig::Rig;
+
+mod common;
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
@@ -35,12 +37,8 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
 #[tokio::test]
 #[ignore = "needs a live provider key"]
 async fn a_cross_file_rename_uses_apply_edits() {
-    let Some(key) = std::env::var("DEEPSEEK_API_KEY")
-        .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    else {
-        eprintln!("skipping: DEEPSEEK_API_KEY / ANTHROPIC_AUTH_TOKEN is not set");
+    let Some(model) = common::eval_model() else {
+        eprintln!("skipping: set DEEPSEEK_API_KEY or KEELSON_EVAL_BASE_URL");
         return;
     };
 
@@ -68,13 +66,7 @@ async fn a_cross_file_rename_uses_apply_edits() {
         store_path,
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
-        model: Some(ModelOverride {
-            provider: "openai-compatible".to_owned(),
-            model: "deepseek-flash".to_owned(),
-            base_url: Some("https://api.deepseek.com".to_owned()),
-            api_key: key,
-            context_window: Some(1_048_576),
-        }),
+        model: Some(model),
     })
     .expect("the engine opens");
 

@@ -98,6 +98,18 @@ for a writing shell command, `apply_edits` for a cross-file change, a
 | Deterministic evals | `examples/demo-workspace`, `inventory-workspace`, `shop-workspace`, `polyglot-workspace`, `cross-file-workspace`, `messy-workspace`. |
 | Live evals | `coding_eval` (Python two-module), `shop_eval` (Rust multi-file), `polyglot_eval` (Node vs failing Python), `cross_file_eval` (two-file rename), `messy_eval` (1274-line Python plus 570-line Java repair), `real_task_eval` (external copy). |
 
+Live eval record on 2026-11-09 against a local OpenAI-compatible endpoint
+(`q2_0`, 256k window):
+
+| Eval | Result |
+|---|---|
+| `coding_eval` | passed (17.76 s, 12 model calls) |
+| `messy_eval` | passed (132.47 s) — both indentation regions and both braces repaired; python check 0.09 s, `javac` 0.58 s |
+
+The same endpoint held a 256,285-token prompt with a leading needle
+(`4739281`) and answered it correctly; prefill 28.7 s for 187k fresh tokens,
+184 tokens/s decode.
+
 Live eval record on 2026-11-08:
 
 | Eval | Result |

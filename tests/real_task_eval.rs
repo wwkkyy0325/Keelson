@@ -21,8 +21,10 @@ use keel_core::{
     CancelToken, GrantScope, InteractionKind, InteractionPort, InteractionRequest,
     InteractionResponse,
 };
-use keelson::engine::{Engine, ModelOverride, OpenRequest, Store};
+use keelson::engine::{Engine, OpenRequest, Store};
 use keelson::rig::Rig;
+
+mod common;
 
 /// Simulates a user clicking "allow once" for an execution request. Only use
 /// this on a trusted copy; a `shell` call is not sandboxed.
@@ -83,12 +85,8 @@ fn host_changing_commands_are_blocked() {
 #[tokio::test]
 #[ignore = "runs a live turn on KEELSON_TASK_WORKSPACE"]
 async fn run_the_task() {
-    let Some(key) = std::env::var("DEEPSEEK_API_KEY")
-        .or_else(|_| std::env::var("ANTHROPIC_AUTH_TOKEN"))
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    else {
-        eprintln!("skipping: DEEPSEEK_API_KEY / ANTHROPIC_AUTH_TOKEN is not set");
+    let Some(model) = common::eval_model() else {
+        eprintln!("skipping: set DEEPSEEK_API_KEY or KEELSON_EVAL_BASE_URL");
         return;
     };
     let workspace = PathBuf::from(
@@ -141,13 +139,7 @@ async fn run_the_task() {
         store_path,
         interactions: Arc::new(ApproveExecution),
         deltas: None,
-        model: Some(ModelOverride {
-            provider: "openai-compatible".to_owned(),
-            model: "deepseek-flash".to_owned(),
-            base_url: Some("https://api.deepseek.com".to_owned()),
-            api_key: key,
-            context_window: Some(1_048_576),
-        }),
+        model: Some(model),
     })
     .expect("the engine opens");
 

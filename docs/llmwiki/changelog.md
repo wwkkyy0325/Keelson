@@ -1276,3 +1276,15 @@ file that no longer parses or compiles. Before this, a 1274-line file could not
 be read in one call without filling the working set, and could never be
 rewritten after paging. The fixture is the regression test for both, and the
 duration line is what makes the cost of a check measurable at all.
+
+## 2026-11-09 — live evals on a local endpoint
+
+- `tests/common/mod.rs`: every live eval takes its model from
+  `KEELSON_EVAL_BASE_URL`, `KEELSON_EVAL_MODEL`, `KEELSON_EVAL_API_KEY` and
+  `KEELSON_EVAL_CONTEXT`, defaulting to the DeepSeek endpoint. Only
+  `DEEPSEEK_API_KEY` is accepted for that default: an `ANTHROPIC_AUTH_TOKEN`
+  is never sent to another provider.
+- First run against a local `q2_0` server (256k window): `coding_eval` passed
+  in 17.76 s over 12 model calls, `messy_eval` passed in 132.47 s with the
+  1274-line Python module and 570-line Java class both repaired.
+- The endpoint answered a 256,285-token needle prompt correctly.
