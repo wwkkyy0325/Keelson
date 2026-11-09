@@ -17,7 +17,11 @@
   <div class="permission-kind">
     {interaction.kind === "permission_approval"
       ? $t("app.permission")
-      : interaction.kind}
+      : interaction.kind === "clarify"
+        ? $t("app.clarify")
+        : interaction.kind === "choice"
+          ? $t("app.choice")
+          : interaction.kind}
   </div>
   <div class="permission-prompt">{interaction.prompt}</div>
   <div class="permission-options">

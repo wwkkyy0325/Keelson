@@ -1341,3 +1341,21 @@ duration line is what makes the cost of a check measurable at all.
   reason.
 - Persona: when the brief leaves a choice that changes the result, keep
   existing behavior, state the assumption in one sentence, and continue.
+
+## 2026-11-09 — the rig asks when it cannot decide
+
+- The capability was already there: every non-final model call carries the
+  control tool (`clarify`, `choice`, `plan_approval`), the provider turns it
+  into an `InteractionRequest`, the driver routes it to the host, and the
+  desktop renders any interaction with options in `PermissionCard`. Only the
+  persona never used it.
+- Persona: ask once, before editing, with two or three concrete options, when
+  the repository cannot answer a choice that changes the result — which file
+  holds the behavior, whether a test may change, which reading is meant.
+  Otherwise keep existing behavior, state the assumption, and continue.
+- Desktop: `clarify` and `choice` cards are labelled (`需要你的选择` /
+  `请选择一个` and their English pair) instead of printing the raw kind.
+- New live eval `ask_eval`: a brief whose currency decision is not in the
+  repository. The model asked one `choice` with three options and finished the
+  turn with the answer (26.24 s); a second run asked whether the two existing
+  render assertions may change.

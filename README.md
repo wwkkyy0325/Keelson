@@ -256,5 +256,11 @@ broken indentation regions and a 570-line Java class with two unbalanced
 braces. Java has no detector, so its check is declared in
 `.keelson/checks.toml`; the live `messy_eval` repairs both in one turn.
 
+M4ai: the rig can ask. The kernel already offers the model a control tool
+(`clarify`, `choice`, `plan_approval`) and the desktop already renders any
+interaction with options, so a `choice` is a card. The persona asks at most
+once per turn, and only when the repository cannot answer a choice that
+changes the result.
+
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.

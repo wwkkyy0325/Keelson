@@ -106,9 +106,20 @@ Say five things:
 
 Leave out how to do it. The expensive part of a vague brief is the model
 discovering the requirement space: in the DocFusion run it extracted the clap
-crate source to confirm an enum before editing. A choice the brief leaves open
-is where a turn goes wrong, so the persona now says: keep existing behavior,
-state the assumption in one sentence, and continue.
+crate source to confirm an enum before editing.
+
+**The rig can ask.** The kernel offers every non-final model call a control
+tool (`clarify`, `choice`, `plan_approval`); the provider turns the call into an
+`InteractionRequest`, the driver routes it to the host, and the desktop renders
+it as a card with the options. `PermissionCard` answers with the option id, so
+a `choice` needs no new UI.
+
+The persona uses it narrowly: ask once, before editing, only when the
+repository cannot answer a choice that changes the result — which file holds
+the behavior, whether a test may change, which reading of the request is meant.
+Everything else keeps existing behavior, states the assumption, and continues.
+A fixed questionnaire before every turn was rejected: it taxes every small
+task to help a few large ones.
 
 ## Test matrix
 
@@ -117,7 +128,7 @@ state the assumption in one sentence, and continue.
 | Keel kernel | Tool contracts: read ledger, CRLF, multi-edit, apply-edits, glob, regex/context search, ignore walk, shell, trash, verification, turn driver, acceptance selector. |
 | Keelson host | Engines, stores, rig schema, check detection/selection, named ids, git tool, registry, persona/instructions. |
 | Deterministic evals | `examples/demo-workspace`, `inventory-workspace`, `shop-workspace`, `polyglot-workspace`, `cross-file-workspace`, `messy-workspace`. |
-| Live evals | `coding_eval` (Python two-module), `shop_eval` (Rust multi-file), `polyglot_eval` (Node vs failing Python), `cross_file_eval` (two-file rename), `messy_eval` (1274-line Python plus 570-line Java repair), `real_task_eval` (external copy). |
+| Live evals | `coding_eval` (Python two-module), `shop_eval` (Rust multi-file), `polyglot_eval` (Node vs failing Python), `cross_file_eval` (two-file rename), `messy_eval` (1274-line Python plus 570-line Java repair), `ask_eval` (a choice the repository cannot answer), `real_task_eval` (external copy). |
 
 Live eval record on 2026-11-09 against a local OpenAI-compatible endpoint
 (`q2_0`, 256k window):
@@ -128,6 +139,7 @@ Live eval record on 2026-11-09 against a local OpenAI-compatible endpoint
 | `messy_eval` | passed (132.47 s) — both indentation regions and both braces repaired; python check 0.09 s, `javac` 0.58 s |
 | `real_task_eval` on a copied DocFusion | passed (617.79 s) — found and fixed `docfusion` exiting 2 on an argument error, a code its own schema reserves for a partial run; 576 tests and clippy pass, `schema` output unchanged |
 | `real_task_eval` on a copied ValveGuard | passed (137.20 s) — implemented the open `compare_demos.py` harness; three projects were detected (two Cargo, one Python) and only the Python check was selected; 15 passed / 6 skipped after the change |
+| `ask_eval` | passed (26.24 s) — the model asked one `choice` with three options because the brief's currency decision was not in the repository, then finished the turn with the answer |
 
 The same endpoint held a 256,285-token prompt with a leading needle
 (`4739281`) and answered it correctly; prefill 28.7 s for 187k fresh tokens,
