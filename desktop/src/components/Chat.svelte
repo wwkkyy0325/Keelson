@@ -309,7 +309,6 @@
             onSend={send}
             onCancel={cancel}
             onError={(message) => (uiError = message)}
-            showStarters={$session.turns.length === 0 && !$session.running}
             initialDraft={prefillDraft}
           />
         {/key}

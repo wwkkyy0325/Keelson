@@ -1435,37 +1435,13 @@ footer {
   font-size: 0.78rem;
 }
 
-.composer-block {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  max-width: 860px;
-  width: 100%;
-  margin: 0 auto;
-}
-
 .composer {
   display: flex;
   gap: 0.6rem;
   align-items: flex-end;
+  max-width: 860px;
   width: 100%;
-}
-
-.starters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
-
-.starters button {
-  font-size: 0.78rem;
-  padding: 0.3rem 0.7rem;
-  border-radius: 999px;
-  color: var(--muted);
-}
-
-.starters button:hover:not(:disabled) {
-  color: var(--text);
+  margin: 0 auto;
 }
 
 .composer textarea {

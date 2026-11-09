@@ -1506,3 +1506,12 @@ duration line is what makes the cost of a check measurable at all.
 - The starter chips hide as soon as the composer has text, so a branch opens
   with just the turn's input and no suggestions.
 - One new session test.
+
+## 2026-11-09 — the starter suggestions are gone
+
+- The four chips above an empty composer were noise: they never matched the
+  workspace, and after a branch they appeared on top of a prefilled draft. In
+  use they added a decision instead of removing one, so they are removed
+  together with their strings, styles and the `showStarters` prop.
+- The composer is a single row again; an empty conversation is just an empty
+  composer.
