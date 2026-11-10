@@ -2170,3 +2170,12 @@ duration line is what makes the cost of a check measurable at all.
 - `tests/desktop_eval.rs` is the live vision check: a generated red circle,
   `view_image`, and answers must name the colour and the shape and the turn
   must contain a real `view_image` call.
+
+## 2026-11-10 — kernel 0.2.11: tool images follow the tool group
+
+- A live turn failed with `400 Bad Request: An assistant message with
+  'tool_calls' must be followed by tool messages responding to each
+  'tool_call_id'` when a screenshot was captured in the same round as another
+  call. The OpenAI adapter inserted the image message between tool results;
+  it now emits every tool message first and one user image message after the
+  group.
