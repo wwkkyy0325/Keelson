@@ -290,6 +290,7 @@ async fn a_recorded_transcript_replays_through_the_engine() {
         model: Some(model),
         permission: None,
         acceptance: false,
+        search_url: None,
     })
     .expect("the engine opens");
 

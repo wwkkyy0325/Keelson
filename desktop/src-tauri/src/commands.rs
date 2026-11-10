@@ -45,6 +45,8 @@ pub struct SetupState {
     pub key_provider: String,
     pub key_providers: Vec<String>,
     pub manual: Option<config::ManualEndpoint>,
+    /// A SearXNG base URL used when the provider has no search endpoint.
+    pub search_url: Option<String>,
     /// The rig that will run, and every rig the host found.
     pub rig: String,
     pub rigs: Vec<RigOption>,
@@ -178,6 +180,7 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         key_provider: config.key_provider,
         key_providers: config.key_providers,
         manual: config.manual,
+        search_url: config.search_url,
         rig,
         rigs,
         problems: discovery
@@ -221,6 +224,7 @@ pub fn save_key(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn save_model(
     state: State<'_, SharedState>,
     provider: String,
@@ -229,6 +233,7 @@ pub fn save_model(
     base_url: String,
     model: String,
     context: Option<u32>,
+    search_url: Option<String>,
 ) -> Result<(), String> {
     if !matches!(
         provider.as_str(),
@@ -252,6 +257,20 @@ pub fn save_model(
     config.base_url = base_url.trim().to_owned();
     config.model = model.trim().to_owned();
     config.model_context = context.filter(|value| *value > 0);
+    // `Some("")` clears the setting; `None` leaves it as it was, so a caller
+    // that does not own the field (the wizard) cannot erase it.
+    if let Some(url) = search_url.map(|url| url.trim().to_owned()) {
+        if !url.is_empty() {
+            let parsed =
+                reqwest::Url::parse(&url).map_err(|error| format!("搜索服务地址不合法：{error}"))?;
+            if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+                return Err("搜索服务地址必须是 http(s) URL".to_owned());
+            }
+            config.search_url = Some(url);
+        } else {
+            config.search_url = None;
+        }
+    }
     if config.provider_id == "custom" {
         config.manual = Some(config::ManualEndpoint {
             provider: config.provider.clone(),
@@ -588,6 +607,7 @@ async fn open_inner(
         model,
         permission: config.permission.as_deref().and_then(permission_level),
         acceptance: true,
+        search_url: config.search_url.clone(),
     })
     .map_err(|error| error.to_string())?;
     let engine = Arc::new(engine);

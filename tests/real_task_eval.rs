@@ -142,6 +142,7 @@ async fn run_the_task() {
         model: Some(model),
         permission: None,
         acceptance: true,
+        search_url: None,
     })
     .expect("the engine opens");
 

@@ -31,9 +31,12 @@ desktop/         Tauri shell + Svelte frontend            (the only face)
   no theme picker.
 - Do not add a terminal UI or keep a hidden fallback face. A second face
   returns only with a concrete need and a new ADR.
-- The only non-model network request is the models.dev catalog in
-  `desktop/src-tauri/src/catalog.rs`. It is metadata only, cached, and its
-  provider endpoints stay fixed in code (ADR 0005).
+- Non-model network requests are narrow and named: the models.dev catalog in
+  `desktop/src-tauri/src/catalog.rs` (metadata only, cached, fixed provider
+  endpoints, ADR 0005) and the web tools (ADR 0038) — the provider's
+  search/fetch endpoints on the chat key, a configured SearXNG URL, or a
+  plain HTTP fetch. A rig's `tools.visible` list decides whether the web tools
+  exist at all.
 - Conversation storage is per project: one document per conversation under
   `<state>/sessions/<workspace-hash>/` plus a reconciled `index.json`
   (ADR 0006). The document owns the title and archive flag; the index mirrors

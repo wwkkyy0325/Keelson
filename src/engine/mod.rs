@@ -6,6 +6,7 @@
 mod git;
 mod history;
 mod store;
+mod web;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -61,6 +62,9 @@ pub struct OpenRequest {
     /// A host that measures the conversation, not the project, can turn them
     /// off; the desktop always keeps them on.
     pub acceptance: bool,
+    /// A SearXNG base URL, used for web search when the model provider has no
+    /// search endpoint of its own. A provider endpoint always wins.
+    pub search_url: Option<String>,
 }
 
 /// One piece of model output streamed to the host. Thinking is separate from
@@ -333,6 +337,7 @@ impl Engine {
             model,
             permission,
             acceptance,
+            search_url,
         } = request;
 
         let rig_name = rig.name.clone();
@@ -422,6 +427,20 @@ impl Engine {
         let background = Arc::new(
             LocalBackgroundTasks::new(outputs_dir.join("background")).with_events(events.clone()),
         );
+        // A provider that serves search and fetch tools gets them on the same
+        // key as the chat API; otherwise a configured SearXNG URL is the
+        // search backend, and the local fetch is always available.
+        let web = web::WebBackend::resolve(
+            model
+                .as_ref()
+                .and_then(|over| over.base_url.as_deref())
+                .or(config.model_base_url.as_deref()),
+            model
+                .as_ref()
+                .map(|over| over.api_key.as_str())
+                .unwrap_or(""),
+            search_url.as_deref(),
+        );
         let session = Arc::new(Mutex::new(session));
         let registry = Arc::new(tools(
             &project_dir,
@@ -429,7 +448,15 @@ impl Engine {
             todos.clone(),
             background.clone(),
             session.clone(),
+            web.clone(),
         )?);
+        if web.is_none() {
+            // A profile may list web_search; without a provider endpoint the
+            // tool is not registered and must not fail validation.
+            config
+                .visible_tool_names
+                .retain(|name| name != "web_search");
+        }
         let context = ContextBuilder::new(vec![
             Arc::new(SystemStage::new()),
             Arc::new(TaskStateStage::new()),
@@ -1464,6 +1491,7 @@ fn tools(
     todos: Arc<Mutex<TodoList>>,
     background: Arc<dyn BackgroundTasks>,
     session: Arc<Mutex<StoredSession>>,
+    web: Option<web::WebBackend>,
 ) -> Result<ToolRegistry, KernelError> {
     let trash = Arc::new(LocalTrashStore::at(project_dir.join("trash")));
     // One ledger per engine: a write or edit must follow a current read.
@@ -1499,6 +1527,10 @@ fn tools(
     registry.register(Arc::new(RestoreFileTool::new(trash)))?;
     registry.register(Arc::new(TodoTool::new(todos)))?;
     registry.register(Arc::new(history::SearchHistoryTool::new(session)))?;
+    registry.register(Arc::new(web::WebFetchTool::new(web.clone())))?;
+    if let Some(backend) = web {
+        registry.register(Arc::new(web::WebSearchTool::new(backend)))?;
+    }
     Ok(registry)
 }
 
@@ -1756,6 +1788,7 @@ system = "prompt.md"
                 model: None,
                 permission: None,
                 acceptance: true,
+                search_url: None,
             })
             .expect("the engine opens")
         }
@@ -1910,6 +1943,7 @@ system = "prompt.md"
             }),
             permission: None,
             acceptance: true,
+            search_url: None,
         })
         .expect("the engine opens");
 
@@ -2044,11 +2078,63 @@ system = "prompt.md"
             }),
             permission: None,
             acceptance: true,
+            search_url: None,
         })
         .expect("the engine opens");
 
         assert_eq!(engine.config().context.budget_tokens, 32_000 - 8192);
         assert_eq!(engine.config().context_window, 32_000);
+    }
+
+    #[test]
+    fn web_search_is_visible_only_with_a_provider_endpoint() {
+        for (base_url, expected) in [
+            ("https://api.deepseek.com", true),
+            ("http://192.168.3.132:18081/v1", false),
+        ] {
+            let fixture = Fixture::new();
+            let profile = PROFILE.replace(
+                "visible = [\"echo\"]",
+                "visible = [\"echo\", \"web_search\", \"web_fetch\"]",
+            );
+            std::fs::write(fixture.dir.path().join("web-profile.toml"), profile)
+                .expect("a profile");
+            let mut rig = fixture.rig();
+            rig.profile = fixture.dir.path().join("web-profile.toml");
+            let engine = Engine::open(OpenRequest {
+                rig,
+                workspace: fixture.dir.path().join("workspace"),
+                state_dir: fixture.dir.path().join("state"),
+                store_path: fixture.dir.path().join("state/sessions/test.json"),
+                interactions: Arc::new(DeferAllInteractionPort),
+                deltas: None,
+                model: Some(ModelOverride {
+                    provider: "mock".to_owned(),
+                    model: "mock".to_owned(),
+                    base_url: Some(base_url.to_owned()),
+                    api_key: "test".to_owned(),
+                    context_window: None,
+                }),
+                permission: None,
+                acceptance: false,
+                search_url: None,
+            })
+            .expect("the engine opens");
+            let visible = engine
+                .config()
+                .visible_tool_names
+                .iter()
+                .any(|name| name == "web_search");
+            assert_eq!(visible, expected, "{base_url}");
+            assert!(
+                engine
+                    .config()
+                    .visible_tool_names
+                    .iter()
+                    .any(|name| name == "web_fetch"),
+                "the local fetch is always visible when listed"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2114,8 +2200,15 @@ system = "prompt.md"
             todos: None,
             turns: Vec::new(),
         }));
-        let registry = tools(fixture.dir.path(), &config, todos, background, session)
-            .expect("the registry builds");
+        let registry = tools(
+            fixture.dir.path(),
+            &config,
+            todos,
+            background,
+            session,
+            None,
+        )
+        .expect("the registry builds");
 
         assert!(registry.get("edit_file").is_some());
         assert!(registry.get("multi_edit").is_some());
@@ -2931,6 +3024,7 @@ system = "prompt.md"
             model: None,
             permission: None,
             acceptance: true,
+            search_url: None,
         })
         .expect("the engine opens");
 

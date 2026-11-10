@@ -40,6 +40,7 @@ export function saveModel(
   baseUrl: string,
   model: string,
   context: number | null,
+  searchUrl: string | null = null,
 ): Promise<void> {
   return invoke("save_model", {
     provider,
@@ -48,6 +49,7 @@ export function saveModel(
     baseUrl,
     model,
     context,
+    searchUrl,
   });
 }
 

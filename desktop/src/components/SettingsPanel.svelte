@@ -31,6 +31,7 @@
     baseUrl: string;
     model: string;
     rig: string;
+    searchUrl: string;
   };
 
   let setup = $state<SetupState | null>(null);
@@ -49,6 +50,8 @@
   let baseUrl = $state("");
   let modelName = $state("");
   let keyDraft = $state("");
+  /// A SearXNG base URL for models whose provider has no search endpoint.
+  let searchUrl = $state("");
   let rigName = $state("");
   let revealKey = $state(false);
   let busy = $state(false);
@@ -111,7 +114,8 @@
           activeProviderId !== saved.providerId ||
           activeBaseUrl !== saved.baseUrl ||
           activeModel !== saved.model ||
-          rigName !== saved.rig)),
+          rigName !== saved.rig ||
+          searchUrl.trim() !== saved.searchUrl)),
   );
 
   onMount(async () => {
@@ -124,7 +128,9 @@
         baseUrl: state.baseUrl,
         model: state.model,
         rig: state.rig,
+        searchUrl: state.searchUrl ?? "",
       };
+      searchUrl = state.searchUrl ?? "";
       providerKind =
         state.provider === "anthropic-compatible"
           ? "anthropic-compatible"
@@ -257,6 +263,7 @@
         activeBaseUrl,
         activeModel,
         manual ? null : (selectedModel?.context ?? null),
+        searchUrl.trim(),
       );
       // The rig is part of the same form: choosing it must not save and close
       // on its own, and one reconnect covers both settings.
@@ -277,6 +284,7 @@
         baseUrl: activeBaseUrl,
         model: activeModel,
         rig: rigName,
+        searchUrl: searchUrl.trim(),
       };
       pendingApply = false;
       onClose();
@@ -375,7 +383,17 @@
                 spellcheck="false"
               />
             </label>
+            <label>
+              <span>{$t("settings.search")}</span>
+              <input
+                bind:value={searchUrl}
+                disabled={providerKind === "mock"}
+                placeholder={$t("settings.searchPlaceholder")}
+                spellcheck="false"
+              />
+            </label>
           </div>
+          <p class="hint">{$t("settings.searchHint")}</p>
         {:else}
           <ModelPicker
             catalog={catalog}

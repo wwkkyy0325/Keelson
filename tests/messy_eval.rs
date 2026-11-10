@@ -72,6 +72,7 @@ async fn a_large_messy_workspace_is_repaired() {
         model: Some(model),
         permission: None,
         acceptance: true,
+        search_url: None,
     })
     .expect("the engine opens");
 

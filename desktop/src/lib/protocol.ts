@@ -115,6 +115,8 @@ export type SetupState = {
   keyProvider: string;
   keyProviders: string[];
   manual?: { provider: string; baseUrl: string; model: string } | null;
+  /// A SearXNG base URL for models whose provider has no search endpoint.
+  searchUrl?: string | null;
   rig: string;
   rigs: { name: string; title: string; description: string }[];
   problems: string[];

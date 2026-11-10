@@ -107,6 +107,7 @@ async fn an_ambiguous_brief_makes_the_model_ask() {
         model: Some(model),
         permission: None,
         acceptance: true,
+        search_url: None,
     })
     .expect("the engine opens");
 

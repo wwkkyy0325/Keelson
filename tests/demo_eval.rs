@@ -100,6 +100,7 @@ async fn demo_workspace_is_repaired_by_the_coding_rig() {
         model: Some(model),
         permission: None,
         acceptance: true,
+        search_url: None,
     })
     .expect("the engine opens");
 

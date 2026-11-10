@@ -81,6 +81,7 @@ async fn a_discount_is_added_across_two_modules() {
         model: Some(model),
         permission: None,
         acceptance: true,
+        search_url: None,
     })
     .expect("the engine opens");
 

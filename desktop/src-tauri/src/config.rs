@@ -59,6 +59,9 @@ pub struct DesktopConfig {
     /// A host permission override (`workspace_auto` or `full_auto`). `None`
     /// keeps the rig profile's level.
     pub permission: Option<String>,
+    /// A SearXNG base URL for web search when the model provider has no
+    /// search endpoint of its own. Not a secret.
+    pub search_url: Option<String>,
 }
 
 impl Default for DesktopConfig {
@@ -79,6 +82,7 @@ impl Default for DesktopConfig {
             manual: None,
             rig: String::new(),
             permission: None,
+            search_url: None,
         }
     }
 }

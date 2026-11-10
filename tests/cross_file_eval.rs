@@ -69,6 +69,7 @@ async fn a_cross_file_rename_uses_apply_edits() {
         model: Some(model),
         permission: None,
         acceptance: true,
+        search_url: None,
     })
     .expect("the engine opens");
 

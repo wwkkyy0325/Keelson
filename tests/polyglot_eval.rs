@@ -71,6 +71,7 @@ async fn a_frontend_change_skips_the_python_check() {
         model: Some(model),
         permission: None,
         acceptance: true,
+        search_url: None,
     })
     .expect("the engine opens");
 

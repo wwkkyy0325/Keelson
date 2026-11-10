@@ -15,7 +15,7 @@ budget_tokens = 64000
 max_budget_tokens = 262144
 
 [tools]
-visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", "list_trash", "restore_file", "list_dir", "glob", "code_search", "git_diff", "move_file", "delete_file", "shell", "todo", "search_history"]
+visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", "list_trash", "restore_file", "list_dir", "glob", "code_search", "git_diff", "move_file", "delete_file", "shell", "todo", "search_history", "web_search", "web_fetch"]
 budget = 1000
 
 [verification]

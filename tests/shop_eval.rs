@@ -86,6 +86,7 @@ async fn the_discount_feature_crosses_the_shop() {
         model: Some(model),
         permission: None,
         acceptance: true,
+        search_url: None,
     })
     .expect("the engine opens");
 
