@@ -113,9 +113,31 @@
           searchUrl.trim() !== saved.searchUrl)),
   );
 
+  /// A backend command that never answers (a restart, a stuck command) must
+  /// not leave the panel spinning forever; the error names the retry.
+  function withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    message: string,
+  ): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(message)), ms),
+      ),
+    ]);
+  }
+
   onMount(async () => {
+    // The model list does not depend on the setup state, so it starts first;
+    // a slow or restarting backend cannot hold the picker hostage.
+    const catalogTask = loadCatalog(false);
     try {
-      const state = await setupState();
+      const state = await withTimeout(
+        setupState(),
+        8000,
+        "设置加载超时；请关闭后重试",
+      );
       setup = state;
       saved = {
         kind: state.provider,
@@ -133,9 +155,10 @@
       baseUrl = state.baseUrl;
       modelName = state.model;
       rigName = state.rig;
-      await loadCatalog(false, state);
+      const value = await catalogTask;
+      if (value) applySelection(value, state);
       // The cached list is on screen; revalidate behind it when it is stale.
-      if (catalog?.stale) void loadCatalog(true, state);
+      if (value?.stale) void loadCatalog(true, state);
     } catch (cause) {
       error = errText(cause);
       catalogLoading = false;
@@ -146,30 +169,40 @@
 
   async function loadCatalog(
     refresh: boolean,
-    state = setup,
-  ): Promise<void> {
+    state: SetupState | null = setup,
+  ): Promise<ModelCatalog | null> {
     if (refresh) catalogRefreshing = true;
     else catalogLoading = true;
     catalogError = null;
     try {
-      const value = await modelCatalog(refresh);
+      const value = await withTimeout(
+        modelCatalog(refresh),
+        8000,
+        "模型列表加载超时；请点刷新重试",
+      );
       catalog = value;
-      if (state) {
-        const current = findSelection(value, selectedProviderId, selectedModelId);
-        if (current) return;
-        const choice = defaultSelection(value, state, !state.model);
-        if (choice) {
-          choose(choice);
-        } else if (!manual) {
-          manual = true;
-        }
-      }
+      if (state) applySelection(value, state);
+      return value;
     } catch (cause) {
       catalogError = errText(cause);
       if (!catalog) manual = true;
+      return null;
     } finally {
       catalogLoading = false;
       catalogRefreshing = false;
+    }
+  }
+
+  /// Picks a model from the catalog for the saved connection, or falls back
+  /// to the manual fields when nothing matches.
+  function applySelection(value: ModelCatalog, state: SetupState): void {
+    const current = findSelection(value, selectedProviderId, selectedModelId);
+    if (current) return;
+    const choice = defaultSelection(value, state, !state.model);
+    if (choice) {
+      choose(choice);
+    } else if (!manual) {
+      manual = true;
     }
   }
 

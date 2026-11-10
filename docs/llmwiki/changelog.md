@@ -1998,3 +1998,15 @@ duration line is what makes the cost of a check measurable at all.
 - The eval suite keeps the mock only as a test fixture
   (`tests/fixtures/coding-rig.toml` plus `profiles/coding.toml`), which no
   rig directory exposes.
+
+## 2026-11-10 — streamed deltas, scrolling and the settings load
+
+- Chat's change and status effects read the session store directly; a
+  writable store re-runs such an effect on every value, so each streamed
+  token invoked `turn_changes` and `session_status`. They now depend on
+  derived primitives and run the loads untracked, so the backend is called
+  only when the conversation, the checkpoint or the status really changes.
+- The transcript follows the stream at most once per animation frame.
+- Settings starts the catalog load independently of `setup_state`, and both
+  calls time out after eight seconds with an error, so a restarting backend
+  cannot leave the model and rig lists spinning forever.

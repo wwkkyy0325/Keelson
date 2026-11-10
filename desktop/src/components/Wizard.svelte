@@ -113,12 +113,29 @@
     });
   });
 
+  function withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    message: string,
+  ): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(message)), ms),
+      ),
+    ]);
+  }
+
   async function loadCatalog(refresh: boolean): Promise<void> {
     if (refresh) catalogRefreshing = true;
     else catalogLoading = true;
     catalogError = null;
     try {
-      const value = await modelCatalog(refresh);
+      const value = await withTimeout(
+        modelCatalog(refresh),
+        8000,
+        "模型列表加载超时；请点刷新重试",
+      );
       catalog = value;
       const current = findSelection(value, selectedProviderId, selectedModelId);
       if (current) return;

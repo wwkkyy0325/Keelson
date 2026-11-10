@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import {
     archiveSession,
     backgroundTasks,
@@ -92,35 +93,43 @@
   let status = $state<SessionStatus | null>(null);
 
   $effect(() => {
-    $session.sessionId;
-    $session.turns.length;
+    activeSessionId;
+    turnCount;
     undoDone = false;
     confirmUndo = false;
   });
+
+  // The store changes on every streamed delta; reading it from an effect would
+  // run that effect (and its backend calls) for each token. These derived
+  // values notify only when they really change.
+  let activeSessionId = $derived($session.sessionId);
+  let turnCount = $derived($session.turns.length);
+  let sessionEpoch = $derived($session.epoch);
+  let changesEpoch = $derived($session.changesEpoch);
+  let changedSeq = $derived($session.changedSeq);
 
   // The change summary is the checkpoint diff, not a guess from the tool
   // names: a turn that wrote nothing has nothing to undo. The epoch covers a
   // reconnect that keeps the same conversation id.
   $effect(() => {
-    const epoch = $session.epoch;
-    const count = $session.turns.length;
-    const pendingChanges = $session.changesEpoch;
-    const undone = undoDone;
-    void epoch;
-    void count;
-    void pendingChanges;
-    void undone;
-    void loadChanges();
+    void sessionEpoch;
+    void turnCount;
+    void changesEpoch;
+    void changedSeq;
+    void undoDone;
+    untrack(() => {
+      void loadChanges();
+    });
   });
 
   // Same trigger for the status line: it reads the engine's permission and
   // context, so every open and every finished turn refreshes it.
   $effect(() => {
-    const epoch = $session.epoch;
-    const count = $session.turns.length;
-    void epoch;
-    void count;
-    void loadStatus();
+    void sessionEpoch;
+    void turnCount;
+    untrack(() => {
+      void loadStatus();
+    });
   });
 
   async function loadChanges(): Promise<void> {

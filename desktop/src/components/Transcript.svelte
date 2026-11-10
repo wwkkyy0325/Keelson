@@ -95,18 +95,29 @@
     }, 80);
   });
 
-  // Keep the last message in view unless the user scrolled up.
+  // Keep the last message in view unless the user scrolled up. The effect
+  // runs for every delta; one scroll per frame is enough and keeps the
+  // scrollbar smooth while the answer grows.
+  let followQueued = false;
+
+  function follow(): void {
+    if (followQueued) return;
+    followQueued = true;
+    requestAnimationFrame(() => {
+      followQueued = false;
+      if (scroller && stick && !suppressAutoScroll) {
+        scroller.scrollTop = scroller.scrollHeight;
+      }
+    });
+  }
+
   $effect(() => {
     const current = $session;
     const failure = error;
     if (suppressAutoScroll || !stick || !scroller) return;
     void current;
     void failure;
-    tick().then(() => {
-      if (scroller && stick && !suppressAutoScroll) {
-        scroller.scrollTop = scroller.scrollHeight;
-      }
-    });
+    follow();
   });
 
   let lastTop = 0;
