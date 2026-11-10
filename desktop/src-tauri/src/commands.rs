@@ -222,6 +222,13 @@ pub struct Attachment {
 
 const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
 const MAX_ATTACHMENTS: usize = 10;
+/// A folder is a read-only snapshot, not a working copy. These bounds keep a
+/// drop from turning into a multi-gigabyte copy; past them the right move is
+/// to open the folder as the workspace.
+const MAX_FOLDER_FILES: usize = 200;
+const MAX_FOLDER_BYTES: u64 = 200 * 1024 * 1024;
+const MAX_FOLDER_DEPTH: usize = 8;
+const MAX_BATCH_BYTES: u64 = 400 * 1024 * 1024;
 
 /// Attachments live in the host state directory, not in the workspace: a drop
 /// must not appear as a change the turn made, and undo must not delete it.
@@ -306,6 +313,164 @@ async fn copy_attachment(dir: &Path, source: &Path, max_bytes: u64) -> Result<At
             .unwrap_or(name),
         path: display_path(&destination),
         size: metadata.len(),
+    })
+}
+
+/// A tree's bounds. `collect_tree` enforces them while walking, so an
+/// oversized folder fails before anything is copied.
+struct TreeLimits {
+    files: usize,
+    bytes: u64,
+    depth: usize,
+}
+
+/// The files under `root` as `(relative path, bytes)`, sorted, with symlinks
+/// and `.git` skipped.
+fn collect_tree(root: &Path, limits: &TreeLimits) -> Result<(Vec<(String, u64)>, u64), String> {
+    fn walk(
+        root: &Path,
+        dir: &Path,
+        depth: usize,
+        limits: &TreeLimits,
+        entries: &mut Vec<(String, u64)>,
+        total: &mut u64,
+    ) -> Result<(), String> {
+        if depth > limits.depth {
+            return Err(format!(
+                "{} 的目录层级超过 {} 层",
+                root.display(),
+                limits.depth
+            ));
+        }
+        let mut listing = std::fs::read_dir(dir)
+            .map_err(|error| format!("无法读取 {}：{error}", dir.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法读取 {}：{error}", dir.display()))?;
+        listing.sort_by_key(|entry| entry.file_name());
+        for entry in listing {
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("无法读取 {}：{error}", path.display()))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                if entry.file_name().to_string_lossy() == ".git" {
+                    continue;
+                }
+                walk(root, &path, depth + 1, limits, entries, total)?;
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
+            let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+            *total += size;
+            if entries.len() + 1 > limits.files {
+                return Err(format!(
+                    "{} 的文件数超过 {}，无法作为附件；请把该目录作为工作区打开",
+                    root.display(),
+                    limits.files
+                ));
+            }
+            if *total > limits.bytes {
+                return Err(format!(
+                    "{} 超过 {} MB，无法作为附件；请把该目录作为工作区打开",
+                    root.display(),
+                    limits.bytes / (1024 * 1024)
+                ));
+            }
+            entries.push((relative, size));
+        }
+        Ok(())
+    }
+
+    let mut entries = Vec::new();
+    let mut total = 0u64;
+    walk(root, root, 0, limits, &mut entries, &mut total)?;
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok((entries, total))
+}
+
+/// Two trees are the same when every relative path has the same bytes.
+fn same_tree(left: &Path, right: &Path) -> bool {
+    let open = TreeLimits {
+        files: usize::MAX,
+        bytes: u64::MAX,
+        depth: usize::MAX,
+    };
+    let Ok((left_entries, _)) = collect_tree(left, &open) else {
+        return false;
+    };
+    let Ok((right_entries, _)) = collect_tree(right, &open) else {
+        return false;
+    };
+    if left_entries.len() != right_entries.len() {
+        return false;
+    }
+    left_entries.iter().zip(right_entries.iter()).all(
+        |((left_rel, left_size), (right_rel, right_size))| {
+            left_rel == right_rel
+                && left_size == right_size
+                && std::fs::read(left.join(left_rel)).ok()
+                    == std::fs::read(right.join(right_rel)).ok()
+        },
+    )
+}
+
+fn copy_folder(dir: &Path, source: &Path) -> Result<Attachment, String> {
+    let (entries, total) = collect_tree(
+        source,
+        &TreeLimits {
+            files: MAX_FOLDER_FILES,
+            bytes: MAX_FOLDER_BYTES,
+            depth: MAX_FOLDER_DEPTH,
+        },
+    )?;
+    let name = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| format!("无法从 {} 取目录名", source.display()))?;
+    std::fs::create_dir_all(dir)
+        .map_err(|error| format!("无法创建附件目录 {}：{error}", dir.display()))?;
+
+    // The same unchanged folder dropped again reuses its snapshot; a changed
+    // one gets a number, exactly like a file.
+    let same_name = dir.join(&name);
+    if same_name.is_dir() && same_tree(source, &same_name) {
+        return Ok(Attachment {
+            name,
+            path: display_path(&same_name),
+            size: total,
+        });
+    }
+    let destination = unique_name(dir, &name);
+    std::fs::create_dir_all(&destination)
+        .map_err(|error| format!("无法创建 {}：{error}", destination.display()))?;
+    for (relative, _) in &entries {
+        let from = source.join(relative);
+        let to = destination.join(relative);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("无法创建 {}：{error}", parent.display()))?;
+        }
+        std::fs::copy(&from, &to)
+            .map_err(|error| format!("无法复制 {}：{error}", from.display()))?;
+    }
+    Ok(Attachment {
+        name: destination
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or(name),
+        path: display_path(&destination),
+        size: total,
     })
 }
 
@@ -570,21 +735,49 @@ pub async fn attach_files(
         return Err("会话 id 不合法".to_owned());
     }
     if paths.len() > MAX_ATTACHMENTS {
-        return Err(format!("一次最多添加 {MAX_ATTACHMENTS} 个文件"));
+        return Err(format!("一次最多添加 {MAX_ATTACHMENTS} 个文件或文件夹"));
     }
     let state = state.inner().clone();
     let workspace = resolve_workspace(&state, workspace);
     let state_dir = state_dir_for(&workspace);
     let dir = attachments_dir(&state_dir, &workspace, &session_id);
 
+    enum Planned {
+        File(PathBuf),
+        Folder(PathBuf),
+    }
+
     let mut planned = Vec::new();
+    let mut batch_bytes = 0u64;
     for path in &paths {
         let source = PathBuf::from(path);
         let metadata = tokio::fs::metadata(&source)
             .await
             .map_err(|error| format!("无法读取 {}：{error}", source.display()))?;
+        if source
+            .file_name()
+            .map(|name| name.to_string_lossy().trim().is_empty())
+            .unwrap_or(true)
+        {
+            return Err(format!("无法从 {} 取名字", source.display()));
+        }
+        if metadata.is_dir() {
+            // Walking now means a folder over a limit fails before anything is
+            // copied, and its size counts toward the batch.
+            let (_, total) = collect_tree(
+                &source,
+                &TreeLimits {
+                    files: MAX_FOLDER_FILES,
+                    bytes: MAX_FOLDER_BYTES,
+                    depth: MAX_FOLDER_DEPTH,
+                },
+            )?;
+            batch_bytes += total;
+            planned.push(Planned::Folder(source));
+            continue;
+        }
         if !metadata.is_file() {
-            return Err(format!("{} 不是文件", source.display()));
+            return Err(format!("{} 既不是文件也不是文件夹", source.display()));
         }
         if metadata.len() > MAX_ATTACHMENT_BYTES {
             return Err(format!(
@@ -593,19 +786,24 @@ pub async fn attach_files(
                 MAX_ATTACHMENT_BYTES / (1024 * 1024)
             ));
         }
-        if source
-            .file_name()
-            .map(|name| name.to_string_lossy().trim().is_empty())
-            .unwrap_or(true)
-        {
-            return Err(format!("无法从 {} 取文件名", source.display()));
-        }
-        planned.push(source);
+        batch_bytes += metadata.len();
+        planned.push(Planned::File(source));
+    }
+    if batch_bytes > MAX_BATCH_BYTES {
+        return Err(format!(
+            "这一批附件超过 {} MB，无法一次复制",
+            MAX_BATCH_BYTES / (1024 * 1024)
+        ));
     }
 
     let mut added = Vec::with_capacity(planned.len());
-    for source in planned {
-        added.push(copy_attachment(&dir, &source, MAX_ATTACHMENT_BYTES).await?);
+    for plan in planned {
+        match plan {
+            Planned::File(source) => {
+                added.push(copy_attachment(&dir, &source, MAX_ATTACHMENT_BYTES).await?)
+            }
+            Planned::Folder(source) => added.push(copy_folder(&dir, &source)?),
+        }
     }
     Ok(added)
 }
@@ -1548,7 +1746,9 @@ fn normalized(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_attachment, rig_for_session};
+    use std::path::Path;
+
+    use super::{collect_tree, copy_attachment, copy_folder, rig_for_session};
     use crate::sessions::SessionMeta;
 
     fn meta(id: &str, rig: &str) -> SessionMeta {
@@ -1606,6 +1806,61 @@ mod tests {
             std::fs::read_to_string(&changed.path).expect("the copy"),
             "hello again"
         );
+    }
+
+    #[test]
+    fn a_folder_is_copied_with_its_structure_and_reused() {
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let source = temp.path().join("docs");
+        std::fs::create_dir_all(source.join("sub")).expect("the sub folder");
+        std::fs::write(source.join("a.md"), "alpha").expect("the note");
+        std::fs::write(source.join("sub/b.txt"), "beta").expect("the leaf");
+        let dir = temp.path().join("attachments");
+
+        let first = copy_folder(&dir, &source).expect("the first copy");
+        assert_eq!(first.name, "docs");
+        assert_eq!(first.size, 9);
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&first.path).join("a.md")).expect("the note"),
+            "alpha"
+        );
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&first.path).join("sub/b.txt")).expect("the leaf"),
+            "beta"
+        );
+
+        let again = copy_folder(&dir, &source).expect("the same folder");
+        assert_eq!(again.path, first.path);
+
+        std::fs::write(source.join("a.md"), "alpha changed").expect("the edit");
+        let changed = copy_folder(&dir, &source).expect("the changed folder");
+        assert_eq!(changed.name, "docs (2)");
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&changed.path).join("a.md")).expect("the note"),
+            "alpha changed"
+        );
+    }
+
+    #[test]
+    fn a_folder_over_the_file_limit_is_refused() {
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let source = temp.path().join("many");
+        std::fs::create_dir_all(&source).expect("the folder");
+        for index in 0..3 {
+            std::fs::write(source.join(format!("{index}.txt")), "x").expect("a file");
+        }
+
+        let error = collect_tree(
+            &source,
+            &super::TreeLimits {
+                files: 2,
+                bytes: u64::MAX,
+                depth: 8,
+            },
+        )
+        .expect_err("over the file limit");
+
+        assert!(error.contains("文件数"), "{error}");
     }
 
     #[tokio::test]

@@ -100,8 +100,8 @@ src/lib.rs engine: turn loop, permissions, storage, tools   (no UI types)
   conversation is one JSON document under
   `<state>/sessions/<workspace-hash>/` with an opaque, immutable id; title and
   archive flag live in the document, and `index.json` is a listing cache
-  reconciled against the directory (ADR 0006). The composer takes files by
-  paperclip or a window drop; each is copied into
+  reconciled against the directory (ADR 0006). The composer takes files or
+  folders by picker or a window drop; each is copied into
   `<state>/attachments/<workspace-key>/<session-id>/`, a read-only root added
   when the conversation opens, and the message carries the copied paths
   (ADR 0041). A running turn blocks

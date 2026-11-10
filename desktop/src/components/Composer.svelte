@@ -111,6 +111,20 @@
     }
   }
 
+  async function pickFolder(): Promise<void> {
+    try {
+      const picked = await openDialog({
+        directory: true,
+        multiple: true,
+        title: $t("app.attachFolder"),
+      });
+      if (!picked) return;
+      addPaths(Array.isArray(picked) ? picked : [picked]);
+    } catch (error) {
+      onError(errText(error));
+    }
+  }
+
   function removeAttachment(source: string): void {
     pending = pending.filter((file) => file.source !== source);
   }
@@ -265,6 +279,26 @@
         <path
           d="M21 12.5 12.2 21.3a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"
         />
+      </svg>
+    </button>
+    <button
+      class="icon attach"
+      onclick={pickFolder}
+      disabled={!onAttach}
+      aria-label={$t("app.attachFolder")}
+      title={$t("app.attachFolder")}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="15"
+        height="15"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
       </svg>
     </button>
     {#if running}

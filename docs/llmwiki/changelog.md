@@ -2106,3 +2106,13 @@ duration line is what makes the cost of a check measurable at all.
 - The same source path is one chip. Sending an unchanged file again reuses
   the existing copy instead of numbering a duplicate; only a changed file
   with the same name becomes `notes (2).txt` (ADR 0041, amended).
+
+## 2026-11-10 — folders as bounded attachment snapshots
+
+- A dropped or picked folder is copied as a tree (symlinks and `.git`
+  skipped) up to 200 files, 200 MB, 8 levels and 400 MB per batch. Past those
+  bounds the copy is refused with the suggestion to open the folder as the
+  workspace: attachments are read-only, so a directory meant to be reorganised
+  belongs there.
+- An unchanged folder reuses its snapshot; a changed one is numbered, the same
+  rule as a file. The composer gains a folder picker beside the file picker.

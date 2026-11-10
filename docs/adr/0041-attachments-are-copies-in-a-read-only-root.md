@@ -35,8 +35,14 @@ allowed to reach it, and what an image means.
    schema.
 5. **Limits:** 50 MB per file, 10 files per message. A batch is validated
    before anything is copied, so a rejected file leaves no partial set.
-6. **Deleting a conversation deletes its attachment folder.**
-7. **An image is just a file today.** The kernel's `Message.content` is a
+6. **A folder is a bounded snapshot.** Dropping a directory copies its tree
+   (symlinks and `.git` skipped) up to 200 files, 200 MB and 8 levels, and
+   the batch as a whole up to 400 MB. Past those bounds the copy is refused
+   with the suggestion to open the folder as the workspace: an attachment is
+   read-only, so a directory that is meant to be reorganised belongs on the
+   workspace side, not here. The same unchanged folder reuses its snapshot.
+7. **Deleting a conversation deletes its attachment folder.**
+8. **An image is just a file today.** The kernel's `Message.content` is a
    string and both adapters send text blocks only, so no model can see an
    image. An attached image is reachable through `shell` (probe, OCR), not
    through vision. Image understanding needs typed content blocks in the

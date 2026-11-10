@@ -32,6 +32,13 @@ files but are not sent to the model (it has no vision channel).
 - [x] **5. Documentation** — ADR 0041 records why copies, why the state
       directory, why a read-only root, and what an image currently is.
 
+- [x] **6. Folders** — a dropped or picked directory is copied as a bounded
+      snapshot: 200 files, 200 MB, 8 levels, 400 MB per batch; symlinks and
+      `.git` are skipped. Past the bounds the copy is refused and the
+      suggestion is to open the folder as the workspace, since attachments are
+      read-only. An unchanged folder reuses its snapshot; a changed one is
+      numbered.
+
 ## Verification
 
 ```bash
