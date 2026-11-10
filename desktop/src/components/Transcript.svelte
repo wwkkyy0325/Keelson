@@ -199,16 +199,6 @@
   {#if $session.running}
     <article class="turn running">
       <div class="user">{$session.running.input}</div>
-      {#if !$session.running.text &&
-      !$session.running.thinking &&
-      $session.running.tools.length === 0 &&
-      $session.running.process.length === 0 &&
-      $session.running.verifying === null}
-        <div class="waiting">
-          <span class="waiting-dot"></span>
-          {$t("turn.waiting")}
-        </div>
-      {/if}
       {#if $session.running.thinking || $session.running.tools.length > 0 || $session.running.process.length > 0}
         <div class="tools">
           {#if $session.running.thinking || $session.running.process.length > 0}
