@@ -1,0 +1,31 @@
+# Replay profile for tests/replay_eval.rs. No rig lists it, so the app never
+# offers it. It keeps the coding tool set without `shell` and `delete_file`:
+# the replay drives a live model over a copied workspace, and those two can
+# reach outside the copy.
+
+[profile]
+name = "replay"
+
+[model]
+provider = "mock"
+model = "mock-coding"
+thinking_budget = 1024
+max_output_tokens = 8192
+
+[context]
+stages = ["system", "memory", "history", "latest"]
+budget_tokens = 64000
+max_budget_tokens = 262144
+
+[tools]
+visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", "list_trash", "restore_file", "list_dir", "glob", "code_search", "git_diff", "move_file", "todo", "search_history"]
+budget = 1000
+
+[verification]
+mode = "none"
+
+[permission]
+level = "workspace_auto"
+
+[persona]
+system = "prompts/coding.md"

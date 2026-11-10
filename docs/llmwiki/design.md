@@ -89,13 +89,35 @@ src/lib.rs engine: turn loop, permissions, storage, tools   (no UI types)
   conversation so the unarchive is explicit. Delete confirmation is a centered
   dialog, not an inline row.
   The rail reserves its scrollbar gutter, a fixed count width and an overlay
-  action bar, so archiving the last row or changing counts does not reflow it.
+  action bar, so archiving the last row or changing counts does not reflow it;
+  the gutter is reclaimed with a negative margin, so a row shares the same
+  right edge as the button and tabs above it instead of stopping short of
+  them.
   The header shows the conversation title and an `已归档` badge. A
   conversation is one JSON document under
   `<state>/sessions/<workspace-hash>/` with an opaque, immutable id; title and
   archive flag live in the document, and `index.json` is a listing cache
   reconciled against the directory (ADR 0006). A running turn blocks
-  switching, creating, archiving and deleting.
+  switching, creating, archiving and deleting. A failed action is shown at the
+  end of the transcript, not in a notice bar over the composer; the only
+  element allowed above the composer is a pending permission or choice card,
+  which the turn blocks on. The latest turn shows its checkpoint diff (files,
+  added and removed lines) and offers undo only when that diff is non-empty;
+  undo restores the workspace files, never the transcript. Each answer's
+  action row shows a user-facing cost line on the right — elapsed time, input
+  and output tokens, and the share served from the prompt cache — not
+  developer event counts. A status line under the composer shows the
+  effective permission level, a combined rig · provider · model chip that
+  opens settings, and context usage with a per-turn history; the permission
+  chip switches `workspace_auto` / `full_auto` through a desktop override
+  (ADR 0034) and reopens the engine.
+- **Running turn**: the live view shows the model's thinking (open, muted),
+  each tool call as it starts and finishes, and the streamed answer text. The
+  desktop polls the engine's per-turn event log every 120 ms for tool
+  activity; the engine keeps thinking in `StoredTurn.thinking`, bounded at
+  64 KiB, and the stored turn shows it collapsed. The turn row is emitted as
+  soon as it is persisted, before the checkpoint snapshot; a `turn-changes`
+  event reloads the diff after the snapshot (ADR 0035).
 - **CLI**: `keelson rig list`, `rig show`, `doctor`, `--version`. It starts no
   session and runs no turn. There is no terminal UI.
 - **Next**: the floating-window form of the desktop shell.
@@ -212,6 +234,48 @@ copied ValveGuard then accepted a `compare_demos.py` comparison harness in
 dropped PATH made the model repair the global Python instead of the task
 (M4k).
 
+`tests/replay_eval.rs` replays a recorded Claude Code transcript against a
+live model. It keeps the human prompts (`origin.kind = human`, no
+sidechains), rewrites the absolute paths that point at the original project
+into a shared clone of that project's HEAD, and runs one engine turn per
+prompt. After each turn it reads the kernel's own `context_pressure`,
+`history_assembled` and `context_escalated` events and appends a row to
+`turns.jsonl`; a per-turn timeout cancels a stuck turn, a wall-clock budget
+stops the loop, and three consecutive model errors end it. The companion
+`profiles/replay.toml` keeps the coding tools minus `shell` and
+`delete_file`, so the live model cannot reach outside the copy. The clone is
+used instead of `git archive | tar` because tar on Windows rejects the
+project's Chinese filenames.
+
+## History compression
+
+The kernel seals a session segment when the next input changes topic, when
+the open segment reaches 12,000 estimated text tokens, or at the twelve-turn
+cap (Keel ADR 0038). A tool-heavy turn can reach the size cap on its own, so
+such a workload seals roughly one segment per turn. The
+sealed segment leaves a structured record (goal, result, changed paths, open
+items, verification); that record alone does not carry decisions, error text
+or command detail. `Engine::open` therefore attaches a second provider
+instance as the kernel's `ProviderSummarizer`: the model rewrites one rolling
+summary (budget = working set / 10, clamped to 256–4096 tokens, 30 s timeout),
+covered records fold out of the context, and the raw transcripts stay in
+storage where lexical recall can still reach them. A failed or too-slow
+summary falls back to the deterministic record memo. The mock provider gets
+no summarizer, so the offline rig stays deterministic (ADR 0036).
+
+The rewrite is bounded by cadence: at most every third seal, or immediately
+at Amber pressure. A deferred seal keeps its structured record in context, so
+a seal streak does not invalidate the cached prefix every turn. Covered
+segments also render as a bounded one-line index (`#id goal -> result
+[files]`) beside the summary, so a topic the rewrite dropped stays
+discoverable. The summary call asks for a leading `SEGMENT_MEMO:` line; the
+kernel stores it on the segment record and recall returns the memo instead of
+a raw excerpt (Keel ADR 0037). When neither the summary nor the index carries
+what the user refers to, the model can call `search_history`, a read-only host
+tool that searches the conversation's stored turns by keyword — ASCII words
+and CJK bigrams, up to eight hits with bounded excerpts and tool names
+(ADR 0037).
+
 ## Checkpoints
 
 A shadow git repository per project lives under
@@ -241,8 +305,8 @@ desktop/
   src-tauri/src/checkpoints.rs
                  shadow-git turn snapshots and undo
   src/           controller + components: Wizard, ModelPicker, Chat,
-                 Sidebar, AppHeader, Transcript, Turn, Composer,
-                 PermissionCard, SettingsPanel
+                 Sidebar, AppHeader, Transcript, Turn, Markdown,
+                 Composer, PermissionCard, SettingsPanel
   src/lib/       session reducer, i18n locale store and catalog helpers
 ```
 

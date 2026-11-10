@@ -1507,6 +1507,81 @@ duration line is what makes the cost of a check measurable at all.
   with just the turn's input and no suggestions.
 - One new session test.
 
+## 2026-11-09 — a turn's tool lines belong to that turn
+
+- The kernel event log lived as long as the engine and was never cleared, so
+  `persist` paired every tool event since the engine opened: the second turn
+  in a session repeated the first turn's tool rows, and its stored event list
+  kept every earlier event too. `run_turn` now clears the log at the start;
+  sequence numbers stay monotonic across a clear.
+- `each_turn_records_only_its_own_tool_calls` fails (2 rows instead of 1)
+  without the clear.
+- Verified: `cargo fmt --check`, clippy with `-D warnings`, 62 library tests.
+
+## 2026-11-09 — the save button only lights up for a change
+
+- Save was enabled on an untouched form, so switching a value back still
+  offered 保存并重连 and the user could not tell whether anything was pending.
+  The panel snapshots the persisted connection and rig when it opens; the
+  button stays disabled until the kind, provider, address, model, rig or the
+  key draft differs from that snapshot.
+- The button now names the step it is on — 正在保存…, then 正在重连… — instead of
+  looking inert while the workspace reopens.
+- The snapshot is only updated after the reconnect succeeds. If the settings
+  were written but the reconnect was refused (a turn is still running), Save
+  stays enabled so the retry is one click instead of closing and reopening.
+- Verified: svelte-check 0 errors/0 warnings, 17 frontend tests, build.
+
+## 2026-11-09 — the rig choice waits for Save
+
+- The rig select saved and reconnected on `change`, so picking an option closed
+  the settings panel before the user pressed Save. It is a pending field now,
+  like the model fields: the footer Save writes the rig and the model, then
+  reconnects once.
+- Verified: svelte-check 0 errors/0 warnings, 17 frontend tests, build.
+
+## 2026-11-09 — rig names follow the interface language
+
+- The rig selector showed `Coding · coding` and `Coding (live) · coding-live`
+  in both languages, so the two shipped rigs looked identical and the handle
+  was noise. Options now show only the title, and the Chinese interface uses
+  the app's own names: 编码 and 编码（在线）, with their descriptions.
+- The mapping is keyed by rig name and falls back to the rig file's own title
+  and description, so a rig the user adds still shows what the file says, and
+  the English interface is unchanged.
+- Verified: svelte-check 0 errors/0 warnings, 17 frontend tests, build.
+
+## 2026-11-09 — history rows share the rail's right edge
+
+- The conversation list reserved an 8px stable scrollbar gutter, so every row
+  ended 8px short of the project button, 新对话 and the tabs above it. The
+  gutter is reclaimed with a matching negative margin: rows and the components
+  above now share the same right edge, and the scrollbar sits in the rail's
+  right padding.
+- Verified: svelte-check 0 errors/0 warnings, 17 frontend tests, build.
+
+## 2026-11-09 — the header keeps only the gear
+
+- The 中/EN button is gone from the header. Language is a setting, not a
+  per-session action; the settings panel and the wizard already carry it.
+- The header is now the title, the archived badge and the gear. The
+  `app.switchLanguage` string went with the button.
+- README's header description updated to match.
+- Verified: svelte-check 0 errors/0 warnings, 17 frontend tests, build.
+
+## 2026-11-09 — nothing informational sits above the composer
+
+- The toast strip (archived, unarchived, deleted and undo confirmations) and
+  the error banner above the composer are gone. The rail already shows those
+  outcomes: the row moves between tabs, disappears, or the undo button goes.
+- A failed action now renders at the end of the transcript as a quiet red
+  line, so it belongs to the conversation instead of hovering over the input.
+  It is cleared when the next turn starts.
+- The reducer's `clear-error` action went with the dismiss button. The only
+  element that can still sit above the composer is a pending permission or
+  choice card, which the turn blocks on.
+- Verified: svelte-check 0 errors/0 warnings, 17 frontend tests, build.
+
 ## 2026-11-09 — the starter suggestions are gone
 
 - The four chips above an empty composer were noise: they never matched the
@@ -1515,3 +1590,243 @@ duration line is what makes the cost of a check measurable at all.
   together with their strings, styles and the `showStarters` prop.
 - The composer is a single row again; an empty conversation is just an empty
   composer.
+
+## 2026-11-09 — answers render markdown, tool calls read like a log
+
+- Answers were shown as pre-wrapped text, so headings, tables, lists and inline
+  code from the model arrived as literal markdown. `Markdown.svelte` parses
+  with `marked` (GFM) and sanitizes with DOMPurify before `{@html}`; a link
+  cannot navigate the webview away from the conversation.
+- Styles cover headings, lists, tables, code blocks, quotes and rules. Long
+  tokens wrap, so a table or a path cannot widen the column past the window.
+- Tool calls now come before the answer, in the order the turn ran, and render
+  as one monospace line each: status mark, tool name, argument preview and
+  right-aligned duration. Clicking a line expands its arguments and output;
+  durations switch to seconds above one second.
+- 撤销本轮 moved from a text link in the turn foot into the answer's icon row,
+  next to copy and branch, with the same hover tooltip. The foot now holds
+  only the verification badge.
+- A tool that finishes within the clock's millisecond reports `0`, which used
+  to leave the duration column blank and look like missing data. It now reads
+  `<1 ms`; an unfinished call still shows no time because there is none.
+- The tool log has three visible levels: the turn rail, one row per call, and
+  an indented payload rail for arguments and output, so an expanded call reads
+  as belonging to its row rather than the turn.
+- Two dependencies: `marked` and `dompurify`.
+- Verified: svelte-check 0 errors/0 warnings, 17 frontend tests, build.
+
+## 2026-11-09 — the turn shows what it changed, and undo follows the diff
+
+- Undo used to be offered whenever the last turn called a mutating tool.
+  `shell` was on that list, so a `cargo test` run lit the button up, and the
+  user could not see what a click would restore.
+- The latest turn now reads its checkpoint pair through a new `turn_changes`
+  command (`git diff --numstat` plus `--name-status` between the turn's two
+  commits) and shows `N 个文件变更 +A −R`, expandable into one row per file
+  with its status, path and line counts.
+- The undo icon sits on the latest turn and is disabled with a
+  「本轮没有文件变更」 tooltip when the diff is empty or the turn was already
+  undone; the tool-name heuristic is gone. Undo restores workspace files only.
+- Tests: a checkpoint pair with an edit, a create and a delete reports M/A/D
+  with the right line counts, and an undone turn reports nothing (32 desktop
+  tests). Verified: clippy, fmt, svelte-check 0 errors/0 warnings, 17 frontend
+  tests, build.
+
+## 2026-11-09 — each answer carries its own cost line
+
+- `TurnView` now carries the turn's summed token usage (input, output and
+  cached input), persisted with the turn. Turns written before the field
+  exist are backfilled from their `model_finished` events, so an existing
+  conversation shows the same line without a migration or a new conversation.
+- The action row under an answer keeps its icons hover-only and shows a stats
+  line on the right: elapsed time, `↑` input tokens, `↓` output tokens and the
+  cache share when some input came from cache. These are the numbers a user
+  cares about; event counts and other developer metrics stay out.
+- Verified: 62 library tests, desktop tests, clippy, fmt, svelte-check 0
+  errors/0 warnings, 17 frontend tests, build.
+
+## 2026-11-09 — the composer carries its own status line
+
+- A status line under the composer shows what the user needs before sending:
+  the effective permission level, one combined rig · provider · model chip
+  that opens settings, and context usage (`45.4k / 64k · 71%`).
+- The permission chip opens a two-option menu (`工作区自动` / `全自动`) that
+  explains each level. Choosing one saves a desktop-config override and
+  reopens the session so the engine picks it up; a running turn disables the
+  switch. ADR 0034 records the one deliberate exception to "rigs are files".
+- Context usage comes from the last turn's `context_pressure` event, with the
+  model window in its tooltip; clicking it lists the pressure at the end of
+  the recent turns.
+- `SessionStatus` is a new command; the session reducer gained an `epoch`
+  bumped on every open, so the status and change list reload after a
+  reconnect that keeps the same conversation id.
+- Verified: 64 library tests, 32 desktop tests, clippy, fmt, svelte-check 0
+  errors/0 warnings, 17 frontend tests, build.
+
+## 2026-11-09 — the working set can grow within a session
+
+- Both coding profiles now set `max_budget_tokens = 262144` beside the 64k
+  base, so the kernel's new context ladder can raise a session to 128k or
+  256k when content genuinely does not fit. The live rig is bounded by the
+  model window and the 8k output reserve.
+- The composer status line reports the working set in force, not just the
+  profile base; the popover lists the budget and the model window.
+- Keel ADR 0034 records the design: escalation on Red pressure or an
+  over-budget call, monotonic per engine, no user switch.
+
+## 2026-11-09 — a recorded transcript replays through the real loop
+
+- `tests/replay_eval.rs` takes a Claude Code JSONL transcript, keeps only the
+  human prompts, clones the project at HEAD into a temp workspace, rewrites
+  the transcript's absolute paths into that clone, and runs one engine turn
+  per prompt against a live model.
+- After every turn it reads the kernel's own `context_pressure`,
+  `history_assembled` and `context_escalated` events, plus usage, tool calls,
+  event volume and session document size, and appends a row to
+  `turns.jsonl`. A per-turn timeout cancels a stuck turn; a wall-clock budget
+  stops the loop; three consecutive model errors end the run.
+- `profiles/replay.toml` is the eval profile: the coding tool set without
+  `shell` and `delete_file`, so the model cannot reach outside the copy. No
+  rig lists it.
+- Verified: one-turn smoke run on q2_0 in 56 s (16 model calls, 27 tool
+  calls, context 21,005 / 64,000, 91% cached input).
+- The long run over prompts 105..185 is in progress.
+
+## 2026-11-09 — kernel 0.1.1: tool errors say how to continue
+
+- Keel 0.1.1 is consumed through the existing path dependencies;
+  `Cargo.lock` moved from 0.1.0 to 0.1.1. `keelson doctor` reports
+  `kernel 0.1.1  events 1  snapshot 1`.
+- `todo close` is idempotent when the list already holds the requested
+  outcome. The list closes itself once every item is terminal, so the
+  explicit close that follows no longer reports a false failure. A
+  conflicting close names the state, a rejected completed close names the
+  open items, and an unknown tool argument names the accepted ones.
+- The three fixes came from a live Sojourn turn: 47 tool calls, 4 failures —
+  three model mistakes that fixed themselves, one false failure from the
+  kernel. Keel ADR 0035 records the policy.
+- Verified: Keel workspace clippy and tests; Keelson 5 conformance probes,
+  64 library tests, clippy, fmt; `keelson doctor`.
+
+## 2026-11-09 — the running turn streams tools and thinking
+
+- The running view no longer waits for the turn row. The desktop polls the
+  engine's per-turn event log every 120 ms and emits `tool-started` /
+  `tool-finished` with the kernel's bounded, redacted previews, so each call
+  appears as it happens.
+- The engine's delta channel now carries `ModelDelta::Text` and
+  `ModelDelta::Thinking`. Thinking is forwarded live (muted block, open while
+  running) and kept in `StoredTurn.thinking`, bounded at 64 KiB, so the
+  stored turn shows a collapsed `思考过程` section. Older sessions load it as
+  empty.
+- The post-turn checkpoint snapshot used to run before `turn-finished`: after
+  generation the screen stayed on the raw concatenated stream (no tool rows,
+  no formatting) until the git commit finished. The persisted turn is now
+  emitted first; the snapshot and record follow, then `turn-changes` reloads
+  the diff and undo state.
+- The running view shows only what arrived: the `思考中…` placeholder and the
+  blinking cursor are gone. Thinking and tool calls share one indented group,
+  both collapsed by default.
+- Text from a model call that goes on to use a tool was commentary; the
+  reducer now moves it into a collapsed `过程` entry in that group, so the
+  answer area only holds the call that finished the turn.
+- ADR 0035 records the design. Verified: 65 library tests, 32 desktop
+  backend tests, 20 frontend tests, clippy, fmt, svelte-check 0/0, build.
+
+## 2026-11-09 — a model writes the rolling summary
+
+- `Engine::open` now builds a second provider from the same settings and
+  attaches the kernel's `ProviderSummarizer`. On every segment seal the model
+  rewrites one rolling summary (budget = working set / 10, 256–4096 tokens,
+  30 s timeout). Covered records fold out of the context; the transcripts stay
+  in storage and lexical recall can still reach them.
+- The summary call carries no tools and no thinking, and its usage is added to
+  the turn that triggered the seal. Failure or timeout falls back to the
+  kernel's deterministic memo and emits `summary_failed`.
+- The mock provider keeps no summarizer, so the offline rig stays
+  deterministic.
+- A replay comparison on q2_0 (records only vs model summaries, same
+  transcript) is running. ADR 0036 records the decision.
+- Verified: 65 library tests, clippy, fmt.
+
+## 2026-11-09 — kernel 0.2.0, summary cadence and `search_history`
+
+- Keel 0.2.0 is consumed through the path dependencies (`Cargo.lock` 0.2.0;
+  `keelson doctor` reports kernel 0.2.0).
+- The rolling summary is rewritten at most every third seal, or immediately
+  at Amber pressure. A deferred seal keeps its structured record in context,
+  so a seal streak no longer pays a cache miss every turn.
+- Covered segments render as a bounded index beside the summary (goal,
+  result, files), so a topic the rewrite dropped stays discoverable and its
+  paths stay exact.
+- The summary call asks for a leading `SEGMENT_MEMO:` line; the kernel stores
+  it on the segment record and recall returns it instead of a raw excerpt.
+- New host tool `search_history` (ReadOnly, no permission request): a
+  deterministic keyword search over the stored turns — ASCII words and CJK
+  bigrams — returning up to eight hits with bounded excerpts and tool names.
+  It is visible in every coding profile and listed in the replay profile.
+  ADR 0037 records the decision.
+- The diagnostic replay showed why: 8 seals in 16 turns, seal-turn cache
+  share down to 13%, and the summary shrinking from 11.1k to 3.6k characters
+  as older topics were dropped.
+- Verified: Keel workspace tests, clippy, fmt; Keelson 68 library tests (three
+  new for `search_history`), 5 conformance probes, clippy, fmt.
+
+## 2026-11-09 — replay biases fixed
+
+- `OpenRequest.acceptance` lets a host that measures the conversation skip
+  the workspace's own post-turn checks. The desktop passes `true`; the replay
+  passes `false`. In a fresh clone the checks' `cargo test` exceeded the 60 s
+  tool timeout and turned most turns into Error, which buried the context and
+  summary measurements under the clone's build cache.
+- The replay answers interactions with `AutoAnswerPort` instead of deferring
+  them. Deferred choices left `interaction N was deferred` open items, and the
+  kernel never absorbs an open item into the summary; coverage was therefore
+  underestimated. Auto-answer picks the recommended option, then the first
+  option, then approves a permission/plan and answers freeform with
+  "proceed".
+- The harness now records per turn: summary rewrites, chars and covered
+  segments; summary failures; record segments/tokens; summary tokens; recall
+  segments/tokens. `summary.json`/`summary.md` carry the totals. The error
+  count now includes `TurnState::Error`, not only a failed `run_turn` (the
+  first long run reported 0 errors while 13 turns ended in Error).
+- Verified: 68 library tests, 32 desktop backend tests, clippy, fmt; the
+  clean replay is running separately on q2_0.
+
+## 2026-11-09 — kernel 0.2.1: an active segment seals on text size
+
+- Keel 0.2.1 adds `SEGMENT_TOKEN_CAP` (12,000 estimated text tokens): a
+  segment seals on size even while the topic continues, beside the
+  twelve-turn cap. The clean replay's active segment had stayed open across
+  ten same-topic turns; that text now becomes a record and a summary
+  candidate earlier.
+- This bounds the history contribution of the active segment. A single turn
+  with many tool calls can still raise the per-call context; tool-result
+  elision is unchanged.
+- `Cargo.lock` and `docs/kernel.md` move to 0.2.1; `keelson doctor` reports
+  kernel 0.2.1. A 45-minute validation replay is running on q2_0.
+- Verified: Keel workspace tests, clippy, fmt; Keelson 68 library tests,
+  clippy, fmt; doctor.
+
+## 2026-11-10 — 0.2.1 size-cap validation replay
+
+- Ran prompts 105–129 (25 turns) for 45 minutes on q2_0: 24 Done, 0 Error,
+  1 turn cancelled by the budget deadline. Summary rewrites 7, failures 0;
+  recall 2 segments / 798 tokens; peak context 122.5k under a 229k ceiling;
+  two escalations, the second at turn 119 (the clean 0.2.0 run reached its
+  final step at turn 114).
+- The cap fires on this workload: 19 of 21 sealed segments already held
+  12,000+ estimated tokens at seal time (median 20,250, max 57,647), and 18
+  of the 21 held a single turn. Every sealed segment cleared the compression
+  gate (21 records, 6 memos), so per-turn sealing costs a record, not content.
+- Against the 0.2.0 clean run (31 turns, 60 minutes), input per model call
+  fell from 85.1k to 67.5k. The comparison is not a controlled A/B: the model
+  diverged on identical prompts (turn 106 made 53 calls in the clean run and
+  1 here), so only the mechanism evidence and the order-of-magnitude cost
+  change are trustworthy.
+- Peak context is still driven by the current turn's tool output, not by
+  history. Tool-result elision remains the only lever for that peak, as
+  ADR 0038 says.
+- Verified: Keel workspace tests, clippy, fmt; Keelson tests, clippy, fmt;
+  desktop `npm test`, `npm run check`, `npm run build`, backend tests and
+  clippy; `keelson doctor` reports kernel 0.2.1 and both rigs.
