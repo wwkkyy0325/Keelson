@@ -276,9 +276,6 @@
     </div>
   {/if}
 
-  {#if turn.state !== "Done" && !turn.answer}
-    <div class="state">{turn.state}</div>
-  {/if}
   {#if turn.error}
     <div class="error">{turn.error}</div>
   {/if}

@@ -1547,11 +1547,6 @@ header .title {
   }
 }
 
-.state {
-  color: var(--warn);
-  font-size: 0.85rem;
-}
-
 .error {
   color: var(--error);
   font-size: 0.9rem;
