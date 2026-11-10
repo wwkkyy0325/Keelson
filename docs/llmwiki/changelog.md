@@ -1920,3 +1920,11 @@ duration line is what makes the cost of a check measurable at all.
   model adapters; a live answer had stored three U+FFFD where one Chinese
   character was cut by a chunk boundary.
 - `docs/kernel.md` pins 0.2.4.
+
+## 2026-11-10 — kernel 0.2.5: an inferred todo close reopens
+
+- Keel 0.2.5 lets an add or status change reopen a task list that closed
+  itself when its last item became terminal; an explicit close stays
+  terminal (ADR 0046). The live turn's `todo add` no longer fails after the
+  model finishes its plan.
+- `docs/kernel.md` pins 0.2.5.
