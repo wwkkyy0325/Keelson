@@ -61,12 +61,15 @@
     const text = draft.trim();
     if (!text || running || sending) return;
     sending = true;
+    // The box empties on the click; the turn row appears from the event. A
+    // rejected send puts the text back rather than losing it.
+    draft = "";
+    cursor = -1;
+    savedDraft = "";
     try {
       await onSend(text);
-      draft = "";
-      cursor = -1;
-      savedDraft = "";
     } catch (error) {
+      if (!draft.trim()) draft = text;
       onError(errText(error));
     } finally {
       sending = false;

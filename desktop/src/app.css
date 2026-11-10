@@ -1224,6 +1224,34 @@ header .title {
   margin: 0 auto;
 }
 
+/* The send is accepted; the provider has not produced a token yet. */
+.waiting {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 0.1rem 0.2rem;
+}
+
+.waiting-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: waiting-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes waiting-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .user {
   align-self: flex-end;
   max-width: 78%;
