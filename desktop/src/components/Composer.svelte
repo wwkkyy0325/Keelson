@@ -12,7 +12,7 @@
   }: {
     running: boolean;
     onSend: (text: string) => Promise<void>;
-    onCancel: () => void;
+    onCancel: () => Promise<void> | void;
     onError: (message: string) => void;
     /// Text a branch opens with, so the user can edit the turn they moved from.
     initialDraft?: string;
@@ -32,6 +32,10 @@
 
   let draft = $state(untrack(() => initialDraft));
   let textarea = $state<HTMLTextAreaElement | null>(null);
+  /// A send is in flight. The turn-started event arrives a moment later, so
+  /// this closes the gap in which a second Enter could reach the backend.
+  let sending = $state(false);
+  let cancelling = $state(false);
 
   function autosize(): void {
     if (!textarea) return;
@@ -55,7 +59,8 @@
 
   async function send(): Promise<void> {
     const text = draft.trim();
-    if (!text || running) return;
+    if (!text || running || sending) return;
+    sending = true;
     try {
       await onSend(text);
       draft = "";
@@ -63,8 +68,29 @@
       savedDraft = "";
     } catch (error) {
       onError(errText(error));
+    } finally {
+      sending = false;
     }
   }
+
+  /// The kernel stops between steps, so the button reports the click at once
+  /// and the turn ends a moment later.
+  async function cancel(): Promise<void> {
+    if (cancelling) return;
+    cancelling = true;
+    try {
+      await onCancel();
+    } catch (error) {
+      onError(errText(error));
+      cancelling = false;
+    }
+  }
+
+  // The button is only shown while a turn runs; when it ends, the label
+  // resets for the next one.
+  $effect(() => {
+    if (!running) cancelling = false;
+  });
 
   /// Arrow history behaves like a shell: the draft is kept aside while the
   /// earlier inputs are walked, and ArrowDown past the newest brings it back.
@@ -126,8 +152,12 @@
     rows="2"
   ></textarea>
   {#if running}
-    <button onclick={onCancel}>{$t("app.cancel")}</button>
+    <button onclick={cancel} disabled={cancelling}>
+      {cancelling ? $t("app.cancelling") : $t("app.cancel")}
+    </button>
   {:else}
-    <button onclick={send} disabled={!draft.trim()}>{$t("app.send")}</button>
+    <button onclick={send} disabled={!draft.trim() || sending}>
+      {$t("app.send")}
+    </button>
   {/if}
 </div>

@@ -1948,3 +1948,15 @@ duration line is what makes the cost of a check measurable at all.
 - Choosing a level always persists it; choosing the same level now drops a
   live grant instead of being a no-op.
 - `docs/kernel.md` pins 0.2.6.
+
+## 2026-11-10 — stopping a turn and guarding a second send
+
+- `web_search` and `web_fetch` drop their request when the turn is
+  cancelled instead of waiting for the 30 s / 60 s timeout.
+- The composer blocks a second Enter while the first send is in flight (the
+  turn-started event arrives a moment later) and the cancel button reports
+  "cancelling…" and disables until the turn ends.
+- Keel 0.2.7 makes acceptance checks honour the cancel token, so cancel
+  during "verifying" stops instead of waiting for the whole plan; a
+  cancelled turn is still not written to the kernel history.
+- `docs/kernel.md` pins 0.2.7.

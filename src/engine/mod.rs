@@ -2875,7 +2875,7 @@ system = "prompt.md"
             .map(|check| check.item)
             .collect();
         let report = keel_runtime::AcceptanceVerifier::new(dir.path())
-            .verify(&items)
+            .verify(&items, &CancelToken::new())
             .await;
 
         assert_eq!(report.evidence.len(), 2, "{report:?}");
@@ -3130,7 +3130,7 @@ system = "prompt.md"
             .map(|check| check.item)
             .collect();
         let report = keel_runtime::AcceptanceVerifier::new(dir.path())
-            .verify(&items)
+            .verify(&items, &CancelToken::new())
             .await;
 
         assert_eq!(report.evidence.len(), 2, "{report:?}");

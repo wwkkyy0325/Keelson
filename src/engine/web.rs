@@ -191,7 +191,12 @@ impl Tool for WebSearchTool {
             }
             None => DEFAULT_RESULTS,
         };
-        let results = match self.search(&query, count).await {
+        // A cancelled turn drops the request instead of waiting for the
+        // timeout; the provider bills only a successful request.
+        let results = match tokio::select! {
+            _ = ctx.cancel.cancelled() => Err(ToolError::cancelled()),
+            result = self.search(&query, count) => result,
+        } {
             Ok(results) => results,
             Err(error) => return ToolResult::failure(ctx.call_id, "web_search", error),
         };
@@ -360,11 +365,19 @@ impl Tool for WebFetchTool {
                 )
             }
         };
-        let result = match &self.backend {
-            Some(WebBackend::Provider { base, key }) => {
-                provider_fetch(&self.client, base, key, &url).await
+        let fetch = async {
+            match &self.backend {
+                Some(WebBackend::Provider { base, key }) => {
+                    provider_fetch(&self.client, base, key, &url).await
+                }
+                _ => local_fetch(&self.client, &url).await,
             }
-            _ => local_fetch(&self.client, &url).await,
+        };
+        // The provider may spend half a minute on a slow origin; a cancelled
+        // turn must not wait for it.
+        let result = tokio::select! {
+            _ = ctx.cancel.cancelled() => Err(ToolError::cancelled()),
+            result = fetch => result,
         };
         match result {
             Ok(text) => ToolResult::success(ctx.call_id, "web_fetch", text),
