@@ -9,7 +9,7 @@
     setupState,
   } from "../lib/api";
   import { defaultSelection, findSelection, type ModelRow } from "../lib/catalog";
-  import { locale, t } from "../lib/i18n";
+  import { locale, rigLabel, t } from "../lib/i18n";
   import type { ModelCatalog, SetupState } from "../lib/protocol";
   import ModelPicker from "./ModelPicker.svelte";
 
@@ -23,7 +23,21 @@
     onReconnect: () => Promise<string | null>;
   } = $props();
 
+  /// The persisted connection and rig, so the save button can tell an edited
+  /// form from an untouched one.
+  type FormSnapshot = {
+    kind: string;
+    providerId: string;
+    baseUrl: string;
+    model: string;
+    rig: string;
+  };
+
   let setup = $state<SetupState | null>(null);
+  let saved = $state<FormSnapshot | null>(null);
+  /// The settings were written but the workspace has not picked them up yet.
+  /// Keeps Save available as a retry when the reconnect is refused.
+  let pendingApply = $state(false);
   let catalog = $state<ModelCatalog | null>(null);
   let catalogLoading = $state(true);
   let catalogRefreshing = $state(false);
@@ -38,6 +52,9 @@
   let rigName = $state("");
   let revealKey = $state(false);
   let busy = $state(false);
+  /// Saving and reconnecting are two visible steps: the button says which one
+  /// is running instead of looking inert during a slow reconnect.
+  let phase = $state<"idle" | "saving" | "reconnecting">("idle");
   let loading = $state(true);
   let error = $state<string | null>(null);
 
@@ -86,11 +103,28 @@
   let hasKeyForSelection = $derived(
     !!setup?.keyProviders?.includes(activeProviderId),
   );
+  let dirty = $derived(
+    pendingApply ||
+      (saved !== null &&
+        (keyDraft.trim() !== "" ||
+          activeProviderKind !== saved.kind ||
+          activeProviderId !== saved.providerId ||
+          activeBaseUrl !== saved.baseUrl ||
+          activeModel !== saved.model ||
+          rigName !== saved.rig)),
+  );
 
   onMount(async () => {
     try {
       const state = await setupState();
       setup = state;
+      saved = {
+        kind: state.provider,
+        providerId: state.providerId,
+        baseUrl: state.baseUrl,
+        model: state.model,
+        rig: state.rig,
+      };
       providerKind =
         state.provider === "anthropic-compatible"
           ? "anthropic-compatible"
@@ -206,6 +240,7 @@
       return;
     }
     busy = true;
+    phase = "saving";
     try {
       if (keyDraft.trim()) {
         await saveKey(keyDraft.trim(), activeProviderId);
@@ -223,34 +258,33 @@
         activeModel,
         manual ? null : (selectedModel?.context ?? null),
       );
+      // The rig is part of the same form: choosing it must not save and close
+      // on its own, and one reconnect covers both settings.
+      if (setup && rigName !== setup.rig) {
+        await saveRig(rigName);
+        setup.rig = rigName;
+      }
+      pendingApply = true;
+      phase = "reconnecting";
       const reconnectError = await onReconnect();
       if (reconnectError) {
         error = reconnectError;
         return;
       }
+      saved = {
+        kind: activeProviderKind,
+        providerId: activeProviderId,
+        baseUrl: activeBaseUrl,
+        model: activeModel,
+        rig: rigName,
+      };
+      pendingApply = false;
       onClose();
     } catch (cause) {
       error = $t("wizard.error.save", { message: errText(cause) });
     } finally {
       busy = false;
-    }
-  }
-
-  async function changeRig(): Promise<void> {
-    error = null;
-    busy = true;
-    try {
-      await saveRig(rigName);
-      const reconnectError = await onReconnect();
-      if (reconnectError) {
-        error = reconnectError;
-        return;
-      }
-      onClose();
-    } catch (cause) {
-      error = $t("wizard.error.save", { message: errText(cause) });
-    } finally {
-      busy = false;
+      phase = "idle";
     }
   }
 
@@ -387,16 +421,17 @@
         <p class="muted">{$t("settings.rigHint")}</p>
         <select
           bind:value={rigName}
-          onchange={changeRig}
           disabled={busy || (setup?.rigs.length ?? 0) < 2}
           aria-label={$t("settings.rig")}
         >
           {#each setup?.rigs ?? [] as rig (rig.name)}
-            <option value={rig.name}>{rig.title} · {rig.name}</option>
+            <option value={rig.name}>
+              {$rigLabel(rig.name, rig).title}
+            </option>
           {/each}
         </select>
         {#if activeRig}
-          <p class="hint">{activeRig.description}</p>
+          <p class="hint">{$rigLabel(activeRig.name, activeRig).description}</p>
         {/if}
       </section>
 
@@ -433,9 +468,13 @@
       <button
         class="primary"
         onclick={save}
-        disabled={busy || loading || (!manual && !selectedProvider)}
+        disabled={busy || loading || !dirty || (!manual && !selectedProvider)}
       >
-        {busy ? $t("settings.saving") : $t("settings.save")}
+        {busy
+          ? phase === "reconnecting"
+            ? $t("settings.reconnecting")
+            : $t("settings.saving")
+          : $t("settings.save")}
       </button>
     </div>
   </div>

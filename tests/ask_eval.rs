@@ -105,6 +105,8 @@ async fn an_ambiguous_brief_makes_the_model_ask() {
         interactions: interactions.clone(),
         deltas: None,
         model: Some(model),
+        permission: None,
+        acceptance: true,
     })
     .expect("the engine opens");
 

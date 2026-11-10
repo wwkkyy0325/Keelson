@@ -20,16 +20,36 @@ export type Verification = {
   evidence: VerificationEvidence[];
 };
 
+export type TurnUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+};
+
 export type Turn = {
   seq: number;
   input: string;
   answer: string;
+  /// The model's thinking for this turn, bounded by the engine. Empty for
+  /// models that do not think and for sessions written before the field.
+  thinking: string;
   state: string;
   error: string | null;
   durationMs: number;
+  /// Summed over the turn's model calls; zeros for sessions written before
+  /// the field existed.
+  usage: TurnUsage;
   verificationPassed: boolean | null;
   verification: Verification | null;
   tools: ToolLine[];
+};
+
+/// One file a turn changed, from its checkpoint pair.
+export type FileChange = {
+  path: string;
+  status: string;
+  added: number;
+  removed: number;
 };
 
 export type TurnPage = {
@@ -45,6 +65,25 @@ export type SessionMeta = {
   createdAt: number;
   updatedAt: number;
   turns: number;
+};
+
+/// Context pressure at the end of one turn.
+export type ContextPoint = {
+  seq: number;
+  used: number;
+  ceiling: number;
+};
+
+/// What the composer's status line shows.
+export type SessionStatus = {
+  permission: string;
+  rig: string;
+  model: string;
+  provider: string;
+  providerName: string;
+  contextBudget: number;
+  contextWindow: number | null;
+  recent: ContextPoint[];
 };
 
 export type ProjectEntry = {
@@ -124,8 +163,36 @@ export type Interaction = {
   recommended?: string | null;
 };
 
+/// One tool call as the running turn reports it, before the turn is stored.
+export type LiveTool = {
+  callId: number;
+  name: string;
+  args: string | null;
+  ok: boolean | null;
+  durationMs: number;
+  error: string | null;
+  output: string | null;
+};
+
 export type TurnStarted = { seq: number; input: string };
 export type TextDelta = { seq: number; text: string };
+export type ThinkingDelta = { seq: number; text: string };
+export type ToolStartedEvent = {
+  seq: number;
+  callId: number;
+  name: string;
+  args: string | null;
+};
+export type ToolFinishedEvent = {
+  seq: number;
+  callId: number;
+  name: string;
+  ok: boolean;
+  durationMs: number;
+  error: string | null;
+  output: string | null;
+};
+export type TurnChanges = { seq: number };
 export type TurnFinished = { turn: Turn };
 export type TurnFailed = { seq: number; message: string };
 export type SessionUpdated = { meta: SessionMeta };

@@ -40,6 +40,9 @@ fn main() {
             commands::send_message,
             commands::cancel_turn,
             commands::undo_last_turn,
+            commands::turn_changes,
+            commands::session_status,
+            commands::save_permission,
             commands::load_turns,
             commands::respond_interaction,
         ])

@@ -69,6 +69,8 @@ async fn a_frontend_change_skips_the_python_check() {
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
         model: Some(model),
+        permission: None,
+        acceptance: true,
     })
     .expect("the engine opens");
 

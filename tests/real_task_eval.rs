@@ -140,6 +140,8 @@ async fn run_the_task() {
         interactions: Arc::new(ApproveExecution),
         deltas: None,
         model: Some(model),
+        permission: None,
+        acceptance: true,
     })
     .expect("the engine opens");
 

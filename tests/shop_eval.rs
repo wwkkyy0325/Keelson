@@ -84,6 +84,8 @@ async fn the_discount_feature_crosses_the_shop() {
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
         model: Some(model),
+        permission: None,
+        acceptance: true,
     })
     .expect("the engine opens");
 

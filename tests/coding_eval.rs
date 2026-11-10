@@ -79,6 +79,8 @@ async fn a_discount_is_added_across_two_modules() {
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
         model: Some(model),
+        permission: None,
+        acceptance: true,
     })
     .expect("the engine opens");
 

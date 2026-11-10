@@ -7,9 +7,11 @@ function turn(seq: number, input = `in ${seq}`, answer = `out ${seq}`): Turn {
     seq,
     input,
     answer,
+    thinking: "",
     state: "Done",
     error: null,
     durationMs: 1,
+    usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
     verificationPassed: null,
     verification: null,
     tools: [],
@@ -59,6 +61,87 @@ describe("session reducer", () => {
     state = reduce(state, { type: "text-delta", seq: 4, text: "lo" });
 
     expect(state.running?.text).toBe("hello");
+  });
+
+  it("streams thinking separately from the answer", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 4,
+      input: "hi",
+    });
+    state = reduce(state, { type: "thinking-delta", seq: 4, text: "检查" });
+    state = reduce(state, { type: "thinking-delta", seq: 4, text: "文件" });
+    state = reduce(state, { type: "text-delta", seq: 4, text: "答案" });
+
+    expect(state.running?.thinking).toBe("检查文件");
+    expect(state.running?.text).toBe("答案");
+  });
+
+  it("parks a call's commentary when that call goes on to use a tool", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 1,
+      input: "hi",
+    });
+    state = reduce(state, {
+      type: "text-delta",
+      seq: 1,
+      text: "let me look",
+    });
+    state = reduce(state, {
+      type: "tool-started",
+      seq: 1,
+      callId: 1,
+      name: "read_file",
+      args: "a",
+    });
+
+    expect(state.running?.text).toBe("");
+    expect(state.running?.process).toEqual(["let me look"]);
+
+    state = reduce(state, { type: "text-delta", seq: 1, text: "answer" });
+    expect(state.running?.text).toBe("answer");
+  });
+
+  it("keeps live tool rows keyed by call id and ignores stale turns", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 4,
+      input: "hi",
+    });
+    state = reduce(state, {
+      type: "tool-started",
+      seq: 4,
+      callId: 7,
+      name: "read_file",
+      args: "path=a",
+    });
+    state = reduce(state, {
+      type: "tool-started",
+      seq: 3,
+      callId: 8,
+      name: "stale",
+      args: null,
+    });
+    state = reduce(state, {
+      type: "tool-finished",
+      seq: 4,
+      callId: 7,
+      name: "read_file",
+      ok: true,
+      durationMs: 3,
+      error: null,
+      output: "one",
+    });
+
+    expect(state.running?.tools).toHaveLength(1);
+    expect(state.running?.tools[0]).toMatchObject({
+      callId: 7,
+      name: "read_file",
+      args: "path=a",
+      ok: true,
+      output: "one",
+    });
   });
 
   it("replaces the running turn when it finishes and ignores duplicates", () => {
@@ -118,7 +201,7 @@ describe("session reducer", () => {
     expect(state.running).toBeNull();
     expect(state.lastError).toBe("provider down");
 
-    state = reduce(state, { type: "clear-error" });
+    state = reduce(state, { type: "turn-started", seq: 8, input: "again" });
     expect(state.lastError).toBeNull();
   });
 

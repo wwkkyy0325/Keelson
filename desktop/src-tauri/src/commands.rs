@@ -2,11 +2,13 @@
 //! the session read model.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use keel_core::CancelToken;
-use keelson::engine::{Engine, ModelOverride, OpenRequest, Store, TurnPage, TurnView};
+use keel_core::{CancelToken, Event, PermissionLevel};
+use keelson::engine::{
+    ContextPoint, Engine, ModelDelta, ModelOverride, OpenRequest, Store, TurnPage, TurnView,
+};
 use keelson::rig;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -18,6 +20,10 @@ use crate::state::{CurrentSession, DesktopState};
 
 pub const EV_TURN_STARTED: &str = "keelson:turn-started";
 pub const EV_TEXT_DELTA: &str = "keelson:text-delta";
+pub const EV_THINKING_DELTA: &str = "keelson:thinking-delta";
+pub const EV_TOOL_STARTED: &str = "keelson:tool-started";
+pub const EV_TOOL_FINISHED: &str = "keelson:tool-finished";
+pub const EV_TURN_CHANGES: &str = "keelson:turn-changes";
 pub const EV_TURN_FINISHED: &str = "keelson:turn-finished";
 pub const EV_TURN_FAILED: &str = "keelson:turn-failed";
 pub const EV_SESSION_UPDATED: &str = "keelson:session-updated";
@@ -78,6 +84,44 @@ struct TurnStarted {
 struct TextDelta {
     seq: u32,
     text: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThinkingDelta {
+    seq: u32,
+    text: String,
+}
+
+/// A tool call the running turn just started. The previews are bounded and
+/// redacted by the kernel.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolStartedEvent {
+    seq: u32,
+    call_id: u64,
+    name: String,
+    args: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolFinishedEvent {
+    seq: u32,
+    call_id: u64,
+    name: String,
+    ok: bool,
+    duration_ms: u64,
+    error: Option<String>,
+    output: Option<String>,
+}
+
+/// The checkpoint pair for a finished turn is recorded after the turn row is
+/// shown; this tells the view to reload the diff and undo state.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnChanges {
+    seq: u32,
 }
 
 #[derive(Clone, Serialize)]
@@ -542,6 +586,8 @@ async fn open_inner(
         interactions: state.interactions.clone(),
         deltas: Some(delta_tx),
         model,
+        permission: config.permission.as_deref().and_then(permission_level),
+        acceptance: true,
     })
     .map_err(|error| error.to_string())?;
     let engine = Arc::new(engine);
@@ -580,10 +626,18 @@ async fn open_inner(
     let app_handle = app.clone();
     let seq = state.current_seq.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some(text) = delta_rx.recv().await {
+        while let Some(delta) = delta_rx.recv().await {
             let seq = seq.load(Ordering::Relaxed);
-            if seq != 0 {
-                let _ = app_handle.emit(EV_TEXT_DELTA, TextDelta { seq, text });
+            if seq == 0 {
+                continue;
+            }
+            match delta {
+                ModelDelta::Text(text) => {
+                    let _ = app_handle.emit(EV_TEXT_DELTA, TextDelta { seq, text });
+                }
+                ModelDelta::Thinking(text) => {
+                    let _ = app_handle.emit(EV_THINKING_DELTA, ThinkingDelta { seq, text });
+                }
             }
         }
     });
@@ -655,6 +709,67 @@ fn rig_name_for(provider: &str) -> &'static str {
     } else {
         "coding-live"
     }
+}
+
+fn permission_level(level: &str) -> Option<PermissionLevel> {
+    match level {
+        "workspace_auto" => Some(PermissionLevel::WorkspaceAuto),
+        "full_auto" => Some(PermissionLevel::FullAuto),
+        _ => None,
+    }
+}
+
+/// The permission override lives in the desktop config, not in the rig file.
+/// It takes effect the next time the engine opens.
+#[tauri::command]
+pub fn save_permission(state: State<'_, SharedState>, level: String) -> Result<(), String> {
+    let parsed = permission_level(level.trim()).ok_or_else(|| "未知的权限级别".to_owned())?;
+    let mut config = state
+        .config
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    config.permission = Some(parsed.as_str().to_owned());
+    config::save_config(&config)
+}
+
+/// What the composer's status line shows: the effective permission, the
+/// connection and the context pressure of recent turns.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStatus {
+    pub permission: String,
+    pub rig: String,
+    pub model: String,
+    pub provider: String,
+    pub provider_name: String,
+    pub context_budget: u32,
+    pub context_window: Option<u32>,
+    pub recent: Vec<ContextPoint>,
+}
+
+#[tauri::command]
+pub fn session_status(state: State<'_, SharedState>) -> Result<SessionStatus, String> {
+    let config = state
+        .config
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let engine = state
+        .engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    Ok(SessionStatus {
+        permission: engine.permission().as_str().to_owned(),
+        rig: engine.rig_name(),
+        model: config.model.clone(),
+        provider: config.provider.clone(),
+        provider_name: config.provider_name.clone(),
+        context_budget: engine.context_budget(),
+        context_window: Some(engine.config().context_window).filter(|window| *window > 0),
+        recent: engine.context_history(),
+    })
 }
 
 fn ensure_idle(state: &DesktopState) -> Result<(), String> {
@@ -751,12 +866,87 @@ pub async fn send_message(
             Some(current) => take_snapshot(current).await,
             None => None,
         };
+
+        // Live tool activity: the kernel keeps this turn's events in the log
+        // while the turn runs, so a short poll is enough to show each call as
+        // it starts and finishes. Sequence numbers stay monotonic across the
+        // per-turn clear, so `live_last` filters out the previous turn.
+        let live_events = engine.events().clone();
+        let live_app = app.clone();
+        let live_done = Arc::new(AtomicBool::new(false));
+        let live_done_flag = live_done.clone();
+        let live_last = Arc::new(std::sync::atomic::AtomicU64::new(
+            live_events
+                .snapshot()
+                .last()
+                .map(|record| record.seq)
+                .unwrap_or(0),
+        ));
+        let poller = {
+            let live_last = live_last.clone();
+            tauri::async_runtime::spawn(async move {
+                while !live_done_flag.load(Ordering::Relaxed) {
+                    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                    for record in live_events.snapshot() {
+                        let mut last = live_last.load(Ordering::Relaxed);
+                        if record.seq <= last {
+                            continue;
+                        }
+                        last = record.seq;
+                        live_last.store(last, Ordering::Relaxed);
+                        match record.event {
+                            Event::ToolStarted {
+                                call_id,
+                                tool,
+                                args_preview,
+                                ..
+                            } => {
+                                let _ = live_app.emit(
+                                    EV_TOOL_STARTED,
+                                    ToolStartedEvent {
+                                        seq,
+                                        call_id: call_id.get(),
+                                        name: tool,
+                                        args: args_preview,
+                                    },
+                                );
+                            }
+                            Event::ToolFinished {
+                                call_id,
+                                tool,
+                                ok,
+                                error,
+                                duration_ms,
+                                output_preview,
+                                ..
+                            } => {
+                                let _ = live_app.emit(
+                                    EV_TOOL_FINISHED,
+                                    ToolFinishedEvent {
+                                        seq,
+                                        call_id: call_id.get(),
+                                        name: tool,
+                                        ok,
+                                        duration_ms,
+                                        error: error.map(|code| code.as_str().to_owned()),
+                                        output: output_preview,
+                                    },
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            })
+        };
+
         let result = engine.run_turn(&input, token).await;
-        if let (Some(before), Some(current)) = (before, checkpoint_session.as_ref()) {
-            if let Some(after) = take_snapshot(current).await {
-                record_checkpoint(current, seq, &before, &after).await;
-            }
-        }
+        live_done.store(true, Ordering::Relaxed);
+        poller.abort();
+
+        // The persisted turn is ready now. Show it and release the composer
+        // before the checkpoint snapshot: that git commit can take seconds on
+        // a large project and must not hold the raw streaming view.
         {
             let mut cancel = state
                 .cancel
@@ -764,9 +954,9 @@ pub async fn send_message(
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             *cancel = None;
         }
-        match result {
+        match &result {
             Ok(_) => {
-                if let Some(current) = current {
+                if let Some(current) = current.as_ref() {
                     let meta = {
                         let _guard = state
                             .session_io
@@ -801,6 +991,17 @@ pub async fn send_message(
                         message: error.to_string(),
                     },
                 );
+            }
+        }
+
+        // Undo and the change summary are post-turn artifacts; the view
+        // reloads them when the pair is recorded.
+        if let (Some(before), Some(current)) = (before, current.as_ref()) {
+            if let Some(after) = take_snapshot(current).await {
+                record_checkpoint(current, seq, &before, &after).await;
+                if result.is_ok() {
+                    let _ = app.emit(EV_TURN_CHANGES, TurnChanges { seq });
+                }
             }
         }
     });
@@ -850,6 +1051,38 @@ pub async fn undo_last_turn(state: State<'_, SharedState>) -> Result<(), String>
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// The files the latest turn changed, from its checkpoint pair. Empty when the
+/// turn changed nothing, has no checkpoint, or was already undone.
+#[tauri::command]
+pub async fn turn_changes(
+    state: State<'_, SharedState>,
+) -> Result<Vec<checkpoints::FileChange>, String> {
+    let state = state.inner().clone();
+    let current = state
+        .current
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let engine = state
+        .engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let (Some(current), Some(engine)) = (current, engine) else {
+        return Ok(Vec::new());
+    };
+    let Some(seq) = engine.history(None, 1).turns.first().map(|turn| turn.seq) else {
+        return Ok(Vec::new());
+    };
+    let changes = tauri::async_runtime::spawn_blocking(move || {
+        checkpoints::changes(&current.state_dir, &current.workspace, &current.id, seq)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+    .unwrap_or_default();
+    Ok(changes)
 }
 
 #[tauri::command]

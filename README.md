@@ -65,9 +65,8 @@ user message. Rows can be renamed and archived behind a `已归档 · N` tab;
 an archived conversation opens with its history and comes back the moment you
 write in it, and only archived conversations can be permanently deleted, after
 a `永久删除对话?` dialog.
-The header's 中/EN switch changes the interface language; the gear opens a
-single-page settings panel with the same model picker, key, language and
-workspace info. A custom OpenAI-compatible endpoint — a local model server, for
+The gear opens a single-page settings panel with the same model picker,
+key, language and workspace info; the language lives there, not in the header. A custom OpenAI-compatible endpoint — a local model server, for
 example — is entered there under `手动填写接口`; an endpoint that needs no key
 accepts any placeholder.
 

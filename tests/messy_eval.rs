@@ -70,6 +70,8 @@ async fn a_large_messy_workspace_is_repaired() {
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
         model: Some(model),
+        permission: None,
+        acceptance: true,
     })
     .expect("the engine opens");
 

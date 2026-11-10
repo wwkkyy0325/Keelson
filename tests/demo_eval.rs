@@ -98,6 +98,8 @@ async fn demo_workspace_is_repaired_by_the_coding_rig() {
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
         model: Some(model),
+        permission: None,
+        acceptance: true,
     })
     .expect("the engine opens");
 

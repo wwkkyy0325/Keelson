@@ -56,6 +56,9 @@ pub struct DesktopConfig {
     /// The rig file to run. Empty means "whichever rig the provider implies",
     /// which is what an install from before the picker gets.
     pub rig: String,
+    /// A host permission override (`workspace_auto` or `full_auto`). `None`
+    /// keeps the rig profile's level.
+    pub permission: Option<String>,
 }
 
 impl Default for DesktopConfig {
@@ -75,6 +78,7 @@ impl Default for DesktopConfig {
             key_providers: Vec::new(),
             manual: None,
             rig: String::new(),
+            permission: None,
         }
     }
 }

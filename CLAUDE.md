@@ -26,7 +26,9 @@ desktop/         Tauri shell + Svelte frontend            (the only face)
   (ADR 0003). The CLI starts no session and runs no turn.
 - Rigs are files. Do not add a rig editor or per-rig behavior toggles: the
   app only chooses which rig file runs (settings → Rig), never what it does.
-  There is no theme picker.
+  The one exception is the permission-level override in the composer status
+  line (ADR 0034); it lives in the desktop config, not in a rig file. There is
+  no theme picker.
 - Do not add a terminal UI or keep a hidden fallback face. A second face
   returns only with a concrete need and a new ADR.
 - The only non-model network request is the models.dev catalog in

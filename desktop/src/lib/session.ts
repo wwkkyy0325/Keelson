@@ -1,5 +1,6 @@
 import type {
   Interaction,
+  LiveTool,
   ProjectEntry,
   SessionMeta,
   SessionView,
@@ -10,7 +11,16 @@ import type {
 export type RunningTurn = {
   seq: number;
   input: string;
+  /// Text from the model call in progress. When that call asks for a tool,
+  /// its text was commentary, so it moves to `process` and the answer area
+  /// only ever holds the call that actually finished the turn.
   text: string;
+  /// Thinking streamed so far, shown while the turn runs.
+  thinking: string;
+  /// Commentary from calls that went on to call a tool, oldest first.
+  process: string[];
+  /// Tool calls reported by the running turn, in start order.
+  tools: LiveTool[];
 };
 
 export type SessionState = {
@@ -30,6 +40,12 @@ export type SessionState = {
   loadingOlder: boolean;
   /** A backend failure that did not produce a persisted turn. */
   lastError: string | null;
+  /// Bumped on every session-opened, so views that read the engine (status,
+  /// change list) reload even when the id stays the same after a reconnect.
+  epoch: number;
+  /// Bumped when a finished turn's checkpoint pair is recorded, so the change
+  /// list reloads without waiting for the snapshot before the turn is shown.
+  changesEpoch: number;
 };
 
 export function initialSession(): SessionState {
@@ -45,6 +61,8 @@ export function initialSession(): SessionState {
     nextBefore: null,
     loadingOlder: false,
     lastError: null,
+    epoch: 0,
+    changesEpoch: 0,
   };
 }
 
@@ -56,11 +74,23 @@ export type Action =
   | { type: "loading-older"; value: boolean }
   | { type: "turn-started"; seq: number; input: string }
   | { type: "text-delta"; seq: number; text: string }
+  | { type: "thinking-delta"; seq: number; text: string }
+  | { type: "tool-started"; seq: number; callId: number; name: string; args: string | null }
+  | {
+      type: "tool-finished";
+      seq: number;
+      callId: number;
+      name: string;
+      ok: boolean;
+      durationMs: number;
+      error: string | null;
+      output: string | null;
+    }
+  | { type: "turn-changes"; seq: number }
   | { type: "turn-finished"; turn: Turn }
   | { type: "turn-failed"; seq: number; message: string }
   | { type: "interaction-requested"; interaction: Interaction }
   | { type: "interaction-resolved"; id: string }
-  | { type: "clear-error" }
   | { type: "reset" };
 
 export function reduce(state: SessionState, action: Action): SessionState {
@@ -68,6 +98,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
     case "session-opened":
       return {
         ...initialSession(),
+        epoch: state.epoch + 1,
         rig: action.view.rig,
         workspace: action.view.workspace,
         sessionId: action.view.sessionId,
@@ -107,7 +138,14 @@ export function reduce(state: SessionState, action: Action): SessionState {
       }
       return {
         ...state,
-        running: { seq: action.seq, input: action.input, text: "" },
+        running: {
+          seq: action.seq,
+          input: action.input,
+          text: "",
+          thinking: "",
+          process: [],
+          tools: [],
+        },
         lastError: null,
       };
 
@@ -119,6 +157,77 @@ export function reduce(state: SessionState, action: Action): SessionState {
         ...state,
         running: { ...state.running, text: state.running.text + action.text },
       };
+
+    case "thinking-delta":
+      if (state.running?.seq !== action.seq) {
+        return state;
+      }
+      return {
+        ...state,
+        running: {
+          ...state.running,
+          thinking: state.running.thinking + action.text,
+        },
+      };
+
+    case "tool-started": {
+      if (state.running?.seq !== action.seq) {
+        return state;
+      }
+      // A call that goes on to use a tool was not the answer. Park its text
+      // with the tool activity so the answer area stays clean.
+      const process = state.running.text.trim()
+        ? [...state.running.process, state.running.text]
+        : state.running.process;
+      const tools = state.running.tools.filter(
+        (tool) => tool.callId !== action.callId,
+      );
+      tools.push({
+        callId: action.callId,
+        name: action.name,
+        args: action.args,
+        ok: null,
+        durationMs: 0,
+        error: null,
+        output: null,
+      });
+      return {
+        ...state,
+        running: { ...state.running, tools, text: "", process },
+      };
+    }
+
+    case "tool-finished": {
+      if (state.running?.seq !== action.seq) {
+        return state;
+      }
+      const finished = {
+        callId: action.callId,
+        name: action.name,
+        args: null,
+        ok: action.ok,
+        durationMs: action.durationMs,
+        error: action.error,
+        output: action.output,
+      };
+      const known = state.running.tools.some(
+        (tool) => tool.callId === action.callId,
+      );
+      const tools = known
+        ? state.running.tools.map((tool) =>
+            tool.callId === action.callId ? { ...tool, ...finished, args: tool.args } : tool,
+          )
+        : [...state.running.tools, finished];
+      return { ...state, running: { ...state.running, tools } };
+    }
+
+    case "turn-changes":
+      // The pair arrives after the turn row; only the conversation that shows
+      // it needs to reload.
+      if (!state.turns.some((turn) => turn.seq === action.seq)) {
+        return state;
+      }
+      return { ...state, changesEpoch: state.changesEpoch + 1 };
 
     case "turn-finished":
       return {
@@ -151,9 +260,6 @@ export function reduce(state: SessionState, action: Action): SessionState {
             ? null
             : state.pendingInteraction,
       };
-
-    case "clear-error":
-      return { ...state, lastError: null };
 
     case "reset":
       return initialSession();

@@ -67,6 +67,15 @@ pub struct StoredVerification {
     pub evidence: Vec<StoredEvidence>,
 }
 
+/// Token usage summed over one turn's model calls. Absent in older sessions.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cached_input_tokens: u32,
+}
+
 /// One finished turn as the session file keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTurn {
@@ -74,8 +83,15 @@ pub struct StoredTurn {
     pub input: String,
     pub state: String,
     pub answer: String,
+    /// Model thinking for this turn, bounded by the host. Absent in sessions
+    /// written before the field existed.
+    #[serde(default)]
+    pub thinking: String,
     pub error: Option<String>,
     pub duration_ms: u64,
+    /// Input, output and cached input tokens for the whole turn.
+    #[serde(default)]
+    pub usage: StoredUsage,
     /// Acceptance result when the host ran a checklist for this turn.
     #[serde(default)]
     pub verification_passed: Option<bool>,
@@ -174,8 +190,10 @@ mod tests {
                 input: "hello".to_owned(),
                 state: "Done".to_owned(),
                 answer: "hi".to_owned(),
+                thinking: String::new(),
                 error: None,
                 duration_ms: 3,
+                usage: StoredUsage::default(),
                 verification_passed: None,
                 verification: None,
                 tools: Vec::new(),

@@ -67,6 +67,8 @@ async fn a_cross_file_rename_uses_apply_edits() {
         interactions: Arc::new(DeferAllInteractionPort),
         deltas: None,
         model: Some(model),
+        permission: None,
+        acceptance: true,
     })
     .expect("the engine opens");
 

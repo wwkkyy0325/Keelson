@@ -20,6 +20,17 @@ struct Record {
     undone: bool,
 }
 
+/// One path a turn changed, with its line counts. `status` is the short git
+/// status letter (`A`, `M`, `D`, `T`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChange {
+    pub path: String,
+    pub status: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Records {
     #[serde(default)]
@@ -154,6 +165,71 @@ pub fn undo(state_dir: &Path, workspace: &Path, session_id: &str, seq: u32) -> R
     save_records(&path, &records)
 }
 
+/// The paths one turn changed between its two checkpoints. A turn with no
+/// record, a failed snapshot, or an already undone turn has nothing to show.
+pub fn changes(
+    state_dir: &Path,
+    workspace: &Path,
+    session_id: &str,
+    seq: u32,
+) -> Result<Vec<FileChange>, String> {
+    let records = load_records(&records_path(state_dir, workspace))?;
+    let Some(entry) = records.turns.get(&key(session_id, seq)) else {
+        return Ok(Vec::new());
+    };
+    if entry.undone {
+        return Ok(Vec::new());
+    }
+    let git_dir = repo_dir(state_dir, workspace).join(".git");
+    let numstat = run_git(
+        &git_dir,
+        workspace,
+        &[
+            "diff",
+            "--numstat",
+            "--no-renames",
+            &entry.before,
+            &entry.after,
+        ],
+    )?;
+    let names = run_git(
+        &git_dir,
+        workspace,
+        &[
+            "diff",
+            "--name-status",
+            "--no-renames",
+            &entry.before,
+            &entry.after,
+        ],
+    )?;
+    let statuses: BTreeMap<String, String> = names
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(status, path)| (path.to_owned(), status.to_owned()))
+        .collect();
+    let changes = numstat
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let added = parts.next()?;
+            let removed = parts.next()?;
+            let path = parts.next()?;
+            Some(FileChange {
+                path: path.to_owned(),
+                status: statuses
+                    .get(path)
+                    .cloned()
+                    .unwrap_or_else(|| "M".to_owned()),
+                // Binary files report `-`; they still count as changed.
+                added: added.parse().unwrap_or(0),
+                removed: removed.parse().unwrap_or(0),
+            })
+        })
+        .collect();
+    Ok(changes)
+}
+
 fn ensure_repo(workspace: &Path, state_dir: &Path) -> Result<PathBuf, String> {
     let repo = repo_dir(state_dir, workspace);
     let git_dir = repo.join(".git");
@@ -268,6 +344,46 @@ mod tests {
         );
         assert!(!workspace.join("new.txt").exists());
         assert!(undo(&state_dir, &workspace, "s-1", 1).is_err());
+    }
+
+    #[test]
+    fn a_turn_reports_the_files_it_changed() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        let state_dir = dir.path().join("state");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("notes.txt"), "one\n").expect("notes");
+        std::fs::write(workspace.join("old.txt"), "old\n").expect("old");
+
+        let before = snapshot(&workspace, &state_dir).expect("the first snapshot");
+        std::fs::write(workspace.join("notes.txt"), "two\nthree\n").expect("edit");
+        std::fs::remove_file(workspace.join("old.txt")).expect("delete");
+        std::fs::write(workspace.join("new.txt"), "new\n").expect("create");
+        let after = snapshot(&workspace, &state_dir).expect("the second snapshot");
+        record(&state_dir, &workspace, "s-1", 1, &before, &after).expect("record");
+
+        let stats = changes(&state_dir, &workspace, "s-1", 1).expect("the diff stats");
+        let by_path: BTreeMap<&str, &FileChange> = stats
+            .iter()
+            .map(|change| (change.path.as_str(), change))
+            .collect();
+        assert_eq!(stats.len(), 3);
+        let notes = by_path.get("notes.txt").expect("the edit");
+        assert_eq!(notes.status, "M");
+        assert_eq!((notes.added, notes.removed), (2, 1));
+        assert_eq!(by_path.get("new.txt").expect("the create").status, "A");
+        assert_eq!(by_path.get("old.txt").expect("the delete").status, "D");
+
+        undo(&state_dir, &workspace, "s-1", 1).expect("undo");
+        assert!(
+            changes(&state_dir, &workspace, "s-1", 1)
+                .expect("the diff stats")
+                .is_empty(),
+            "an undone turn has nothing left to show"
+        );
     }
 
     #[test]

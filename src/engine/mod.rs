@@ -4,6 +4,7 @@
 //! what the user sees and where it goes (ADR 0004).
 
 mod git;
+mod history;
 mod store;
 
 use std::path::{Path, PathBuf};
@@ -24,9 +25,10 @@ use keel_runtime::{
     CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool, EditFileTool, EventLog, EventRecord,
     GlobTool, HistoryStage, InteractionBroker, InterjectionPush, KernelOptions, LatestStage,
     ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore, MakeDirTool, MemoryStage,
-    MockModel, MockStep, MoveFileTool, MultiEditTool, PermissionEngine, ReadFileTool, ReadLedger,
-    RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool,
-    ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
+    MockModel, MockStep, MoveFileTool, MultiEditTool, PermissionEngine, ProviderSummarizer,
+    ReadFileTool, ReadLedger, RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage,
+    TaskStateStage, TodoTool, ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome,
+    WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -34,8 +36,10 @@ use tokio::sync::mpsc;
 
 use crate::rig::{self, Rig};
 
+pub use keel_core::PermissionLevel;
 pub use store::{
-    Store, StoredEvent, StoredEvidence, StoredSession, StoredTurn, StoredVerification, ToolLine,
+    Store, StoredEvent, StoredEvidence, StoredSession, StoredTurn, StoredUsage, StoredVerification,
+    ToolLine,
 };
 
 /// Everything opening a session needs. A host supplies its own interaction
@@ -46,10 +50,25 @@ pub struct OpenRequest {
     pub state_dir: PathBuf,
     pub store_path: PathBuf,
     pub interactions: Arc<dyn InteractionPort>,
-    pub deltas: Option<mpsc::Sender<String>>,
+    /// Streamed model output: answer text and thinking, in arrival order.
+    pub deltas: Option<mpsc::Sender<ModelDelta>>,
     /// A host-supplied model, used by the desktop onboarding. `None` keeps the
     /// profile's provider and the environment-variable key.
     pub model: Option<ModelOverride>,
+    /// A host-chosen permission level. `None` keeps the profile's.
+    pub permission: Option<keel_core::PermissionLevel>,
+    /// Run the workspace's own checks after a turn that changed files.
+    /// A host that measures the conversation, not the project, can turn them
+    /// off; the desktop always keeps them on.
+    pub acceptance: bool,
+}
+
+/// One piece of model output streamed to the host. Thinking is separate from
+/// the answer: it is display material, never part of the turn's history.
+#[derive(Debug, Clone)]
+pub enum ModelDelta {
+    Text(String),
+    Thinking(String),
 }
 
 /// Explicit model settings from the desktop. The key never comes from a
@@ -65,6 +84,15 @@ pub struct ModelOverride {
     pub context_window: Option<u32>,
 }
 
+/// Context usage at the end of one turn, for the composer's status line.
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextPoint {
+    pub seq: u32,
+    pub used: u32,
+    pub ceiling: u32,
+}
+
 /// One finished turn as a read model. It carries the compact turn history, not
 /// the kernel event stream.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,9 +101,14 @@ pub struct TurnView {
     pub seq: u32,
     pub input: String,
     pub answer: String,
+    /// Thinking the model streamed for this turn, bounded by the engine.
+    #[serde(default)]
+    pub thinking: String,
     pub state: String,
     pub error: Option<String>,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub usage: StoredUsage,
     pub verification_passed: Option<bool>,
     #[serde(default)]
     pub verification: Option<StoredVerification>,
@@ -88,14 +121,47 @@ impl From<&StoredTurn> for TurnView {
             seq: turn.seq,
             input: turn.input.clone(),
             answer: turn.answer.clone(),
+            thinking: turn.thinking.clone(),
             state: turn.state.clone(),
             error: turn.error.clone(),
             duration_ms: turn.duration_ms,
+            usage: turn_usage(turn),
             verification_passed: turn.verification_passed,
             verification: turn.verification.clone(),
             tools: turn.tools.clone(),
         }
     }
+}
+
+/// Turns written before the usage field existed still have the numbers in
+/// their `model_finished` events, so old conversations show the cost line too.
+fn turn_usage(turn: &StoredTurn) -> StoredUsage {
+    if turn.usage != StoredUsage::default() {
+        return turn.usage;
+    }
+    let mut usage = StoredUsage::default();
+    for event in &turn.events {
+        let Some(reported) = event
+            .payload
+            .get("model_finished")
+            .and_then(|finished| finished.get("usage"))
+        else {
+            continue;
+        };
+        let field = |name: &str| {
+            reported
+                .get(name)
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .unwrap_or(0)
+        };
+        usage.input_tokens = usage.input_tokens.saturating_add(field("input_tokens"));
+        usage.output_tokens = usage.output_tokens.saturating_add(field("output_tokens"));
+        usage.cached_input_tokens = usage
+            .cached_input_tokens
+            .saturating_add(field("cached_input_tokens"));
+    }
+    usage
 }
 
 /// A keyset page of turns, oldest first. `next_before` is the cursor for the
@@ -116,8 +182,11 @@ pub struct Engine {
     events: Arc<EventLog>,
     todos: Arc<Mutex<TodoList>>,
     store: Store,
-    session: Mutex<StoredSession>,
+    /// Shared with `search_history`, which reads the stored turns directly.
+    session: Arc<Mutex<StoredSession>>,
     roots: Vec<String>,
+    /// Thinking streamed during the current turn, persisted with it.
+    thinking: Arc<Mutex<ThinkingBuffer>>,
 }
 
 enum HostModel {
@@ -173,9 +242,42 @@ impl ModelProvider for HostModel {
 
 /// Forwards text deltas to the host while the driver consumes the stream. The
 /// kernel's event stream carries boundaries, not tokens (ADR 0004).
+/// Thinking kept for the transcript, bounded so a long reasoning round cannot
+/// grow the session document without limit.
+const MAX_TURN_THINKING_BYTES: usize = 64 * 1024;
+
+#[derive(Default)]
+struct ThinkingBuffer {
+    text: String,
+    truncated: bool,
+}
+
+fn record_thinking(buffer: &Arc<Mutex<ThinkingBuffer>>, delta: &str) {
+    let mut buffer = buffer
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if buffer.truncated {
+        return;
+    }
+    buffer.text.push_str(delta);
+    if buffer.text.len() > MAX_TURN_THINKING_BYTES {
+        let cut = buffer
+            .text
+            .char_indices()
+            .take_while(|(index, _)| *index <= MAX_TURN_THINKING_BYTES)
+            .last()
+            .map(|(index, _)| index)
+            .unwrap_or(0);
+        buffer.text.truncate(cut);
+        buffer.text.push_str("\n… thinking truncated");
+        buffer.truncated = true;
+    }
+}
+
 struct DeltaModel {
     inner: HostModel,
-    deltas: Option<mpsc::Sender<String>>,
+    deltas: Option<mpsc::Sender<ModelDelta>>,
+    thinking: Arc<Mutex<ThinkingBuffer>>,
 }
 
 #[async_trait]
@@ -185,16 +287,29 @@ impl ModelProvider for DeltaModel {
         request: ModelRequest,
         cancel: &CancelToken,
     ) -> Result<ModelStream, ModelError> {
-        let Some(sender) = &self.deltas else {
-            return self.inner.stream(request, cancel).await;
-        };
         let mut stream = self.inner.stream(request, cancel).await?;
-        let sender = sender.clone();
+        let sender = self.deltas.clone();
+        let thinking = self.thinking.clone();
         let (tx, rx) = mpsc::channel(64);
         tokio::spawn(async move {
             while let Some(chunk) = stream.recv().await {
-                if let Ok(ModelChunk::TextDelta(text)) = &chunk {
-                    let _ = sender.send(text.clone()).await;
+                if let Ok(chunk) = &chunk {
+                    match chunk {
+                        ModelChunk::TextDelta(text) => {
+                            if let Some(sender) = &sender {
+                                let _ = sender.send(ModelDelta::Text(text.clone())).await;
+                            }
+                        }
+                        ModelChunk::ThinkingDelta(text) => {
+                            // Keep the thought for the transcript even when no
+                            // host is listening to the live stream.
+                            record_thinking(&thinking, text);
+                            if let Some(sender) = &sender {
+                                let _ = sender.send(ModelDelta::Thinking(text.clone())).await;
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 if tx.send(chunk).await.is_err() {
                     break;
@@ -216,6 +331,8 @@ impl Engine {
             interactions,
             deltas,
             model,
+            permission,
+            acceptance,
         } = request;
 
         let rig_name = rig.name.clone();
@@ -248,6 +365,11 @@ impl Engine {
         let outputs_dir = project_dir.join("outputs");
 
         let mut config = load_profile(&rig.profile)?;
+        // A host may override the profile's permission level before the
+        // permission engine is built; the rig still supplies the default.
+        if let Some(level) = permission {
+            config.permission_level = level;
+        }
         // Project instructions are context, not a rig setting. AGENTS.md is
         // the cross-tool name; CLAUDE.md is the fallback.
         if let Some(instructions) = project_instructions(&workspace) {
@@ -300,11 +422,13 @@ impl Engine {
         let background = Arc::new(
             LocalBackgroundTasks::new(outputs_dir.join("background")).with_events(events.clone()),
         );
+        let session = Arc::new(Mutex::new(session));
         let registry = Arc::new(tools(
             &project_dir,
             &config,
             todos.clone(),
             background.clone(),
+            session.clone(),
         )?);
         let context = ContextBuilder::new(vec![
             Arc::new(SystemStage::new()),
@@ -323,6 +447,12 @@ impl Engine {
             let usable = capacity.saturating_sub(output);
             if usable > 0 {
                 config.context.budget_tokens = config.context.budget_tokens.min(usable);
+                // The ladder's ceiling follows the same capacity limit.
+                config.context.max_budget_tokens = config
+                    .context
+                    .max_budget_tokens
+                    .min(usable)
+                    .max(config.context.budget_tokens);
             }
             let floor = config.context.budget_tokens.saturating_add(output);
             config.context_window = capacity.max(floor);
@@ -335,13 +465,15 @@ impl Engine {
             config.model_route.model = over.model.clone();
         }
 
-        let model = DeltaModel {
+        let thinking = Arc::new(Mutex::new(ThinkingBuffer::default()));
+        let delta_model = DeltaModel {
             inner: build_model(&config, model.as_ref())?,
             deltas,
+            thinking: thinking.clone(),
         };
         let policy: Arc<dyn Policy> = Arc::new(config.clone());
         let mut driver = TurnDriver::new(
-            model,
+            delta_model,
             registry,
             context,
             policy,
@@ -359,14 +491,25 @@ impl Engine {
             },
         )
         .with_outputs_dir(outputs_dir);
+        // Sealed segments are compressed into records; those keep the goal,
+        // result and open items, not the decisions and errors. A second model
+        // instance writes the rolling summary that does. The mock provider has
+        // nothing worth summarizing, so the offline rig stays deterministic.
+        let summarizer_model = build_model(&config, model.as_ref())?;
+        if !matches!(summarizer_model, HostModel::Mock(_)) {
+            driver = driver.with_summarizer(Arc::new(ProviderSummarizer::new(summarizer_model)));
+        }
         // A turn that edited the workspace is checked by the project's own
         // commands. A conversational turn skips them.
-        let checks = workspace_checks(&workspace);
-        if !checks.is_empty() {
-            let workspace_root = workspace.clone();
-            let selector: AcceptanceSelector =
-                Arc::new(move |paths: &[PathBuf]| selected_checks(&checks, &workspace_root, paths));
-            driver = driver.with_acceptance_selector(selector, 2);
+        if acceptance {
+            let checks = workspace_checks(&workspace);
+            if !checks.is_empty() {
+                let workspace_root = workspace.clone();
+                let selector: AcceptanceSelector = Arc::new(move |paths: &[PathBuf]| {
+                    selected_checks(&checks, &workspace_root, paths)
+                });
+                driver = driver.with_acceptance_selector(selector, 2);
+            }
         }
         if let Some(snapshot) = restored {
             driver = driver.with_session(Session::restore(snapshot)?);
@@ -379,8 +522,9 @@ impl Engine {
             events,
             todos,
             store,
-            session: Mutex::new(session),
+            session,
             roots,
+            thinking,
         })
     }
 
@@ -390,6 +534,21 @@ impl Engine {
         input: &str,
         cancel: CancelToken,
     ) -> Result<TurnOutcome, KernelError> {
+        // The log is per turn: `persist` pairs this turn's tool events, and a
+        // long-lived engine would otherwise repeat every earlier call in each
+        // new row. Sequence numbers stay monotonic across the clear.
+        // The log is per turn: `persist` pairs this turn's tool events, and a
+        // long-lived engine would otherwise repeat every earlier call in each
+        // new row. Sequence numbers stay monotonic across the clear.
+        self.events.clear();
+        {
+            let mut thinking = self
+                .thinking
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            thinking.text.clear();
+            thinking.truncated = false;
+        }
         let outcome = self.driver.run(input, cancel).await;
         self.persist(input, &outcome)?;
         Ok(outcome)
@@ -412,6 +571,12 @@ impl Engine {
             .error
             .as_ref()
             .map(|error| format!("{} ({})", error, error.code().as_str()));
+        let thinking = self
+            .thinking
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .text
+            .clone();
         let records = self.events.snapshot();
         let tools = tool_lines(&records);
         let stored_events = records
@@ -426,8 +591,14 @@ impl Engine {
             input: input.to_owned(),
             state: outcome.state.to_string(),
             answer: outcome.answer.body.clone(),
+            thinking,
             error,
             duration_ms: outcome.duration_ms,
+            usage: StoredUsage {
+                input_tokens: outcome.usage.input_tokens,
+                output_tokens: outcome.usage.output_tokens,
+                cached_input_tokens: outcome.usage.cached_input_tokens,
+            },
             verification_passed: outcome.verification.as_ref().map(|report| report.passed()),
             verification: outcome.verification.as_ref().map(stored_verification),
             tools,
@@ -459,6 +630,57 @@ impl Engine {
 
     pub fn config(&self) -> &RuntimeConfig {
         &self.config
+    }
+
+    /// The effective permission level, including a host override.
+    pub fn permission(&self) -> keel_core::PermissionLevel {
+        self.config.permission_level
+    }
+
+    /// The rig this session was opened with.
+    pub fn rig_name(&self) -> String {
+        self.session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .rig
+            .clone()
+    }
+
+    /// The working set in force: the profile's base, or the raised value after
+    /// the context ladder moved.
+    pub fn context_budget(&self) -> u32 {
+        self.driver.working_set()
+    }
+
+    /// The context pressure at the end of recent turns, oldest first.
+    pub fn context_history(&self) -> Vec<ContextPoint> {
+        let session = self
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut points: Vec<ContextPoint> = session
+            .turns
+            .iter()
+            .filter_map(|turn| {
+                turn.events.iter().rev().find_map(|event| {
+                    let pressure = event.payload.get("context_pressure")?;
+                    Some(ContextPoint {
+                        seq: turn.seq,
+                        used: pressure
+                            .get("used")?
+                            .as_u64()
+                            .and_then(|v| u32::try_from(v).ok())?,
+                        ceiling: pressure
+                            .get("ceiling")?
+                            .as_u64()
+                            .and_then(|v| u32::try_from(v).ok())?,
+                    })
+                })
+            })
+            .collect();
+        let excess = points.len().saturating_sub(8);
+        points.drain(..excess);
+        points
     }
 
     pub fn events(&self) -> &Arc<EventLog> {
@@ -1241,6 +1463,7 @@ fn tools(
     config: &RuntimeConfig,
     todos: Arc<Mutex<TodoList>>,
     background: Arc<dyn BackgroundTasks>,
+    session: Arc<Mutex<StoredSession>>,
 ) -> Result<ToolRegistry, KernelError> {
     let trash = Arc::new(LocalTrashStore::at(project_dir.join("trash")));
     // One ledger per engine: a write or edit must follow a current read.
@@ -1275,6 +1498,7 @@ fn tools(
     registry.register(Arc::new(ListTrashTool::new(trash.clone())))?;
     registry.register(Arc::new(RestoreFileTool::new(trash)))?;
     registry.register(Arc::new(TodoTool::new(todos)))?;
+    registry.register(Arc::new(history::SearchHistoryTool::new(session)))?;
     Ok(registry)
 }
 
@@ -1372,6 +1596,93 @@ mod tests {
     use keel_core::TurnState;
     use keel_runtime::DeferAllInteractionPort;
 
+    #[test]
+    fn old_turns_recover_usage_from_their_events() {
+        let turn = StoredTurn {
+            seq: 1,
+            input: "hi".to_owned(),
+            state: "Done".to_owned(),
+            answer: "hello".to_owned(),
+            thinking: String::new(),
+            error: None,
+            duration_ms: 2,
+            usage: StoredUsage::default(),
+            verification_passed: None,
+            verification: None,
+            tools: Vec::new(),
+            events: vec![StoredEvent {
+                name: "model_finished".to_owned(),
+                payload: serde_json::json!({
+                    "model_finished": {
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 7,
+                            "cached_input_tokens": 60
+                        }
+                    }
+                }),
+            }],
+        };
+
+        let view = TurnView::from(&turn);
+
+        assert_eq!(
+            view.usage,
+            StoredUsage {
+                input_tokens: 100,
+                output_tokens: 7,
+                cached_input_tokens: 60,
+            }
+        );
+    }
+
+    #[test]
+    fn thinking_is_bounded_for_storage() {
+        let buffer = Arc::new(Mutex::new(ThinkingBuffer::default()));
+        record_thinking(&buffer, &"字".repeat(MAX_TURN_THINKING_BYTES));
+        let buffer = buffer.lock().unwrap();
+        assert!(buffer.truncated, "the cap was reached");
+        assert!(buffer.text.ends_with("… thinking truncated"));
+        assert!(
+            buffer.text.len() <= MAX_TURN_THINKING_BYTES + "… thinking truncated".len() + 1,
+            "the stored text stays near the cap"
+        );
+    }
+
+    #[test]
+    fn a_stored_usage_wins_over_the_events() {
+        let mut turn = StoredTurn {
+            seq: 1,
+            input: "hi".to_owned(),
+            state: "Done".to_owned(),
+            answer: "hello".to_owned(),
+            thinking: String::new(),
+            error: None,
+            duration_ms: 2,
+            usage: StoredUsage {
+                input_tokens: 3,
+                output_tokens: 1,
+                cached_input_tokens: 0,
+            },
+            verification_passed: None,
+            verification: None,
+            tools: Vec::new(),
+            events: Vec::new(),
+        };
+        turn.events.push(StoredEvent {
+            name: "model_finished".to_owned(),
+            payload: serde_json::json!({
+                "model_finished": {
+                    "usage": { "input_tokens": 100, "output_tokens": 7 }
+                }
+            }),
+        });
+
+        let view = TurnView::from(&turn);
+
+        assert_eq!(view.usage.input_tokens, 3);
+    }
+
     fn check_programs(items: &[AcceptanceItem]) -> Vec<&str> {
         items
             .iter()
@@ -1443,6 +1754,8 @@ system = "prompt.md"
                 interactions,
                 deltas: None,
                 model: None,
+                permission: None,
+                acceptance: true,
             })
             .expect("the engine opens")
         }
@@ -1493,6 +1806,39 @@ system = "prompt.md"
         assert_eq!(
             session.turns[0].tools[0].args.as_deref(),
             Some("text=mock input")
+        );
+    }
+
+    #[tokio::test]
+    async fn each_turn_records_only_its_own_tool_calls() {
+        let fixture = Fixture::new();
+        let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
+
+        engine
+            .run_turn("one", CancelToken::new())
+            .await
+            .expect("the first turn");
+        engine
+            .run_turn("two", CancelToken::new())
+            .await
+            .expect("the second turn");
+
+        let session = fixture.session();
+        assert_eq!(session.turns.len(), 2);
+        assert_eq!(session.turns[0].tools.len(), 1);
+        assert_eq!(
+            session.turns[1].tools.len(),
+            1,
+            "the second turn keeps only its own tool line"
+        );
+        assert!(
+            session.turns[1]
+                .events
+                .iter()
+                .filter(|event| event.name == "tool_finished")
+                .count()
+                == 1,
+            "the second turn audits one tool call, not both"
         );
     }
 
@@ -1562,6 +1908,8 @@ system = "prompt.md"
                 api_key: String::new(),
                 context_window: Some(1_000_000),
             }),
+            permission: None,
+            acceptance: true,
         })
         .expect("the engine opens");
 
@@ -1694,6 +2042,8 @@ system = "prompt.md"
                 api_key: String::new(),
                 context_window: Some(32_000),
             }),
+            permission: None,
+            acceptance: true,
         })
         .expect("the engine opens");
 
@@ -1755,14 +2105,24 @@ system = "prompt.md"
         let background: Arc<dyn BackgroundTasks> = Arc::new(LocalBackgroundTasks::new(
             fixture.dir.path().join("outputs"),
         ));
-        let registry =
-            tools(fixture.dir.path(), &config, todos, background).expect("the registry builds");
+        let session = Arc::new(Mutex::new(StoredSession {
+            workspace: fixture.dir.path().to_path_buf(),
+            rig: "test".to_owned(),
+            title: String::new(),
+            archived: false,
+            snapshot: Default::default(),
+            todos: None,
+            turns: Vec::new(),
+        }));
+        let registry = tools(fixture.dir.path(), &config, todos, background, session)
+            .expect("the registry builds");
 
         assert!(registry.get("edit_file").is_some());
         assert!(registry.get("multi_edit").is_some());
         assert!(registry.get("apply_edits").is_some());
         assert!(registry.get("glob").is_some());
         assert!(registry.get("git_diff").is_some());
+        assert!(registry.get("search_history").is_some());
     }
 
     #[test]
@@ -2569,6 +2929,8 @@ system = "prompt.md"
             interactions: Arc::new(DeferAllInteractionPort),
             deltas: Some(tx),
             model: None,
+            permission: None,
+            acceptance: true,
         })
         .expect("the engine opens");
 
@@ -2580,7 +2942,9 @@ system = "prompt.md"
         let mut text = String::new();
         while let Ok(Some(delta)) = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await
         {
-            text.push_str(&delta);
+            if let ModelDelta::Text(part) = delta {
+                text.push_str(&part);
+            }
         }
         assert!(text.contains("mock turn complete"), "no deltas: {text:?}");
     }

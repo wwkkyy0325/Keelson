@@ -1,13 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  FileChange,
   Interaction,
   ModelCatalog,
   SessionMeta,
+  SessionStatus,
   SessionUpdated,
   SessionView,
   SetupState,
   TextDelta,
+  ThinkingDelta,
+  ToolFinishedEvent,
+  ToolStartedEvent,
+  TurnChanges,
   TurnFailed,
   TurnFinished,
   TurnPage,
@@ -111,6 +117,20 @@ export function undoLastTurn(): Promise<void> {
   return invoke("undo_last_turn");
 }
 
+/// The files the latest turn changed; empty when there is nothing to undo.
+export function turnChanges(): Promise<FileChange[]> {
+  return invoke("turn_changes");
+}
+
+export function sessionStatus(): Promise<SessionStatus> {
+  return invoke("session_status");
+}
+
+/// Saves the permission override; the caller reopens the session to apply it.
+export function savePermission(level: string): Promise<void> {
+  return invoke("save_permission", { level });
+}
+
 export function loadTurns(
   before: number | null,
   limit = 30,
@@ -137,6 +157,26 @@ export async function listenToEvents(): Promise<UnlistenFn[]> {
   unlisten.push(
     await listen<TextDelta>("keelson:text-delta", (event) =>
       dispatch({ type: "text-delta", ...event.payload }),
+    ),
+  );
+  unlisten.push(
+    await listen<ThinkingDelta>("keelson:thinking-delta", (event) =>
+      dispatch({ type: "thinking-delta", ...event.payload }),
+    ),
+  );
+  unlisten.push(
+    await listen<ToolStartedEvent>("keelson:tool-started", (event) =>
+      dispatch({ type: "tool-started", ...event.payload }),
+    ),
+  );
+  unlisten.push(
+    await listen<ToolFinishedEvent>("keelson:tool-finished", (event) =>
+      dispatch({ type: "tool-finished", ...event.payload }),
+    ),
+  );
+  unlisten.push(
+    await listen<TurnChanges>("keelson:turn-changes", (event) =>
+      dispatch({ type: "turn-changes", seq: event.payload.seq }),
     ),
   );
   unlisten.push(

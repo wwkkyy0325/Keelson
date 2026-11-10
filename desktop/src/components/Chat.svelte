@@ -9,53 +9,39 @@
     openSession,
     renameSession,
     respondInteraction,
+    savePermission,
     sendMessage,
+    sessionStatus,
+    turnChanges,
     undoLastTurn,
   } from "../lib/api";
   import { dispatch, session } from "../lib/session-store";
-  import { t } from "../lib/i18n";
+  import { rigTitle, t } from "../lib/i18n";
   import { baseName } from "../lib/paths";
   import AppHeader from "./AppHeader.svelte";
   import Composer from "./Composer.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import PermissionCard from "./PermissionCard.svelte";
   import Sidebar from "./Sidebar.svelte";
+  import StatusBar from "./StatusBar.svelte";
   import Transcript from "./Transcript.svelte";
-  import type { Turn } from "../lib/protocol";
+  import type { FileChange, SessionStatus, Turn } from "../lib/protocol";
 
   let { onSettings }: { onSettings: () => void } = $props();
 
   let uiError = $state<string | null>(null);
   let answering = $state<string | null>(null);
-  let toast = $state<string | null>(null);
-  let toastTimer: ReturnType<typeof setTimeout> | null = null;
   let confirmUndo = $state(false);
   /// Text a branch opens with, handed to the composer through its keyed mount.
   let prefillDraft = $state("");
   let undoDone = $state(false);
-
-  const MUTATING_TOOLS = new Set([
-    "write_file",
-    "edit_file",
-    "multi_edit",
-    "move_file",
-    "delete_file",
-    "make_dir",
-    "restore_file",
-    "shell",
-  ]);
-
-  let latestTurn = $derived(
-    $session.turns.length > 0
-      ? $session.turns[$session.turns.length - 1]
-      : null,
+  /// Files the latest turn changed, from its checkpoint pair.
+  let changes = $state<FileChange[]>([]);
+  let undoable = $derived(
+    !$session.running && !undoDone && changes.length > 0,
   );
-  let canUndo = $derived(
-    !$session.running &&
-      !undoDone &&
-      latestTurn !== null &&
-      latestTurn.tools.some((tool) => MUTATING_TOOLS.has(tool.name)),
-  );
+  /// Permission, connection and context usage for the composer's status line.
+  let status = $state<SessionStatus | null>(null);
 
   $effect(() => {
     $session.sessionId;
@@ -63,6 +49,63 @@
     undoDone = false;
     confirmUndo = false;
   });
+
+  // The change summary is the checkpoint diff, not a guess from the tool
+  // names: a turn that wrote nothing has nothing to undo. The epoch covers a
+  // reconnect that keeps the same conversation id.
+  $effect(() => {
+    const epoch = $session.epoch;
+    const count = $session.turns.length;
+    const pendingChanges = $session.changesEpoch;
+    const undone = undoDone;
+    void epoch;
+    void count;
+    void pendingChanges;
+    void undone;
+    void loadChanges();
+  });
+
+  // Same trigger for the status line: it reads the engine's permission and
+  // context, so every open and every finished turn refreshes it.
+  $effect(() => {
+    const epoch = $session.epoch;
+    const count = $session.turns.length;
+    void epoch;
+    void count;
+    void loadStatus();
+  });
+
+  async function loadChanges(): Promise<void> {
+    try {
+      changes = await turnChanges();
+    } catch {
+      changes = [];
+    }
+  }
+
+  async function loadStatus(): Promise<void> {
+    try {
+      status = await sessionStatus();
+    } catch {
+      status = null;
+    }
+  }
+
+  async function changePermission(level: string): Promise<void> {
+    uiError = null;
+    try {
+      await savePermission(level);
+      // The level is applied when the engine opens, so reopen the workspace.
+      const view =
+        $session.turns.length === 0
+          ? await newSession($session.workspace)
+          : await openSession($session.workspace, $session.sessionId);
+      dispatch({ type: "session-opened", view });
+      await loadStatus();
+    } catch (error) {
+      uiError = errText(error);
+    }
+  }
 
   let currentTitle = $derived(
     $session.sessions.find((item) => item.id === $session.sessionId)?.title ||
@@ -74,22 +117,12 @@
       ?.archived ?? false,
   );
 
-  function notify(message: string): void {
-    toast = message;
-    if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => {
-      toast = null;
-      toastTimer = null;
-    }, 3000);
-  }
-
   async function undo(): Promise<void> {
     confirmUndo = false;
     uiError = null;
     try {
       await undoLastTurn();
       undoDone = true;
-      notify($t("app.undone"));
     } catch (error) {
       uiError = errText(error);
     }
@@ -158,11 +191,6 @@
       await deleteSession($session.workspace, id);
       const sessions = await listSessions($session.workspace);
       dispatch({ type: "sessions-loaded", sessions });
-      notify(
-        wasCurrent
-          ? $t("sidebar.deletedCurrent")
-          : $t("sidebar.deleted"),
-      );
     } catch (error) {
       uiError = errText(error);
     }
@@ -194,17 +222,13 @@
         const view = await openSession($session.workspace, null);
         dispatch({ type: "session-opened", view });
       }
-      notify(
-        archived
-          ? $t("sidebar.archivedToast")
-          : $t("sidebar.unarchivedToast"),
-      );
     } catch (error) {
       uiError = errText(error);
     }
   }
 
   async function send(text: string): Promise<void> {
+    uiError = null;
     // Writing to an archived conversation brings it back: the alternative was
     // a read-only view that explained itself above the composer.
     if (currentArchived && $session.sessionId) {
@@ -231,11 +255,6 @@
     } finally {
       answering = null;
     }
-  }
-
-  function dismissError(): void {
-    uiError = null;
-    dispatch({ type: "clear-error" });
   }
 
   function errText(error: unknown): string {
@@ -269,32 +288,21 @@
 
     <Transcript
       onError={(message) => (uiError = message)}
+      error={uiError ?? $session.lastError}
       {projectName}
-      {canUndo}
+      {changes}
+      {undoable}
       onUndo={() => (confirmUndo = true)}
       onBranch={branchFrom}
     />
 
     <footer>
-      {#if toast}
-        <div class="toast" role="status">{toast}</div>
-      {/if}
-
       {#if $session.pendingInteraction}
         <PermissionCard
           interaction={$session.pendingInteraction}
           {answering}
           onAnswer={answer}
         />
-      {/if}
-
-      {#if uiError || $session.lastError}
-        <div class="banner">
-          <span>{uiError ?? $session.lastError}</span>
-          <button class="icon" onclick={dismissError} title={$t("app.dismiss")}>
-            ×
-          </button>
-        </div>
       {/if}
 
       {#key $session.sessionId}
@@ -306,6 +314,14 @@
           initialDraft={prefillDraft}
         />
       {/key}
+
+      <StatusBar
+        {status}
+        rigTitle={status ? $rigTitle(status.rig, status.rig) : ""}
+        busy={$session.running !== null}
+        onSettings={onSettings}
+        onPermission={changePermission}
+      />
     </footer>
   </div>
 
