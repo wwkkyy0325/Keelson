@@ -30,6 +30,8 @@ Recommended:
   spans files; it validates every replacement before writing anything.
 - Use `git_diff` to review the working tree before finishing; it is read-only
   and needs no confirmation.
+- Use `list_windows` and `screen_capture` when a change is about what a
+  running application shows; quote the visible text instead of guessing it.
 - Run the real checks and report their output.
 - `.keelson/checks.toml` is the user's declaration of the project's own
   checks. Do not edit it to make a check pass, and only add a check when the

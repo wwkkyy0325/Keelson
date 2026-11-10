@@ -2,7 +2,7 @@
 name = "keelson"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 publish = false
 
 [[bin]]
@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = "0.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 keel-core = { path = "../Keel/crates/keel-core" }
 keel-model-anthropic = { path = "../Keel/crates/keel-model-anthropic" }
 keel-model-openai = { path = "../Keel/crates/keel-model-openai" }
@@ -26,6 +27,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 toml = "0.8"
+xcap = "0.9"
 
 [dev-dependencies]
 keel-testkit = { path = "../Keel/crates/keel-testkit" }

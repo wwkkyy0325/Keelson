@@ -16,33 +16,36 @@ characters):
 | answers | 10k |
 | tool arguments | 9k |
 
-A load (parse) measured 21 ms in a debug build; every send does one
+A load (parse) measured 21 ms in a debug build; every send did one
 (`is_archived`) and every turn rewrites the document.
 
-## 1. Store metrics instead of events
+## 1. Store metrics instead of events (done)
 
-- [ ] Replace `StoredTurn.events` with the values the host reads: usage is
+- [x] Replace `StoredTurn.events` with the values the host reads: usage is
       already a field; add the turn's last `context_pressure` point.
-- [ ] Keep reading `events` for documents that have them (usage backfill and
+- [x] Keep reading `events` for documents that have them (usage backfill and
       context points), never write new ones.
-- Verify: an old document still shows usage and context points; a new turn
-  writes no events; the document shrinks ~17%.
+- Verify: `a_stored_context_point_wins_over_the_events`,
+  `an_old_turn_recovers_its_context_point_from_the_events`,
+  `a_new_turn_omits_the_event_stream`; the engine tests assert a persisted
+  turn writes no events.
 
-## 2. Cap what is kept per turn
+## 2. Cap what is kept per turn (done)
 
-- [ ] Store at most N characters of each tool output and of the thinking
-      text (for example 8k); append a `(+X characters)` note. The live view
-      still shows everything while the turn runs.
-- Verify: a turn whose `read_file` returns 1 MB stores the cap and the note;
-  the transcript shows the note; the audit table is unchanged otherwise.
+- [x] Store at most 8 000 characters of each tool output and of the thinking
+      text, with a `(+X characters)` note. The live view still shows
+      everything while the turn runs.
+- Verify: `a_megabyte_tool_output_is_stored_capped`; the cap is applied in
+  `persist`, after the live events have already carried the full preview.
 
-## 3. Do not parse the document on send
+## 3. Do not parse the document on send (done)
 
-- [ ] Cache the archive flag in `CurrentSession` (set at open, updated by
-      the archive command) and use it in `send_message` instead of
+- [x] Cache the archive flag in `CurrentSession` (set at open, updated by the
+      archive command) and use it in `send_message` instead of
       `sessions::is_archived`.
-- Verify: the send path performs no `Store::load`; an archived conversation
-  still refuses a send.
+- Verify: `the_open_conversation_reports_its_archived_flag`; `send_message`
+  reads `current.archived` and calls no `Store::load`; the delete path still
+  reads the document, because it runs after the conversation closes.
 
 ## 4. Decide on the snapshot (kernel)
 

@@ -5,6 +5,7 @@
 
 mod git;
 mod history;
+mod screen;
 mod store;
 mod web;
 
@@ -39,8 +40,8 @@ use crate::rig::{self, Rig};
 
 pub use keel_core::PermissionLevel;
 pub use store::{
-    Store, StoredEvent, StoredEvidence, StoredSession, StoredTurn, StoredUsage, StoredVerification,
-    ToolLine,
+    Store, StoredContext, StoredEvent, StoredEvidence, StoredSession, StoredTurn, StoredUsage,
+    StoredVerification, ToolLine,
 };
 
 /// Everything opening a session needs. A host supplies its own interaction
@@ -89,7 +90,7 @@ pub struct ModelOverride {
 }
 
 /// Context usage at the end of one turn, for the composer's status line.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextPoint {
     pub seq: u32,
@@ -253,6 +254,58 @@ impl ModelProvider for HostModel {
 /// grow the session document without limit.
 const MAX_TURN_THINKING_BYTES: usize = 64 * 1024;
 
+/// What one stored turn keeps of a tool output and of the thinking text. The
+/// live view is not affected; only the document is bounded.
+const MAX_STORED_TOOL_OUTPUT_CHARS: usize = 8_000;
+const MAX_STORED_THINKING_CHARS: usize = 8_000;
+
+/// Keeps the head of `text` and names what was dropped, so a reader can tell a
+/// short output from a clipped one.
+fn cap_chars(text: &str, limit: usize) -> String {
+    let count = text.chars().count();
+    if count <= limit {
+        return text.to_owned();
+    }
+    let head: String = text.chars().take(limit).collect();
+    format!("{head}\n(+{} characters)", count - limit)
+}
+
+/// Bounds what the document keeps of each tool output. The live view and the
+/// kernel's event log keep the full preview.
+fn cap_tool_lines(lines: &mut [ToolLine]) {
+    for line in lines {
+        if let Some(output) = line.output.as_deref() {
+            line.output = Some(cap_chars(output, MAX_STORED_TOOL_OUTPUT_CHARS));
+        }
+    }
+}
+
+/// The context point a turn reports: the stored field, or the last event in a
+/// document written before the field existed.
+fn context_point(turn: &StoredTurn) -> Option<ContextPoint> {
+    if let Some(context) = turn.context {
+        return Some(ContextPoint {
+            seq: turn.seq,
+            used: context.used,
+            ceiling: context.ceiling,
+        });
+    }
+    turn.events.iter().rev().find_map(|event| {
+        let pressure = event.payload.get("context_pressure")?;
+        Some(ContextPoint {
+            seq: turn.seq,
+            used: pressure
+                .get("used")?
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())?,
+            ceiling: pressure
+                .get("ceiling")?
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())?,
+        })
+    })
+}
+
 #[derive(Default)]
 struct ThinkingBuffer {
     text: String,
@@ -395,7 +448,7 @@ impl Engine {
             .collect();
         let permissions = Arc::new(permissions.with_outputs(outputs_dir.clone()));
 
-        let store = Store::open(store_path);
+        let store = Store::open(store_path.clone());
         let (restored, mut session) = match store.load(&workspace)? {
             Some(session) => (Some(session.snapshot.clone()), session),
             None => (
@@ -445,6 +498,9 @@ impl Engine {
             search_url.as_deref(),
         );
         let session = Arc::new(Mutex::new(session));
+        // Screenshots live beside the project's outputs, outside the
+        // workspace: the folder is the permission scope for a capture.
+        let screens = screen::screens_dir(&project_dir, &store_path);
         let registry = Arc::new(tools(
             &project_dir,
             &config,
@@ -452,6 +508,7 @@ impl Engine {
             background.clone(),
             session.clone(),
             web.clone(),
+            screens,
         )?);
         if web.is_none() {
             // A profile may list web_search; without a provider endpoint the
@@ -609,20 +666,24 @@ impl Engine {
             .text
             .clone();
         let records = self.events.snapshot();
-        let tools = tool_lines(&records);
-        let stored_events = records
-            .iter()
-            .map(|record| StoredEvent {
-                name: record.event.name().to_owned(),
-                payload: serde_json::to_value(&record.event).unwrap_or_default(),
-            })
-            .collect();
+        let mut tools = tool_lines(&records);
+        // The live view has already shown the whole output; the document keeps
+        // a bounded copy with a note, so a long transcript cannot grow the
+        // file without limit.
+        cap_tool_lines(&mut tools);
+        let context = records.iter().rev().find_map(|record| match &record.event {
+            Event::ContextPressure { used, ceiling, .. } => Some(StoredContext {
+                used: *used,
+                ceiling: *ceiling,
+            }),
+            _ => None,
+        });
         session.turns.push(StoredTurn {
             seq,
             input: input.to_owned(),
             state: outcome.state.to_string(),
             answer: outcome.answer.body.clone(),
-            thinking,
+            thinking: cap_chars(&thinking, MAX_STORED_THINKING_CHARS),
             error,
             duration_ms: outcome.duration_ms,
             usage: StoredUsage {
@@ -633,7 +694,10 @@ impl Engine {
             verification_passed: outcome.verification.as_ref().map(|report| report.passed()),
             verification: outcome.verification.as_ref().map(stored_verification),
             tools,
-            events: stored_events,
+            context,
+            // New turns do not write the event stream: the fields above carry
+            // what the transcript and the status line read.
+            events: Vec::new(),
         });
         self.store.save(&session)
     }
@@ -703,26 +767,8 @@ impl Engine {
             .session
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut points: Vec<ContextPoint> = session
-            .turns
-            .iter()
-            .filter_map(|turn| {
-                turn.events.iter().rev().find_map(|event| {
-                    let pressure = event.payload.get("context_pressure")?;
-                    Some(ContextPoint {
-                        seq: turn.seq,
-                        used: pressure
-                            .get("used")?
-                            .as_u64()
-                            .and_then(|v| u32::try_from(v).ok())?,
-                        ceiling: pressure
-                            .get("ceiling")?
-                            .as_u64()
-                            .and_then(|v| u32::try_from(v).ok())?,
-                    })
-                })
-            })
-            .collect();
+        let mut points: Vec<ContextPoint> =
+            session.turns.iter().filter_map(context_point).collect();
         let excess = points.len().saturating_sub(8);
         points.drain(..excess);
         points
@@ -804,7 +850,7 @@ impl Engine {
         let matching: Vec<&StoredTurn> = session
             .turns
             .iter()
-            .filter(|turn| before.map_or(true, |cursor| turn.seq < cursor))
+            .filter(|turn| before.is_none_or(|cursor| turn.seq < cursor))
             .collect();
         let start = matching.len().saturating_sub(limit);
         let older = start > 0;
@@ -1516,6 +1562,7 @@ fn tools(
     background: Arc<dyn BackgroundTasks>,
     session: Arc<Mutex<StoredSession>>,
     web: Option<web::WebBackend>,
+    screens: PathBuf,
 ) -> Result<ToolRegistry, KernelError> {
     let trash = Arc::new(LocalTrashStore::at(project_dir.join("trash")));
     // One ledger per engine: a write or edit must follow a current read.
@@ -1555,6 +1602,8 @@ fn tools(
     if let Some(backend) = web {
         registry.register(Arc::new(web::WebSearchTool::new(backend)))?;
     }
+    registry.register(Arc::new(screen::ListWindowsTool::new()))?;
+    registry.register(Arc::new(screen::ScreenCaptureTool::new(screens)))?;
     Ok(registry)
 }
 
@@ -1666,6 +1715,7 @@ mod tests {
             verification_passed: None,
             verification: None,
             tools: Vec::new(),
+            context: None,
             events: vec![StoredEvent {
                 name: "model_finished".to_owned(),
                 payload: serde_json::json!({
@@ -1723,6 +1773,7 @@ mod tests {
             verification_passed: None,
             verification: None,
             tools: Vec::new(),
+            context: None,
             events: Vec::new(),
         };
         turn.events.push(StoredEvent {
@@ -1844,18 +1895,8 @@ system = "prompt.md"
         assert_eq!(session.turns[0].seq, 1);
         assert_eq!(session.turns[0].input, "hi");
         assert!(
-            session.turns[0]
-                .events
-                .iter()
-                .any(|event| event.name == "tool_finished"),
-            "the mock tool call is audited"
-        );
-        assert!(
-            session.turns[0]
-                .events
-                .iter()
-                .any(|event| event.name == "turn_finished"),
-            "the turn is audited"
+            session.turns[0].events.is_empty(),
+            "a new turn keeps its tool lines, not the event stream"
         );
         assert_eq!(session.turns[0].tools.len(), 1);
         assert_eq!(session.turns[0].tools[0].name, "echo");
@@ -1889,13 +1930,13 @@ system = "prompt.md"
             "the second turn keeps only its own tool line"
         );
         assert!(
-            session.turns[1]
-                .events
-                .iter()
-                .filter(|event| event.name == "tool_finished")
-                .count()
-                == 1,
-            "the second turn audits one tool call, not both"
+            session.turns[1].events.is_empty(),
+            "a new turn writes no events"
+        );
+        assert_eq!(
+            session.turns[1].tools.len(),
+            1,
+            "the second turn keeps one tool line, not both"
         );
     }
 
@@ -2231,6 +2272,7 @@ system = "prompt.md"
             background,
             session,
             None,
+            fixture.dir.path().join("screens"),
         )
         .expect("the registry builds");
 
@@ -3190,5 +3232,104 @@ system = "prompt.md"
                     if reason.starts_with(".keelson/checks.toml: ")
             ));
         }
+    }
+
+    fn stored_turn() -> StoredTurn {
+        StoredTurn {
+            seq: 1,
+            input: "hi".to_owned(),
+            state: "Done".to_owned(),
+            answer: "hello".to_owned(),
+            thinking: String::new(),
+            error: None,
+            duration_ms: 2,
+            usage: StoredUsage::default(),
+            verification_passed: None,
+            verification: None,
+            tools: Vec::new(),
+            context: None,
+            events: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_stored_context_point_wins_over_the_events() {
+        let mut turn = stored_turn();
+        turn.context = Some(StoredContext {
+            used: 7,
+            ceiling: 9,
+        });
+        turn.events.push(StoredEvent {
+            name: "context_pressure".to_owned(),
+            payload: serde_json::json!({
+                "context_pressure": { "used": 1, "ceiling": 2 }
+            }),
+        });
+
+        assert_eq!(
+            context_point(&turn),
+            Some(ContextPoint {
+                seq: 1,
+                used: 7,
+                ceiling: 9,
+            })
+        );
+    }
+
+    #[test]
+    fn an_old_turn_recovers_its_context_point_from_the_events() {
+        let mut turn = stored_turn();
+        turn.events.push(StoredEvent {
+            name: "context_pressure".to_owned(),
+            payload: serde_json::json!({
+                "context_pressure": { "used": 40, "ceiling": 64 }
+            }),
+        });
+
+        assert_eq!(
+            context_point(&turn),
+            Some(ContextPoint {
+                seq: 1,
+                used: 40,
+                ceiling: 64,
+            })
+        );
+    }
+
+    #[test]
+    fn a_megabyte_tool_output_is_stored_capped() {
+        let mut lines = vec![ToolLine {
+            name: "read_file".to_owned(),
+            ok: Some(true),
+            duration_ms: 5,
+            args: None,
+            output: Some("x".repeat(1024 * 1024)),
+        }];
+
+        cap_tool_lines(&mut lines);
+
+        let output = lines[0].output.as_deref().expect("the output");
+        assert!(
+            output.chars().count() <= MAX_STORED_TOOL_OUTPUT_CHARS + 40,
+            "the stored output stays near the cap"
+        );
+        assert!(
+            output.contains("(+") && output.ends_with("characters)"),
+            "the dropped character count is named"
+        );
+    }
+
+    #[test]
+    fn a_new_turn_omits_the_event_stream() {
+        let mut turn = stored_turn();
+        turn.context = Some(StoredContext {
+            used: 1,
+            ceiling: 2,
+        });
+
+        let text = serde_json::to_string(&turn).expect("the turn serializes");
+
+        assert!(!text.contains("\"events\""), "{text}");
+        assert!(text.contains("\"context\""), "{text}");
     }
 }

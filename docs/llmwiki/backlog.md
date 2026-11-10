@@ -6,6 +6,10 @@ Cases that are not scheduled yet, with the evidence and the first step.
 
 Queued 2026-11-10. Task: `tasks/session-document-growth.md`.
 
+Step 4 is open: the kernel snapshot. Steps 1–3 are done — new turns store no
+event stream, tool output and thinking are capped, and the send path no longer
+parses the document.
+
 A live 8-turn conversation reached 1.5 MB on disk. Every send parses the
 document (`is_archived`) and every turn rewrites it; a parse measured 21 ms
 in a debug build at 874k characters. Measured composition (characters):

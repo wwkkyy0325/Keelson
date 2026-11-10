@@ -2116,3 +2116,32 @@ duration line is what makes the cost of a check measurable at all.
   belongs there.
 - An unchanged folder reuses its snapshot; a changed one is numbered, the same
   rule as a file. The composer gains a folder picker beside the file picker.
+
+## 2026-11-10 — the session document stops growing with every turn
+
+- A new turn no longer stores the kernel event stream. It keeps a `context`
+  point (the last `context_pressure`), and documents written before the field
+  existed still read their usage and context points from `events`.
+- Each stored tool output and the thinking text are capped at 8 000
+  characters with a `(+X characters)` note. The live view keeps showing the
+  full kernel preview while the turn runs; only the document is bounded.
+- The send path reads a cached archive flag instead of parsing the
+  conversation document on every message. The flag is set at open and kept in
+  step by the archive command; the delete path still reads the document
+  itself.
+- The remaining growth is the kernel snapshot (318k of 819k in the measured
+  conversation), which needs a kernel-side decision (task step 4).
+
+## 2026-11-10 — the model can look at the screen
+
+- Kernel 0.2.10 (Keel ADR 0051): messages and tool results carry images in
+  memory; both adapters encode them; an image costs 1024 estimated tokens.
+- Two host tools (ADR 0042): `list_windows` names visible windows, and
+  `screen_capture` captures a window (id or title), a region or a monitor,
+  scales it to 1568 px, saves the PNG under the project's `screens/<session>/`
+  and hands the image to the model in the same turn. No OCR: pixels go to the
+  model, and a model without vision leaves the user to describe the screen.
+- The captures folder is the permission scope: `workspace_auto` confirms with
+  the target named, the session grant silences later captures, and
+  `full_auto` does not ask. The coding, office and research rigs list both
+  tools.

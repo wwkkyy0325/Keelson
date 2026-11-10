@@ -581,7 +581,7 @@ fn trim_old(models: &mut Vec<CatalogModel>) {
             .release_date
             .as_deref()
             .and_then(month_index)
-            .map_or(true, |index| newest - index <= 6)
+            .is_none_or(|index| newest - index <= 6)
     });
 }
 

@@ -31,6 +31,9 @@ pub struct CurrentSession {
     pub id: String,
     pub workspace: PathBuf,
     pub state_dir: PathBuf,
+    /// The archive flag at open, updated by the archive command. The send path
+    /// reads this instead of parsing the conversation document.
+    pub archived: bool,
 }
 
 pub struct DesktopState {

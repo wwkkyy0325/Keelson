@@ -41,6 +41,9 @@ Deliverables:
 - When a claim comes from outside the workspace, name the source: title, URL,
   and the part that supports the claim. If only a search snippet was
   available, say that instead of presenting it as the full page.
+- When a question is about what an application shows, use `list_windows` and
+  `screen_capture` and quote the text visible in the image. Do not describe
+  what you cannot see; the user can describe it instead.
 
 Asking and planning:
 - Ask before you act when a choice changes the result and the files do not

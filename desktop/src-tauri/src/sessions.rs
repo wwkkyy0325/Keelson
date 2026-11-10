@@ -496,6 +496,7 @@ mod tests {
                     verification_passed: None,
                     verification: None,
                     tools: Vec::new(),
+                    context: None,
                     events: Vec::new(),
                 })
                 .collect(),

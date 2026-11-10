@@ -144,8 +144,11 @@ The boundary is testable: no file under `src/engine/` may contain `ratatui`,
 One run is one turn. A project directory under
 `<state>/sessions/<workspace-hash>/` holds one JSON document per conversation,
 with `<state>` from `$KEELSON_HOME` (default `~/.keelson`). Each document holds
-the kernel snapshot, the task list and one row per turn with the turn's
-events. The workspace is recorded in the document, so a conversation is
+the kernel snapshot, the task list and one row per turn: the answer, the
+bounded tool lines and thinking, usage, and the turn's last context point.
+The event stream is not stored for new turns; documents written before that
+change keep it and are still read through it. The workspace is recorded in
+the document, so a conversation is
 refused against a different project; the workspace hash keeps separate
 projects from ever sharing a document.
 
@@ -300,6 +303,22 @@ loopback/private-host checks, a 30 s timeout, a 2 MiB cap and a 60k-character
 output cap. Both are read-only, ask for no confirmation, hold the API key in
 memory only, and exist for a rig only when its `tools.visible` names them
 (ADR 0038).
+
+## Screen access
+
+Two host tools cover the screen. `list_windows` names visible windows (id,
+application, title, size) and asks for nothing. `screen_capture` captures a
+window (by id or title fragment), a region (`x,y,w,h`) or a whole monitor,
+scales the longest side to 1568 px, writes the PNG to
+`<state>/projects/<hash>/screens/<session>/` and attaches the image to the
+tool result so the model sees it in the same turn. The tools do no
+recognition; OCR is deliberately absent, because text without layout and
+relationships is worse than the model's own reading or the user's
+description. The folder is outside the workspace and its roots, so
+`workspace_auto` confirms a capture (the prompt names the target), "allow this
+path for the session" silences later ones, and `full_auto` never asks. An
+image is in memory for the turn only; the session document keeps the text and
+the path (ADR 0042, kernel ADR 0051).
 
 ## Checkpoints
 

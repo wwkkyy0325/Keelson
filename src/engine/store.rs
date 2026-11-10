@@ -76,6 +76,15 @@ pub struct StoredUsage {
     pub cached_input_tokens: u32,
 }
 
+/// Context pressure at the end of a turn. New turns keep this instead of the
+/// whole event stream; older documents recover it from their events.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredContext {
+    pub used: u32,
+    pub ceiling: u32,
+}
+
 /// One finished turn as the session file keeps it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredTurn {
@@ -101,9 +110,14 @@ pub struct StoredTurn {
     /// Live tool rows. Absent in sessions written before the field existed.
     #[serde(default)]
     pub tools: Vec<ToolLine>,
-    /// Events in emission order. The payload is the kernel's serialized event;
-    /// previews are already skipped by the kernel.
-    #[serde(default)]
+    /// Context pressure at the end of the turn. New turns write this and no
+    /// events; older documents carry events and recover the point from them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<StoredContext>,
+    /// Events in emission order. Absent in sessions written before the field
+    /// existed, and never written by new turns: the transcript and the status
+    /// line read the fields above.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<StoredEvent>,
 }
 
@@ -197,6 +211,7 @@ mod tests {
                 verification_passed: None,
                 verification: None,
                 tools: Vec::new(),
+                context: None,
                 events: vec![StoredEvent {
                     name: "turn_started".to_owned(),
                     payload: serde_json::json!({ "input": "hello" }),

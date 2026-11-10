@@ -952,6 +952,17 @@ pub fn archive_session(
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         sessions::set_archived(&state_dir, &workspace, &session_id, archived)?
     };
+    if is_current {
+        // Keep the send-path flag in step with the document.
+        if let Some(current) = state
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_mut()
+        {
+            current.archived = archived;
+        }
+    }
     let _ = app.emit(EV_SESSION_UPDATED, SessionUpdated { meta: meta.clone() });
     Ok(meta)
 }
@@ -1009,6 +1020,8 @@ async fn open_inner(
         let list = sessions::list(&state_dir, &workspace);
         (session_id, list)
     };
+    // The send path reads this flag instead of loading the document again.
+    let archived = archived_in(&session_list, &session_id);
     let wanted = rig_for_session(&session_list, &session_id, &preferred);
     let discovery = rig::discover(&rig_dirs());
     let rig = discovery
@@ -1074,6 +1087,7 @@ async fn open_inner(
             id: session_id.clone(),
             workspace: workspace.clone(),
             state_dir: state_dir.clone(),
+            archived,
         });
     }
     let projects = {
@@ -1150,6 +1164,15 @@ fn chosen_rig(config: &config::DesktopConfig, fallback: &str) -> String {
     } else {
         chosen.to_owned()
     }
+}
+
+/// The archive flag of one conversation, read from the project list at open.
+/// The send path uses it instead of parsing the document.
+fn archived_in(session_list: &[sessions::SessionMeta], session_id: &str) -> bool {
+    session_list
+        .iter()
+        .find(|meta| meta.id == session_id)
+        .is_some_and(|meta| meta.archived)
 }
 
 /// A conversation keeps the rig it started with. The setting only chooses the
@@ -1357,13 +1380,11 @@ pub async fn send_message(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    // An archived conversation is read-only. A blank conversation has no
-    // document yet, so a missing document is not an archive block.
+    // An archived conversation is read-only. The flag was read when the
+    // conversation opened and is kept current by the archive command, so the
+    // send path does not parse the document.
     if let Some(current) = current.as_ref() {
-        if matches!(
-            sessions::is_archived(&current.state_dir, &current.workspace, &current.id),
-            Ok(true)
-        ) {
+        if current.archived {
             return Err("已归档的对话不能继续；请先取消归档".to_owned());
         }
     }
@@ -1761,6 +1782,15 @@ mod tests {
             updated_at: 0,
             turns: 0,
         }
+    }
+
+    #[test]
+    fn the_open_conversation_reports_its_archived_flag() {
+        let mut archived = meta("s-1", "coding-live");
+        archived.archived = true;
+        assert!(super::archived_in(&[archived], "s-1"));
+        assert!(!super::archived_in(&[meta("s-2", "")], "s-2"));
+        assert!(!super::archived_in(&[], "s-3"));
     }
 
     #[test]
