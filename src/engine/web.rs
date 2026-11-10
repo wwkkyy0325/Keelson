@@ -16,6 +16,9 @@ use keel_core::{
 use reqwest::{Client, Url};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// The provider fetches the page on its side, so a slow origin is out of our
+/// control; the bound is wider than a direct download's.
+const PROVIDER_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 /// The most of a page the local fetch keeps.
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 /// Characters kept from a fetched page.
@@ -93,6 +96,23 @@ fn client() -> Client {
         .user_agent("keelson-web/0.1")
         .build()
         .unwrap_or_else(|_| Client::new())
+}
+
+/// reqwest's message names the request but leaves the reason ("operation
+/// timed out", "connection refused") in the source chain. Append it, so a
+/// model can tell a slow origin from a bad URL.
+fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !text.is_empty() && !message.contains(&text) {
+            message.push_str(": ");
+            message.push_str(&text);
+        }
+        source = std::error::Error::source(cause);
+    }
+    message
 }
 
 /// `web_search`: the provider's search engine, with the query operators it
@@ -212,12 +232,14 @@ async fn provider_search(
         .timeout(REQUEST_TIMEOUT)
         .send()
         .await
-        .map_err(|error| ToolError::io(format!("search request failed: {error}")))?;
+        .map_err(|error| {
+            ToolError::io(format!("search request failed: {}", error_chain(&error)))
+        })?;
     let status = response.status();
     let value: serde_json::Value = response.json().await.map_err(|error| {
         ToolError::new(
             ErrorCode::InvalidResponse,
-            format!("search returned a non-JSON body: {error}"),
+            format!("search returned a non-JSON body: {}", error_chain(&error)),
             true,
         )
     })?;
@@ -252,12 +274,16 @@ async fn searxng_search(
         .timeout(REQUEST_TIMEOUT)
         .send()
         .await
-        .map_err(|error| ToolError::io(format!("search request failed: {error}")))?;
+        .map_err(|error| {
+            ToolError::io(format!("search request failed: {}", error_chain(&error)))
+        })?;
     let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|error| ToolError::io(format!("reading the search response failed: {error}")))?;
+    let text = response.text().await.map_err(|error| {
+        ToolError::io(format!(
+            "reading the search response failed: {}",
+            error_chain(&error)
+        ))
+    })?;
     if !status.is_success() {
         return Err(ToolError::new(
             ErrorCode::Io,
@@ -358,15 +384,15 @@ async fn provider_fetch(
         .post(provider_tools_url(base, "fetch"))
         .bearer_auth(key)
         .json(&body)
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(PROVIDER_FETCH_TIMEOUT)
         .send()
         .await
-        .map_err(|error| ToolError::io(format!("fetch request failed: {error}")))?;
+        .map_err(|error| ToolError::io(format!("fetch request failed: {}", error_chain(&error))))?;
     let status = response.status();
     let value: serde_json::Value = response.json().await.map_err(|error| {
         ToolError::new(
             ErrorCode::InvalidResponse,
-            format!("fetch returned a non-JSON body: {error}"),
+            format!("fetch returned a non-JSON body: {}", error_chain(&error)),
             true,
         )
     })?;
@@ -407,7 +433,7 @@ async fn local_fetch(client: &Client, url: &Url) -> Result<String, ToolError> {
         .timeout(REQUEST_TIMEOUT)
         .send()
         .await
-        .map_err(|error| ToolError::io(format!("fetch failed: {error}")))?;
+        .map_err(|error| ToolError::io(format!("fetch failed: {}", error_chain(&error))))?;
     let status = response.status();
     if !status.is_success() {
         let code = if status.as_u16() == 404 {
@@ -438,11 +464,9 @@ async fn local_fetch(client: &Client, url: &Url) -> Result<String, ToolError> {
     }
     let mut response = response;
     let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| ToolError::io(format!("reading the page failed: {error}")))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(|error| {
+        ToolError::io(format!("reading the page failed: {}", error_chain(&error)))
+    })? {
         let room = MAX_BODY_BYTES.saturating_sub(body.len());
         if room == 0 {
             break;
@@ -728,6 +752,41 @@ mod tests {
         assert!(validate_url("javascript:alert(1)").is_err());
         assert!(validate_url("https://user:pass@example.com").is_err());
         assert!(validate_url("https://").is_err());
+    }
+
+    #[derive(Debug)]
+    struct Cause(&'static str);
+
+    impl std::fmt::Display for Cause {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Cause {}
+
+    #[derive(Debug)]
+    struct Outer(Cause);
+
+    impl std::fmt::Display for Outer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("error sending request")
+        }
+    }
+
+    impl std::error::Error for Outer {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[test]
+    fn an_error_names_its_cause() {
+        let error = Outer(Cause("operation timed out"));
+        assert_eq!(
+            error_chain(&error),
+            "error sending request: operation timed out"
+        );
     }
 
     #[test]

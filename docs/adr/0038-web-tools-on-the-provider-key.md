@@ -59,3 +59,12 @@ extra credential for the provider this host currently uses.
 - The local fetch does not resolve DNS before connecting, so a hostname that
   points at a private address is not caught; this is the same trust model as
   the provider fetch.
+
+## Amendment — 2026-11-10
+
+- The provider fetch call is bounded at 60 s: the provider fetches the page
+  server-side, and a slow origin can exceed the 30 s bound that remains
+  right for a direct download. A live fetch of a government page was
+  aborted at 30.0 s and succeeded on the retry at 28.4 s.
+- A failed request appends the reqwest source chain to the message
+  (`...: operation timed out`), so a model can tell a timeout from a bad URL.

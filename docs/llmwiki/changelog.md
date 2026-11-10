@@ -1928,3 +1928,12 @@ duration line is what makes the cost of a check measurable at all.
   terminal (ADR 0046). The live turn's `todo add` no longer fails after the
   model finishes its plan.
 - `docs/kernel.md` pins 0.2.5.
+
+## 2026-11-10 — web fetch timeout and error text
+
+- Provider fetch allows 60 s; a local download keeps 30 s. A live fetch of a
+  slow government page was aborted at 30.0 s and succeeded on the retry at
+  28.4 s.
+- Request errors carry the reqwest source chain, so the tool output names
+  `operation timed out` instead of only `error sending request for url`.
+- ADR 0038 amended.
