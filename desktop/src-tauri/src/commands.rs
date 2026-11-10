@@ -829,12 +829,16 @@ pub fn save_permission(state: State<'_, SharedState>, level: String) -> Result<(
     Ok(())
 }
 
-/// What the composer's status line shows: the effective permission, the
-/// connection and the context pressure of recent turns.
+/// What the composer's status line shows: the configured permission and the
+/// level in force now (a session grant may raise it), the connection and the
+/// context pressure of recent turns.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
+    /// The persisted setting.
     pub permission: String,
+    /// The level actually in force; differs while a full-auto grant is live.
+    pub permission_effective: String,
     pub rig: String,
     pub model: String,
     pub provider: String,
@@ -893,7 +897,8 @@ pub fn session_status(state: State<'_, SharedState>) -> Result<SessionStatus, St
         .clone()
         .ok_or_else(|| "还没有打开会话".to_owned())?;
     Ok(SessionStatus {
-        permission: engine.permission().as_str().to_owned(),
+        permission: engine.base_permission().as_str().to_owned(),
+        permission_effective: engine.permission().as_str().to_owned(),
         rig: engine.rig_name(),
         model: config.model.clone(),
         provider: config.provider.clone(),

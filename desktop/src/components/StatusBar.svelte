@@ -37,9 +37,25 @@
       : $t("status.workspaceAuto");
   }
 
+  /// The effective level is what the chip reports; the menu marks and
+  /// persists the base level. A live grant can make the two differ.
+  let granted = $derived(
+    status !== null &&
+      status.permissionEffective === "full_auto" &&
+      status.permission !== "full_auto",
+  );
+
   async function choose(level: string): Promise<void> {
     permissionOpen = false;
-    if (!status || status.permission === level) return;
+    // Choosing the base level again is a no-op only when no grant is live:
+    // with one, the same click is how the user drops it.
+    if (
+      !status ||
+      (status.permission === level &&
+        status.permissionEffective === status.permission)
+    ) {
+      return;
+    }
     await onPermission(level);
   }
 
@@ -63,7 +79,7 @@
           aria-expanded={permissionOpen}
           title={$t("status.permission")}
         >
-          {label(status.permission)}
+          {granted ? $t("status.fullAutoTemporary") : label(status.permission)}
           <span class="caret">▾</span>
         </button>
         {#if permissionOpen}

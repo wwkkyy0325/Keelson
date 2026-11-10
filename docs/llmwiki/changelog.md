@@ -1937,3 +1937,14 @@ duration line is what makes the cost of a check measurable at all.
 - Request errors carry the reqwest source chain, so the tool output names
   `operation timed out` instead of only `error sending request for url`.
 - ADR 0038 amended.
+
+## 2026-11-10 — the permission setting and the grant
+
+- The status chip read the effective level, so an eight-hour full-auto grant
+  made it say "full auto" while the persisted setting stayed workspace auto;
+  after a restart the grant was gone and it looked like a lost setting. The
+  chip now shows `engine.base_permission()`, and reads "full auto
+  (temporary)" while a grant is in force (Keel ADR 0047).
+- Choosing a level always persists it; choosing the same level now drops a
+  live grant instead of being a no-op.
+- `docs/kernel.md` pins 0.2.6.

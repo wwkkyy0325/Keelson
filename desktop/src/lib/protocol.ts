@@ -79,7 +79,10 @@ export type ContextPoint = {
 
 /// What the composer's status line shows.
 export type SessionStatus = {
+  /// The persisted setting.
   permission: string;
+  /// The level actually in force; differs while a full-auto grant is live.
+  permissionEffective: string;
   rig: string;
   model: string;
   provider: string;

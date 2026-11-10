@@ -663,9 +663,16 @@ impl Engine {
         &self.config
     }
 
-    /// The effective permission level, including a host override.
+    /// The effective permission level, including a host override and a
+    /// session grant.
     pub fn permission(&self) -> keel_core::PermissionLevel {
         self.driver.permission_level()
+    }
+
+    /// The configured permission level, without a session grant. A host
+    /// shows this as the setting and `permission` as what is in force now.
+    pub fn base_permission(&self) -> keel_core::PermissionLevel {
+        self.driver.base_permission_level()
     }
 
     /// Switches the level for the open session. The desktop calls this when
