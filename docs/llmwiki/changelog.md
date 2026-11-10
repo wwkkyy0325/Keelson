@@ -1968,3 +1968,15 @@ duration line is what makes the cost of a check measurable at all.
   interrupted question instead of the previous completed turn. The
   transcript shows the partial answer the turn had streamed.
 - `docs/kernel.md` pins 0.2.8.
+
+## 2026-11-10 — an output-limit cut and the send feedback
+
+- Keel 0.2.9 reports a response cut by the output limit as such instead of a
+  JSON parse error from a truncated tool call, and keeps the text streamed
+  before the failure (ADR 0050).
+- The live profile raises `max_output_tokens` from 8192 to 32768; the model
+  allows far more, and a large edit no longer hits the cap inside its JSON.
+- The "waiting for the model" line is removed; the composer already clears
+  on the click. `docs/kernel.md` pins 0.2.9.
+- Queued the session document growth work: `backlog.md` and
+  `tasks/session-document-growth.md`.
