@@ -1910,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "keel-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "serde",
@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "keel-model-anthropic"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "keel-core",
@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "keel-model-openai"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "keel-core",
@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "keel-policy"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "keel-core",
  "serde",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "keel-runtime"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "async-trait",
  "ignore",

@@ -1895,3 +1895,11 @@ duration line is what makes the cost of a check measurable at all.
   has no search endpoint: Settings carries an optional search URL (no key),
   the provider endpoint still wins, and the tool stays absent when neither is
   configured (ADR 0038 amended).
+
+## 2026-11-10 — kernel 0.2.3: write_file keeps line endings
+
+- Keel 0.2.3 makes `write_file` write in the existing file's line-ending
+  style when the file contains a CRLF pair (ADR 0045), so a small rewrite of
+  a CRLF file no longer shows as a whole-file change in the checkpoint card.
+- `docs/kernel.md` pins 0.2.3.
+- Verified: Keel tests, clippy and fmt; host tests; `doctor` reports 0.2.3.
