@@ -1960,3 +1960,11 @@ duration line is what makes the cost of a check measurable at all.
   during "verifying" stops instead of waiting for the whole plan; a
   cancelled turn is still not written to the kernel history.
 - `docs/kernel.md` pins 0.2.7.
+
+## 2026-11-10 — an interrupted turn is part of the history
+
+- Keel 0.2.8 records a cancelled turn's input and streamed partial answer in
+  the model history, so "继续" after an interruption continues the
+  interrupted question instead of the previous completed turn. The
+  transcript shows the partial answer the turn had streamed.
+- `docs/kernel.md` pins 0.2.8.
