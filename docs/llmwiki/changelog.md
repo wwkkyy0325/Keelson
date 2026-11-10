@@ -1903,3 +1903,13 @@ duration line is what makes the cost of a check measurable at all.
   a CRLF file no longer shows as a whole-file change in the checkpoint card.
 - `docs/kernel.md` pins 0.2.3.
 - Verified: Keel tests, clippy and fmt; host tests; `doctor` reports 0.2.3.
+
+## 2026-11-10 — a wide message and the latest-message follow
+
+- A pasted URL has no spaces to break at; the user bubble now wraps anywhere,
+  and the transcript hides horizontal overflow so a wide line cannot pan the
+  whole conversation.
+- The transcript released its follow only when more than 80 px from the
+  bottom, which a wheel notch does not always reach, so the next event pulled
+  the view back. An upward scroll now releases the follow whatever its size,
+  and a wheel up releases it before the browser scrolls.

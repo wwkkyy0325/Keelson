@@ -109,10 +109,24 @@
     });
   });
 
+  let lastTop = 0;
+
   function onScroll(): void {
     if (!scroller) return;
-    stick =
-      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+    const top = scroller.scrollTop;
+    const atBottom =
+      scroller.scrollHeight - top - scroller.clientHeight < 80;
+    // A wheel notch is smaller than the 80 px band, so reaching the band is
+    // not enough to tell "still following" from "tried to look back". Any
+    // upward move releases the follow; moving down follows again at the end.
+    stick = top < lastTop ? false : atBottom;
+    lastTop = top;
+  }
+
+  /// The wheel releases the follow before the browser scrolls, so an
+  /// auto-scroll scheduled in the same tick cannot pull the view back.
+  function onWheel(event: WheelEvent): void {
+    if (event.deltaY < 0) stick = false;
   }
 
   async function loadOlder(): Promise<void> {
@@ -145,7 +159,12 @@
   }
 </script>
 
-<div class="transcript" bind:this={scroller} onscroll={onScroll}>
+<div
+  class="transcript"
+  bind:this={scroller}
+  onscroll={onScroll}
+  onwheel={onWheel}
+>
   {#if $session.nextBefore !== null}
     <button
       class="load-older"
