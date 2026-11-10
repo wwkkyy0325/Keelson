@@ -360,8 +360,12 @@ fn resolve_program(workspace: &Path, program: &str) -> Option<PathBuf> {
         return relative.is_file().then_some(relative);
     }
     let path = std::env::var_os("PATH")?;
-    let extensions: &[&str] = if cfg!(windows) {
-        &["", ".exe", ".cmd", ".bat"]
+    // On Windows a bare name is looked up as a program, not as a file: an
+    // extensionless `notepad` on PATH is often a shell script that cannot be
+    // launched. A name that already carries an extension is taken literally.
+    let named_with_extension = candidate.extension().is_some();
+    let extensions: &[&str] = if cfg!(windows) && !named_with_extension {
+        &[".exe", ".cmd", ".bat"]
     } else {
         &[""]
     };
@@ -431,5 +435,150 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].access, AccessKind::Execute);
         assert_eq!(requests[0].path.as_deref(), Some(script.as_path()));
+    }
+
+    fn ctx(workspace: &std::path::Path) -> ToolCtx {
+        ToolCtx {
+            turn_id: keel_core::TurnId::new(1),
+            call_id: keel_core::ToolCallId::new(1),
+            workspace_root: workspace.to_path_buf(),
+            cancel: keel_core::CancelToken::new(),
+        }
+    }
+
+    fn between<'a>(line: &'a str, start: &str, end: &str) -> Option<&'a str> {
+        let from = line.find(start)? + start.len();
+        let rest = &line[from..];
+        let to = rest.find(end).unwrap_or(rest.len());
+        Some(rest[..to].trim())
+    }
+
+    struct ClosePid(u32);
+
+    impl Drop for ClosePid {
+        fn drop(&mut self) {
+            #[cfg(windows)]
+            {
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &self.0.to_string(), "/F"])
+                    .status();
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs an interactive desktop session"]
+    async fn the_desktop_tools_work_end_to_end() {
+        use crate::engine::screen::{ListWindowsTool, ScreenCaptureTool, ViewImageTool};
+
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let screens = temp.path().join("screens");
+        let context = ctx(temp.path());
+
+        // What is visible before the launch, so the new window is unambiguous.
+        let before = ListWindowsTool::new()
+            .call(ToolArgs::new(), &context)
+            .await
+            .content()
+            .expect("the window list")
+            .to_owned();
+        let before_ids: Vec<String> = before
+            .lines()
+            .filter_map(|line| between(line, "id=", " app=").map(str::to_owned))
+            .collect();
+
+        let mut launch_args = ToolArgs::new();
+        // Paint opens a blank canvas with no session state, so closing it
+        // cannot lose anything.
+        launch_args.insert("program", ArgValue::String("mspaint".to_owned()));
+        let launched = LaunchAppTool::new().call(launch_args, &context).await;
+        if !launched.is_success() {
+            eprintln!(
+                "skipping: mspaint is not available: {:?}",
+                launched.content()
+            );
+            return;
+        }
+        let pid = launched
+            .content()
+            .and_then(|text| text.split("as pid ").nth(1))
+            .and_then(|rest| rest.split(';').next())
+            .and_then(|pid| pid.trim().parse::<u32>().ok())
+            .expect("a pid");
+        let _close = ClosePid(pid);
+
+        // Wait for the new window, up to 20 s.
+        let mut found: Option<(String, String)> = None;
+        for _ in 0..80 {
+            let listing = ListWindowsTool::new()
+                .call(ToolArgs::new(), &context)
+                .await
+                .content()
+                .unwrap_or_default()
+                .to_owned();
+            for line in listing.lines() {
+                let Some(id) = between(line, "id=", " app=") else {
+                    continue;
+                };
+                if before_ids.iter().any(|known| known == id) {
+                    continue;
+                }
+                let title = between(line, "title=", " size=")
+                    .unwrap_or_default()
+                    .to_owned();
+                if !title.trim().is_empty() {
+                    found = Some((id.to_owned(), title));
+                    break;
+                }
+            }
+            if found.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        let (window_id, title) = found.expect("a new window shortly after the launch");
+
+        // wait_for_window finds the same window by title.
+        let mut wait_args = ToolArgs::new();
+        wait_args.insert("title", ArgValue::String(title.clone()));
+        let waited = WaitForWindowTool::new().call(wait_args, &context).await;
+        assert!(waited.is_success(), "{waited:?}");
+
+        // The capture carries an image and a saved file.
+        let mut capture_args = ToolArgs::new();
+        capture_args.insert("target", ArgValue::String("window".to_owned()));
+        capture_args.insert("window", ArgValue::String(window_id.clone()));
+        let captured = ScreenCaptureTool::new(screens.clone())
+            .call(capture_args, &context)
+            .await;
+        assert!(captured.is_success(), "{captured:?}");
+        assert_eq!(captured.images.len(), 1, "the model gets the pixels");
+        let saved = std::fs::read_dir(&screens)
+            .expect("the screens folder")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .next()
+            .expect("a saved screenshot");
+        assert!(saved.is_file());
+
+        // The control tree of the new window is readable and non-empty.
+        let mut control_args = ToolArgs::new();
+        control_args.insert("window", ArgValue::String(title.clone()));
+        let controls = ListControlsTool::new().call(control_args, &context).await;
+        assert!(controls.is_success(), "{controls:?}");
+        assert!(
+            !controls.content().unwrap_or_default().trim().is_empty(),
+            "the control list is empty for `{title}`"
+        );
+
+        // view_image reopens the saved screenshot.
+        let mut view_args = ToolArgs::new();
+        view_args.insert(
+            "path",
+            ArgValue::String(saved.to_string_lossy().into_owned()),
+        );
+        let viewed = ViewImageTool::new().call(view_args, &context).await;
+        assert!(viewed.is_success(), "{viewed:?}");
+        assert_eq!(viewed.images.len(), 1);
     }
 }

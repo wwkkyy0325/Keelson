@@ -2159,3 +2159,14 @@ duration line is what makes the cost of a check measurable at all.
   controls that pixels describe poorly.
 - All four are listed by every rig. Click-and-type automation is explicitly
   out of scope (ADR 0043).
+
+## 2026-11-10 — the desktop tools proven on a real window
+
+- An end-to-end probe launches the on-screen Paint, finds its new window,
+  captures it (image + saved PNG), lists its UI Automation controls and
+  reopens the PNG with `view_image`. It found a real bug: a bare `notepad`
+  resolved to Git's extensionless shell script on PATH, which Windows cannot
+  start; a bare name now searches `.exe`, `.cmd`, `.bat`.
+- `tests/desktop_eval.rs` is the live vision check: a generated red circle,
+  `view_image`, and answers must name the colour and the shape and the turn
+  must contain a real `view_image` call.

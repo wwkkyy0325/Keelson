@@ -34,6 +34,8 @@ pixels. No clicks or typing.
 cd /d/workspace-new/wwkkyy0325/Keelson
 cargo test && cargo clippy --all-targets -- -D warnings
 cargo test --lib desktop::tests::the_control_tree_of_a_window_is_listed -- --ignored
+cargo test --lib desktop::tests::the_desktop_tools_work_end_to_end -- --ignored
+DEEPSEEK_API_KEY=... cargo test --test desktop_eval -- --ignored --nocapture
 ```
 
 Live acceptance: ask the agent to launch Notepad, wait for its window, capture
