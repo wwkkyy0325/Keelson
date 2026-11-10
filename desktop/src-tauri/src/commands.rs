@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use keel_core::{CancelToken, Event, PermissionLevel};
 use keelson::engine::{
-    ContextPoint, Engine, ModelDelta, ModelOverride, OpenRequest, Store, TurnPage, TurnView,
+    ContextPoint, Engine, ModelDelta, ModelOverride, OpenRequest, Store, TurnView,
 };
 use keelson::rig;
 use serde::Serialize;
@@ -23,6 +23,9 @@ pub const EV_TEXT_DELTA: &str = "keelson:text-delta";
 pub const EV_THINKING_DELTA: &str = "keelson:thinking-delta";
 pub const EV_TOOL_STARTED: &str = "keelson:tool-started";
 pub const EV_TOOL_FINISHED: &str = "keelson:tool-finished";
+pub const EV_BACKGROUND_STARTED: &str = "keelson:background-started";
+pub const EV_BACKGROUND_FINISHED: &str = "keelson:background-finished";
+pub const EV_TURN_VERIFYING: &str = "keelson:turn-verifying";
 pub const EV_TURN_CHANGES: &str = "keelson:turn-changes";
 pub const EV_TURN_FINISHED: &str = "keelson:turn-finished";
 pub const EV_TURN_FAILED: &str = "keelson:turn-failed";
@@ -61,17 +64,49 @@ pub struct RigOption {
     pub description: String,
 }
 
+/// One stored turn plus the files its checkpoint pair changed. The changes
+/// belong to the turn that made them, so a later turn cannot take them over.
+#[derive(Serialize)]
+pub struct TurnWithChanges {
+    #[serde(flatten)]
+    pub turn: TurnView,
+    pub changes: Vec<checkpoints::FileChange>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnPageWithChanges {
+    pub turns: Vec<TurnWithChanges>,
+    pub next_before: Option<u32>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionView {
     pub rig: String,
     pub workspace: String,
     pub session_id: String,
-    pub turns: Vec<TurnView>,
+    pub turns: Vec<TurnWithChanges>,
     pub next_before: Option<u32>,
     /// Every conversation in the project, newest first.
     pub sessions: Vec<SessionMeta>,
     pub projects: Vec<ProjectEntry>,
+}
+
+fn with_changes(
+    state_dir: &Path,
+    workspace: &Path,
+    session_id: &str,
+    turns: Vec<TurnView>,
+) -> Vec<TurnWithChanges> {
+    let changes = checkpoints::changes_for_session(state_dir, workspace, session_id);
+    turns
+        .into_iter()
+        .map(|turn| {
+            let changes = changes.get(&turn.seq).cloned().unwrap_or_default();
+            TurnWithChanges { turn, changes }
+        })
+        .collect()
 }
 
 #[derive(Clone, Serialize)]
@@ -116,6 +151,37 @@ struct ToolFinishedEvent {
     duration_ms: u64,
     error: Option<String>,
     output: Option<String>,
+}
+
+/// A shell command the turn moved to the background. The result arrives later
+/// as a user message in the conversation; this pair lets the view show it.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackgroundStartedEvent {
+    seq: u32,
+    id: String,
+    program: String,
+    pid: u32,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackgroundFinishedEvent {
+    seq: u32,
+    id: String,
+    program: String,
+    exit_code: Option<i32>,
+    duration_ms: u64,
+    output_path: String,
+}
+
+/// The answer is written and the turn is running its acceptance checks. The
+/// composer still waits for the turn; this only gives the view a state to show.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TurnVerifyingEvent {
+    seq: u32,
+    checks: u32,
 }
 
 /// The checkpoint pair for a finished turn is recorded after the turn row is
@@ -629,7 +695,7 @@ async fn open_inner(
         *current = Some(CurrentSession {
             id: session_id.clone(),
             workspace: workspace.clone(),
-            state_dir,
+            state_dir: state_dir.clone(),
         });
     }
     let projects = {
@@ -665,8 +731,8 @@ async fn open_inner(
     Ok(SessionView {
         rig: rig_label,
         workspace: workspace_label,
-        session_id,
-        turns: page.turns,
+        session_id: session_id.clone(),
+        turns: with_changes(&state_dir, &workspace, &session_id, page.turns),
         next_before: page.next_before,
         sessions: session_list,
         projects,
@@ -740,16 +806,27 @@ fn permission_level(level: &str) -> Option<PermissionLevel> {
 }
 
 /// The permission override lives in the desktop config, not in the rig file.
-/// It takes effect the next time the engine opens.
+/// It reaches the open engine immediately and is persisted for the next open.
 #[tauri::command]
 pub fn save_permission(state: State<'_, SharedState>, level: String) -> Result<(), String> {
     let parsed = permission_level(level.trim()).ok_or_else(|| "未知的权限级别".to_owned())?;
-    let mut config = state
-        .config
+    {
+        let mut config = state
+            .config
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        config.permission = Some(parsed.as_str().to_owned());
+        config::save_config(&config)?;
+    }
+    let engine = state
+        .engine
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    config.permission = Some(parsed.as_str().to_owned());
-    config::save_config(&config)
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    if let Some(engine) = engine {
+        engine.set_permission(parsed);
+    }
+    Ok(())
 }
 
 /// What the composer's status line shows: the effective permission, the
@@ -765,6 +842,41 @@ pub struct SessionStatus {
     pub context_budget: u32,
     pub context_window: Option<u32>,
     pub recent: Vec<ContextPoint>,
+}
+
+/// Running and finished-but-unreported background commands. The view polls
+/// this while it shows a background row; it never consumes a result.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundTaskView {
+    pub id: String,
+    pub program: String,
+    pub running: bool,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    pub output_path: String,
+}
+
+#[tauri::command]
+pub fn background_tasks(state: State<'_, SharedState>) -> Result<Vec<BackgroundTaskView>, String> {
+    let engine = state
+        .engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    Ok(engine
+        .background_tasks()
+        .into_iter()
+        .map(|task| BackgroundTaskView {
+            id: task.id,
+            program: task.program,
+            running: task.running,
+            exit_code: task.exit_code,
+            duration_ms: task.duration_ms,
+            output_path: task.output_path,
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -953,6 +1065,48 @@ pub async fn send_message(
                                     },
                                 );
                             }
+                            Event::BackgroundStarted {
+                                id,
+                                program,
+                                pid,
+                                ..
+                            } => {
+                                let _ = live_app.emit(
+                                    EV_BACKGROUND_STARTED,
+                                    BackgroundStartedEvent {
+                                        seq,
+                                        id,
+                                        program,
+                                        pid,
+                                    },
+                                );
+                            }
+                            Event::BackgroundResult {
+                                id,
+                                program,
+                                output_path,
+                                exit_code,
+                                duration_ms,
+                                ..
+                            } => {
+                                let _ = live_app.emit(
+                                    EV_BACKGROUND_FINISHED,
+                                    BackgroundFinishedEvent {
+                                        seq,
+                                        id,
+                                        program,
+                                        exit_code,
+                                        duration_ms,
+                                        output_path,
+                                    },
+                                );
+                            }
+                            Event::VerificationStarted { checks, .. } => {
+                                let _ = live_app.emit(
+                                    EV_TURN_VERIFYING,
+                                    TurnVerifyingEvent { seq, checks },
+                                );
+                            }
                             _ => {}
                         }
                     }
@@ -1078,6 +1232,7 @@ pub async fn undo_last_turn(state: State<'_, SharedState>) -> Result<(), String>
 #[tauri::command]
 pub async fn turn_changes(
     state: State<'_, SharedState>,
+    seq: Option<u32>,
 ) -> Result<Vec<checkpoints::FileChange>, String> {
     let state = state.inner().clone();
     let current = state
@@ -1093,7 +1248,8 @@ pub async fn turn_changes(
     let (Some(current), Some(engine)) = (current, engine) else {
         return Ok(Vec::new());
     };
-    let Some(seq) = engine.history(None, 1).turns.first().map(|turn| turn.seq) else {
+    let Some(seq) = seq.or_else(|| engine.history(None, 1).turns.first().map(|turn| turn.seq))
+    else {
         return Ok(Vec::new());
     };
     let changes = tauri::async_runtime::spawn_blocking(move || {
@@ -1110,7 +1266,7 @@ pub fn load_turns(
     state: State<'_, SharedState>,
     before: Option<u32>,
     limit: Option<usize>,
-) -> Result<TurnPage, String> {
+) -> Result<TurnPageWithChanges, String> {
     let engine = state
         .inner()
         .engine
@@ -1118,7 +1274,33 @@ pub fn load_turns(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone()
         .ok_or_else(|| "还没有打开会话".to_owned())?;
-    Ok(engine.history(before, limit.unwrap_or(30)))
+    let current = state
+        .inner()
+        .current
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let page = engine.history(before, limit.unwrap_or(30));
+    let turns = match current {
+        Some(current) => with_changes(
+            &current.state_dir,
+            &current.workspace,
+            &current.id,
+            page.turns,
+        ),
+        None => page
+            .turns
+            .into_iter()
+            .map(|turn| TurnWithChanges {
+                turn,
+                changes: Vec::new(),
+            })
+            .collect(),
+    };
+    Ok(TurnPageWithChanges {
+        turns,
+        next_before: page.next_before,
+    })
 }
 
 #[tauri::command]

@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     archiveSession,
+    backgroundTasks,
     branchSession,
     cancelTurn,
     deleteSession,
@@ -25,7 +26,7 @@
   import Sidebar from "./Sidebar.svelte";
   import StatusBar from "./StatusBar.svelte";
   import Transcript from "./Transcript.svelte";
-  import type { FileChange, SessionStatus, Turn } from "../lib/protocol";
+  import type { SessionStatus, Turn } from "../lib/protocol";
 
   let { onSettings }: { onSettings: () => void } = $props();
 
@@ -36,9 +37,56 @@
   let prefillDraft = $state("");
   let undoDone = $state(false);
   /// Files the latest turn changed, from its checkpoint pair.
-  let changes = $state<FileChange[]>([]);
+  // The diff belongs to the turn that made it; the latest turn's copy drives
+  // the undo button and the card above the actions.
+  let latestChanges = $derived($session.turns.at(-1)?.changes ?? []);
+  /// ArrowUp/ArrowDown in the composer walk the inputs already sent.
+  let promptHistory = $derived($session.turns.map((turn) => turn.input));
+  /// Background commands outlive a turn, so the view polls the engine while
+  /// any is known. A result stays until the engine hands it to the model.
+  let backgroundTimer: ReturnType<typeof setInterval> | null = null;
+
+  function pollBackground(): void {
+    if (backgroundTimer !== null) return;
+    const sync = async (): Promise<void> => {
+      try {
+        const tasks = await backgroundTasks();
+        const now = Date.now();
+        dispatch({
+          type: "background-synced",
+          tasks: tasks.map((task) => ({
+            id: task.id,
+            program: task.program,
+            startedAt: now - task.durationMs,
+            ok: task.running ? null : task.exitCode === 0,
+            durationMs: task.durationMs,
+            outputPath: task.outputPath,
+          })),
+        });
+        if (tasks.length === 0 && backgroundTimer !== null) {
+          clearInterval(backgroundTimer);
+          backgroundTimer = null;
+        }
+      } catch {
+        // A closed session stops the poll; the next live event starts it
+        // again for the session that owns the task.
+        if (backgroundTimer !== null) {
+          clearInterval(backgroundTimer);
+          backgroundTimer = null;
+        }
+      }
+    };
+    void sync();
+    backgroundTimer = setInterval(sync, 1000);
+  }
+
+  $effect(() => {
+    if ($session.background.length > 0) {
+      pollBackground();
+    }
+  });
   let undoable = $derived(
-    !$session.running && !undoDone && changes.length > 0,
+    !$session.running && !undoDone && latestChanges.length > 0,
   );
   /// Permission, connection and context usage for the composer's status line.
   let status = $state<SessionStatus | null>(null);
@@ -77,9 +125,13 @@
 
   async function loadChanges(): Promise<void> {
     try {
-      changes = await turnChanges();
+      const seq = $session.changedSeq ?? $session.turns.at(-1)?.seq ?? null;
+      const loaded = await turnChanges(seq);
+      if (seq !== null) {
+        dispatch({ type: "turn-changes-loaded", seq, changes: loaded });
+      }
     } catch {
-      changes = [];
+      // A closed session or a missing checkpoint leaves the turn as it was.
     }
   }
 
@@ -95,12 +147,6 @@
     uiError = null;
     try {
       await savePermission(level);
-      // The level is applied when the engine opens, so reopen the workspace.
-      const view =
-        $session.turns.length === 0
-          ? await newSession($session.workspace)
-          : await openSession($session.workspace, $session.sessionId);
-      dispatch({ type: "session-opened", view });
       await loadStatus();
     } catch (error) {
       uiError = errText(error);
@@ -290,7 +336,7 @@
       onError={(message) => (uiError = message)}
       error={uiError ?? $session.lastError}
       {projectName}
-      {changes}
+      changes={latestChanges}
       {undoable}
       onUndo={() => (confirmUndo = true)}
       onBranch={branchFrom}
@@ -312,6 +358,7 @@
           onCancel={cancel}
           onError={(message) => (uiError = message)}
           initialDraft={prefillDraft}
+          history={promptHistory}
         />
       {/key}
 

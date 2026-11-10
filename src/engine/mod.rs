@@ -22,14 +22,14 @@ use keel_core::{
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, AcceptanceSelector, ApplyEditsTool, BackgroundTasks,
-    CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool, EditFileTool, EventLog, EventRecord,
-    GlobTool, HistoryStage, InteractionBroker, InterjectionPush, KernelOptions, LatestStage,
-    ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore, MakeDirTool, MemoryStage,
-    MockModel, MockStep, MoveFileTool, MultiEditTool, PermissionEngine, ProviderSummarizer,
-    ReadFileTool, ReadLedger, RestoreFileTool, RootScope, RuntimeConfig, ShellTool, SystemStage,
-    TaskStateStage, TodoTool, ToolRegistry, TurnDriver, TurnDriverConfig, TurnOutcome,
-    WriteFileTool,
+    load_profile, validate_config, AcceptanceSelector, ApplyEditsTool, BackgroundSnapshot,
+    BackgroundTasks, CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool, EditFileTool,
+    EventLog, EventRecord, GlobTool, HistoryStage, InteractionBroker, InterjectionPush,
+    KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore,
+    MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, MultiEditTool, PermissionEngine,
+    ProviderSummarizer, ReadFileTool, ReadLedger, RestoreFileTool, RootScope, RuntimeConfig,
+    ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver, TurnDriverConfig,
+    TurnOutcome, WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -185,6 +185,9 @@ pub struct Engine {
     driver: TurnDriver<DeltaModel>,
     events: Arc<EventLog>,
     todos: Arc<Mutex<TodoList>>,
+    /// Session-scoped background commands; the host reads them without
+    /// draining the results the driver needs.
+    background: Arc<LocalBackgroundTasks>,
     store: Store,
     /// Shared with `search_history`, which reads the stored turns directly.
     session: Arc<Mutex<StoredSession>>,
@@ -513,7 +516,7 @@ impl Engine {
                 context_window: config.context_window,
                 limits: config.limits(),
                 todos: Some(todos.clone()),
-                background: Some(background),
+                background: Some(background.clone()),
                 options: KernelOptions::default(),
             },
         )
@@ -548,6 +551,7 @@ impl Engine {
             driver,
             events,
             todos,
+            background,
             store,
             session,
             roots,
@@ -661,7 +665,14 @@ impl Engine {
 
     /// The effective permission level, including a host override.
     pub fn permission(&self) -> keel_core::PermissionLevel {
-        self.config.permission_level
+        self.driver.permission_level()
+    }
+
+    /// Switches the level for the open session. The desktop calls this when
+    /// the composer's permission chip changes; session grants are dropped so
+    /// a downgrade is real.
+    pub fn set_permission(&self, level: keel_core::PermissionLevel) {
+        self.driver.set_permission_level(level);
     }
 
     /// The rig this session was opened with.
@@ -708,6 +719,12 @@ impl Engine {
         let excess = points.len().saturating_sub(8);
         points.drain(..excess);
         points
+    }
+
+    /// Running and finished-but-unreported background commands. The driver
+    /// consumes a result at the next turn; this view never does.
+    pub fn background_tasks(&self) -> Vec<BackgroundSnapshot> {
+        self.background.snapshot()
     }
 
     pub fn events(&self) -> &Arc<EventLog> {

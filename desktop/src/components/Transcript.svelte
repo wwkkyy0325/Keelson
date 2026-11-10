@@ -4,6 +4,7 @@
   import { dispatch, session } from "../lib/session-store";
   import { t } from "../lib/i18n";
   import Turn from "./Turn.svelte";
+  import Markdown from "./Markdown.svelte";
   import type { FileChange, Turn as TurnData } from "../lib/protocol";
 
   let {
@@ -42,6 +43,57 @@
     if (ms <= 0) return "<1 ms";
     return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
   }
+
+  /// Background commands tick while they run; the row shows elapsed time
+  /// because the command's length is not known in advance.
+  let now = $state(Date.now());
+  $effect(() => {
+    const running = $session.background.some((task) => task.ok === null);
+    if (!running) return;
+    const timer = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(timer);
+  });
+
+  function elapsed(ms: number): string {
+    const seconds = Math.max(0, Math.floor(ms / 1000));
+    if (seconds < 60) return `${seconds} s`;
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes} m ${String(seconds % 60).padStart(2, "0")} s`;
+  }
+
+  function compactCount(count: number): string {
+    if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+    if (count >= 100_000) return `${Math.round(count / 1000)}k`;
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
+    return String(count);
+  }
+
+  // Thinking and the commentary from a round that called a tool share one
+  // folded block: both are how the turn got to the answer, and the answer
+  // area only keeps the call that finished it.
+  let reasoningChars = $derived(
+    ($session.running?.thinking.length ?? 0) +
+      ($session.running?.process.reduce((sum, part) => sum + part.length, 0) ??
+        0),
+  );
+
+  // The streaming answer is markdown too. Re-parsing on every chunk replaces
+  // the whole answer and flickers, so the source lags the stream by at most
+  // 80 ms instead.
+  let answerSource = $state("");
+  let answerTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const text = $session.running?.text ?? "";
+    if (text.trim() === "") {
+      answerSource = "";
+      return;
+    }
+    if (answerTimer !== null) return;
+    answerTimer = setTimeout(() => {
+      answerTimer = null;
+      answerSource = $session.running?.text ?? "";
+    }, 80);
+  });
 
   // Keep the last message in view unless the user scrolled up.
   $effect(() => {
@@ -116,7 +168,9 @@
     <Turn
       {turn}
       isLatest={index === $session.turns.length - 1}
-      changes={index === $session.turns.length - 1 ? changes : []}
+      changes={index === $session.turns.length - 1
+        ? changes
+        : (turn.changes ?? [])}
       {undoable}
       {onUndo}
       onBranch={() => onBranch(turn)}
@@ -128,14 +182,24 @@
       <div class="user">{$session.running.input}</div>
       {#if $session.running.thinking || $session.running.tools.length > 0 || $session.running.process.length > 0}
         <div class="tools">
-          {#if $session.running.thinking}
+          {#if $session.running.thinking || $session.running.process.length > 0}
             <details class="tool">
               <summary>
                 <span class="tool-mark">·</span>
                 <span class="tool-name">{$t("turn.thinking")}</span>
+                <span class="tool-time"
+                  >{$t("turn.thinkingChars", {
+                    count: compactCount(reasoningChars),
+                  })}</span
+                >
               </summary>
               <div class="tool-detail">
-                <pre>{$session.running.thinking}</pre>
+                {#if $session.running.thinking}
+                  <pre>{$session.running.thinking}</pre>
+                {/if}
+                {#each $session.running.process as part}
+                  <pre>{part}</pre>
+                {/each}
               </div>
             </details>
           {/if}
@@ -170,23 +234,51 @@
               {/if}
             </details>
           {/each}
-          {#if $session.running.process.length > 0}
-            <details class="tool">
-              <summary>
-                <span class="tool-mark">·</span>
-                <span class="tool-name">{$t("turn.process")}</span>
-              </summary>
-              <div class="tool-detail">
-                <pre>{$session.running.process.join("\n\n")}</pre>
-              </div>
-            </details>
-          {/if}
         </div>
       {/if}
       {#if $session.running.text}
-        <div class="answer">{$session.running.text}</div>
+        <div class="answer"><Markdown source={answerSource} /></div>
+      {/if}
+      {#if $session.running.verifying !== null}
+        <p class="verifying">
+          <span class="verifying-dot"></span>
+          {$t("turn.verifying", { count: $session.running.verifying })}
+        </p>
       {/if}
     </article>
+  {/if}
+
+  <!-- Background commands outlive the turn that started them: they stay at
+       the end of the transcript until the engine hands the result to the
+       model at the next turn. -->
+  {#if $session.background.length > 0}
+    <div class="tools background-strip">
+      {#each $session.background as task (task.id)}
+        <details class="tool">
+          <summary>
+            <span
+              class:fail={task.ok === false}
+              class:ok={task.ok === true}
+              class:pending={task.ok === null}
+              class="tool-mark">{mark(task.ok)}</span
+            >
+            <span class="tool-name">{task.id}</span>
+            <span class="tool-args">{task.program}</span>
+            {#if task.ok === null}
+              <span class="tool-time">{elapsed(now - task.startedAt)}</span>
+            {:else}
+              <span class="tool-time">{took(task.durationMs, task.ok)}</span>
+            {/if}
+          </summary>
+          {#if task.outputPath}
+            <div class="tool-detail">
+              <span class="tool-label">{$t("turn.backgroundOutput")}</span>
+              <pre>{task.outputPath}</pre>
+            </div>
+          {/if}
+        </details>
+      {/each}
+    </div>
   {/if}
 
   {#if error}

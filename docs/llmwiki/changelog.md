@@ -1830,3 +1830,68 @@ duration line is what makes the cost of a check measurable at all.
 - Verified: Keel workspace tests, clippy, fmt; Keelson tests, clippy, fmt;
   desktop `npm test`, `npm run check`, `npm run build`, backend tests and
   clippy; `keelson doctor` reports kernel 0.2.1 and both rigs.
+
+## 2026-11-10 — a turn's tool budget was tried and rejected
+
+- Keel 0.2.2 added a per-turn tool-result budget (tested at 12,000 and 24,000
+  estimated tokens) that elided the oldest results before each model call.
+  It lowered the peak context (122.5k to 83k) but the model re-scanned the
+  workspace it had already read.
+- Measured on prompts 105–118, q2_0, one hour, one server, against a
+  no-elision control: control 14/14 turns in 816 s with 309 calls; 24k 11/14
+  in 1,488 s; 12k 10/14 in 1,927 s. The 0.2.1 evening replay of the same
+  window matches the control (14/14, 971 s).
+- Reverted: the kernel stays at 0.2.1 and the experiment is recorded as a
+  rejected ADR (Keel ADR 0039). The replay harness keeps an `el` column that
+  counts the overflow elision path.
+- Verified: Keel tests, clippy, fmt; Keelson tests; `doctor` reports 0.2.1.
+
+## 2026-11-10 — kernel 0.2.2: task list lifecycle and workspace execution
+
+- Keel 0.2.2 resets a closed task list at the start of the next user turn
+  (ADR 0040). A session's second task had lost every `todo add` because the
+  previous list had completed; every call failed with `todo list is closed`
+  (`invalid_arguments`) in under a millisecond.
+- Keel 0.2.2 lets `workspace_auto` execute a command inside a write root
+  without a prompt (ADR 0041). Execution previously confirmed on every root,
+  so the first `shell` call of each session interrupted the user and the
+  approval escalated to `full_auto` for eight hours.
+- The permission chip now applies immediately: `save_permission` switches the
+  open engine's base level and drops its grants instead of reopening the
+  workspace; the status line reads the effective level.
+- `docs/kernel.md` pins 0.2.2; `design.md` states what each permission level
+  covers.
+- Verified: Keel tests, clippy, fmt; Keelson tests; `doctor` reports 0.2.2.
+- The running turn now shows `验证中… N 项检查` once the kernel starts the
+  acceptance plan (`verification_started`, Keel ADR 0042), so a written answer
+  no longer looks stuck until the turn row and badge arrive.
+- Background shell commands (`background: "true"`) now show as their own rows
+  in the running turn with a live elapsed time, and the output path when they
+  finish; the host forwards `background_started/result` to the view. The
+  shell tool also accepts a per-call `timeout_ms` (Keel ADR 0043).
+- Background rows now live at the end of the transcript and survive the turn
+  that started them. The host polls a non-consuming `background_tasks` view
+  (Keel ADR 0044) while a row is shown; a row disappears when the engine hands
+  the result to the model at the next turn.
+
+## 2026-11-10 — web search and fetch on the provider key
+
+- Added `web_search` and `web_fetch` host tools (ADR 0038). `web_search` uses
+  the provider's Search endpoint and is registered only when the provider has
+  one; `web_fetch` always exists and falls back to a local download with SSRF
+  guards. Both are read-only and gated by the rig's `tools.visible`.
+- DeepSeek serves both at `{base}/v1/tools/{search,fetch}` on the chat key, so
+  the coding rigs get them with no extra configuration. Verified against the
+  live endpoints with the stored key: search returned 3 results, fetch
+  returned the page Markdown.
+- The claim that the models.dev catalog is the only non-model request is
+  amended by ADR 0038.
+- File-change summaries now belong to the turn that made them. The checkpoint
+  record stores the changed files with the pair (records written before this
+  are diffed on read), `load_turns` and the session view return them per
+  turn, and the view no longer moves the latest diff onto a newer turn or
+  drops it when a later turn changes nothing.
+- `web_search` can use a self-hosted SearXNG instance when the model provider
+  has no search endpoint: Settings carries an optional search URL (no key),
+  the provider endpoint still wins, and the tool stays absent when neither is
+  configured (ADR 0038 amended).

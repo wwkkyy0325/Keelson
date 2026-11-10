@@ -67,7 +67,7 @@
   );
 
   /// Small enough to sit beside the actions, precise enough to compare turns.
-  function compactTokens(count: number): string {
+  function compactCount(count: number): string {
     if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
     if (count >= 100_000) return `${Math.round(count / 1000)}k`;
     if (count >= 1000) return `${(count / 1000).toFixed(1)}k`;
@@ -114,6 +114,11 @@
           <summary>
             <span class="tool-mark">·</span>
             <span class="tool-name">{$t("turn.thinking")}</span>
+            <span class="tool-time"
+              >{$t("turn.thinkingChars", {
+                count: compactCount(turn.thinking.length),
+              })}</span
+            >
           </summary>
           <div class="tool-detail">
             <pre>{turn.thinking}</pre>
@@ -255,10 +260,10 @@
           {/if}
           {#if showUsage}
             <span title={$t("turn.inputTokensHint")}>
-              ↑{compactTokens(usage.inputTokens)}
+              ↑{compactCount(usage.inputTokens)}
             </span>
             <span title={$t("turn.outputTokensHint")}>
-              ↓{compactTokens(usage.outputTokens)}
+              ↓{compactCount(usage.outputTokens)}
             </span>
             {#if usage.cachedInputTokens > 0}
               <span title={$t("turn.cacheHint")}>

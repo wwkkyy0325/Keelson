@@ -1513,6 +1513,34 @@ header .title {
   color: var(--text);
 }
 
+/* The answer is written; the acceptance checks are still running. */
+.verifying {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.verifying-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: verifying-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes verifying-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .state {
   color: var(--warn);
   font-size: 0.85rem;

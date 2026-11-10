@@ -24,9 +24,11 @@
       ? status.recent[status.recent.length - 1].used
       : 0,
   );
-  let budget = $derived(status?.contextBudget ?? 0);
+  // The model window is the only bound a user needs to see; the working-set
+  // budget is a kernel detail that moves as the ladder escalates.
+  let window = $derived(status?.contextWindow ?? status?.contextBudget ?? 0);
   let percent = $derived(
-    budget > 0 ? Math.round((used / budget) * 100) : 0,
+    window > 0 ? Math.round((used / window) * 100) : 0,
   );
 
   function label(level: string | undefined): string {
@@ -108,7 +110,7 @@
         aria-expanded={contextOpen}
         title={$t("status.context")}
       >
-        <span class="status-num">{compact(used)} / {compact(budget)}</span>
+        <span class="status-num">{compact(used)} / {compact(window)}</span>
         <span class="status-pct">{percent}%</span>
         <span class="caret">▾</span>
       </button>
@@ -126,18 +128,13 @@
               <div class="status-row">
                 <span>{$t("status.contextTurn", { seq: point.seq })}</span>
                 <span class="status-num">
-                  {compact(point.used)} / {compact(point.ceiling)}
+                  {compact(point.used)} / {compact(window)}
                 </span>
               </div>
             {/each}
           {/if}
           <p class="status-hint">
-            {$t("status.contextBudget", {
-              budget: compact(status.contextBudget),
-            })}{#if status.contextWindow}
-              · {$t("status.contextWindow", {
-                window: compact(status.contextWindow),
-              })}{/if}
+            {$t("status.contextWindow", { window: compact(window) })}
           </p>
         </div>
       {/if}

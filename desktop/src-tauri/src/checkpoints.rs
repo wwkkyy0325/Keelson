@@ -18,11 +18,15 @@ struct Record {
     after: String,
     #[serde(default)]
     undone: bool,
+    /// The files the turn changed, captured with the pair. `None` on records
+    /// written before this field existed; those are diffed on read.
+    #[serde(default)]
+    changes: Option<Vec<FileChange>>,
 }
 
 /// One path a turn changed, with its line counts. `status` is the short git
 /// status letter (`A`, `M`, `D`, `T`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
     pub path: String,
@@ -86,12 +90,17 @@ pub fn record(
 ) -> Result<(), String> {
     let path = records_path(state_dir, workspace);
     let mut records = load_records(&path)?;
+    // Capture the changed files with the pair: a history page then reads
+    // them from the record instead of diffing every turn on every scroll.
+    let git_dir = repo_dir(state_dir, workspace).join(".git");
+    let changes = diff_changes(&git_dir, workspace, before, after).ok();
     records.turns.insert(
         key(session_id, seq),
         Record {
             before: before.to_owned(),
             after: after.to_owned(),
             undone: false,
+            changes,
         },
     );
     save_records(&path, &records)
@@ -180,35 +189,70 @@ pub fn changes(
     if entry.undone {
         return Ok(Vec::new());
     }
+    if let Some(changes) = &entry.changes {
+        return Ok(changes.clone());
+    }
     let git_dir = repo_dir(state_dir, workspace).join(".git");
+    diff_changes(&git_dir, workspace, &entry.before, &entry.after)
+}
+
+/// Every recorded turn of one session, keyed by seq. A history page reads
+/// this once instead of diffing each turn separately.
+pub fn changes_for_session(
+    state_dir: &Path,
+    workspace: &Path,
+    session_id: &str,
+) -> BTreeMap<u32, Vec<FileChange>> {
+    let Ok(records) = load_records(&records_path(state_dir, workspace)) else {
+        return BTreeMap::new();
+    };
+    let git_dir = repo_dir(state_dir, workspace).join(".git");
+    let mut out = BTreeMap::new();
+    for (key, entry) in &records.turns {
+        let Some((sid, seq)) = key.rsplit_once(':') else {
+            continue;
+        };
+        if sid != session_id {
+            continue;
+        }
+        let Ok(seq) = seq.parse::<u32>() else {
+            continue;
+        };
+        if entry.undone {
+            continue;
+        }
+        let changes = match &entry.changes {
+            Some(changes) => changes.clone(),
+            None => diff_changes(&git_dir, workspace, &entry.before, &entry.after)
+                .unwrap_or_default(),
+        };
+        out.insert(seq, changes);
+    }
+    out
+}
+
+fn diff_changes(
+    git_dir: &Path,
+    workspace: &Path,
+    before: &str,
+    after: &str,
+) -> Result<Vec<FileChange>, String> {
     let numstat = run_git(
-        &git_dir,
+        git_dir,
         workspace,
-        &[
-            "diff",
-            "--numstat",
-            "--no-renames",
-            &entry.before,
-            &entry.after,
-        ],
+        &["diff", "--numstat", "--no-renames", before, after],
     )?;
     let names = run_git(
-        &git_dir,
+        git_dir,
         workspace,
-        &[
-            "diff",
-            "--name-status",
-            "--no-renames",
-            &entry.before,
-            &entry.after,
-        ],
+        &["diff", "--name-status", "--no-renames", before, after],
     )?;
     let statuses: BTreeMap<String, String> = names
         .lines()
         .filter_map(|line| line.split_once('\t'))
         .map(|(status, path)| (path.to_owned(), status.to_owned()))
         .collect();
-    let changes = numstat
+    Ok(numstat
         .lines()
         .filter_map(|line| {
             let mut parts = line.splitn(3, '\t');
@@ -226,8 +270,7 @@ pub fn changes(
                 removed: removed.parse().unwrap_or(0),
             })
         })
-        .collect();
-    Ok(changes)
+        .collect())
 }
 
 fn ensure_repo(workspace: &Path, state_dir: &Path) -> Result<PathBuf, String> {

@@ -8,6 +8,7 @@
     onCancel,
     onError,
     initialDraft = "",
+    history = [],
   }: {
     running: boolean;
     onSend: (text: string) => Promise<void>;
@@ -15,7 +16,13 @@
     onError: (message: string) => void;
     /// Text a branch opens with, so the user can edit the turn they moved from.
     initialDraft?: string;
+    /// Earlier user inputs, oldest first: ArrowUp/ArrowDown walk them.
+    history?: string[];
   } = $props();
+
+  /// -1 while the draft is being edited; otherwise the index into `history`.
+  let cursor = -1;
+  let savedDraft = "";
 
   // The composer grows with its content and stops at 40% of the window, where
   // it starts to scroll. There is no handle and no remembered height: the
@@ -52,16 +59,55 @@
     try {
       await onSend(text);
       draft = "";
+      cursor = -1;
+      savedDraft = "";
     } catch (error) {
       onError(errText(error));
     }
   }
 
+  /// Arrow history behaves like a shell: the draft is kept aside while the
+  /// earlier inputs are walked, and ArrowDown past the newest brings it back.
+  function recall(direction: -1 | 1): void {
+    if (cursor === -1) {
+      savedDraft = draft;
+      cursor = history.length;
+    }
+    cursor = Math.min(history.length, Math.max(0, cursor + direction));
+    if (cursor >= history.length) {
+      cursor = -1;
+      draft = savedDraft;
+      return;
+    }
+    draft = history[cursor];
+    requestAnimationFrame(() => {
+      const end = draft.length;
+      textarea?.setSelectionRange(end, end);
+    });
+  }
+
   function onKeydown(event: KeyboardEvent): void {
+    if (event.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void send();
+      return;
     }
+    if (event.key === "ArrowUp" && history.length > 0 && canRecall()) {
+      event.preventDefault();
+      recall(-1);
+      return;
+    }
+    if (event.key === "ArrowDown" && cursor >= 0) {
+      event.preventDefault();
+      recall(1);
+    }
+  }
+
+  /// The first line with an empty draft, or anywhere while already browsing.
+  function canRecall(): boolean {
+    if (cursor >= 0 || draft.length === 0) return true;
+    return textarea?.selectionStart === 0 && textarea?.selectionEnd === 0;
   }
 
   function errText(error: unknown): string {

@@ -42,6 +42,9 @@ export type Turn = {
   verificationPassed: boolean | null;
   verification: Verification | null;
   tools: ToolLine[];
+  /// Files this turn changed, from its checkpoint pair. Absent on a turn
+  /// emitted live before its checkpoint was recorded.
+  changes?: FileChange[];
 };
 
 /// One file a turn changed, from its checkpoint pair.
@@ -194,6 +197,44 @@ export type ToolFinishedEvent = {
   error: string | null;
   output: string | null;
 };
+/// A shell command the running turn moved to the background.
+export type BackgroundStarted = {
+  seq: number;
+  id: string;
+  program: string;
+  pid: number;
+};
+export type BackgroundFinished = {
+  seq: number;
+  id: string;
+  program: string;
+  exitCode: number | null;
+  durationMs: number;
+  outputPath: string;
+};
+
+/// One background command as the session shows it.
+export type LiveBackground = {
+  id: string;
+  program: string;
+  startedAt: number;
+  ok: boolean | null;
+  durationMs: number;
+  outputPath: string | null;
+};
+
+/// The engine's view of a background command, without consuming its result.
+export type BackgroundTaskView = {
+  id: string;
+  program: string;
+  running: boolean;
+  exitCode: number | null;
+  durationMs: number;
+  outputPath: string;
+};
+
+/// The answer is written; the turn is running its acceptance checks.
+export type TurnVerifying = { seq: number; checks: number };
 export type TurnChanges = { seq: number };
 export type TurnFinished = { turn: Turn };
 export type TurnFailed = { seq: number; message: string };

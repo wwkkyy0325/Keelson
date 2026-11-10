@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  BackgroundFinished,
+  BackgroundStarted,
+  BackgroundTaskView,
   FileChange,
   Interaction,
   ModelCatalog,
@@ -18,6 +21,7 @@ import type {
   TurnFinished,
   TurnPage,
   TurnStarted,
+  TurnVerifying,
 } from "./protocol";
 import { dispatch } from "./session-store";
 
@@ -120,8 +124,8 @@ export function undoLastTurn(): Promise<void> {
 }
 
 /// The files the latest turn changed; empty when there is nothing to undo.
-export function turnChanges(): Promise<FileChange[]> {
-  return invoke("turn_changes");
+export function turnChanges(seq?: number | null): Promise<FileChange[]> {
+  return invoke("turn_changes", { seq: seq ?? null });
 }
 
 export function sessionStatus(): Promise<SessionStatus> {
@@ -131,6 +135,12 @@ export function sessionStatus(): Promise<SessionStatus> {
 /// Saves the permission override; the caller reopens the session to apply it.
 export function savePermission(level: string): Promise<void> {
   return invoke("save_permission", { level });
+}
+
+/// Running and finished-but-unreported background commands. Reading this
+/// never consumes a result; the engine hands those to the model itself.
+export function backgroundTasks(): Promise<BackgroundTaskView[]> {
+  return invoke("background_tasks");
 }
 
 export function loadTurns(
@@ -174,6 +184,34 @@ export async function listenToEvents(): Promise<UnlistenFn[]> {
   unlisten.push(
     await listen<ToolFinishedEvent>("keelson:tool-finished", (event) =>
       dispatch({ type: "tool-finished", ...event.payload }),
+    ),
+  );
+  unlisten.push(
+    await listen<BackgroundStarted>("keelson:background-started", (event) =>
+      dispatch({
+        type: "background-started",
+        id: event.payload.id,
+        program: event.payload.program,
+        startedAt: Date.now(),
+      }),
+    ),
+  );
+  unlisten.push(
+    await listen<BackgroundFinished>("keelson:background-finished", (event) =>
+      dispatch({
+        type: "background-finished",
+        id: event.payload.id,
+        program: event.payload.program,
+        exitCode: event.payload.exitCode,
+        durationMs: event.payload.durationMs,
+        outputPath: event.payload.outputPath,
+        startedAt: Date.now() - event.payload.durationMs,
+      }),
+    ),
+  );
+  unlisten.push(
+    await listen<TurnVerifying>("keelson:turn-verifying", (event) =>
+      dispatch({ type: "turn-verifying", ...event.payload }),
     ),
   );
   unlisten.push(

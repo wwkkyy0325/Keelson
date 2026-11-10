@@ -42,6 +42,7 @@ fn main() {
             commands::undo_last_turn,
             commands::turn_changes,
             commands::session_status,
+            commands::background_tasks,
             commands::save_permission,
             commands::load_turns,
             commands::respond_interaction,

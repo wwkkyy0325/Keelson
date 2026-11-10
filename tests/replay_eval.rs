@@ -114,6 +114,8 @@ struct TurnRow {
     /// the event carries the per-rewrite list, not the running total.
     summary_covers: Option<u32>,
     summary_failed: u32,
+    /// Tool results elided by the kernel's overflow path.
+    elided_messages: u32,
     escalations: Vec<EscalationRow>,
     budget_in_force: u32,
     store_bytes: u64,
@@ -344,6 +346,7 @@ async fn a_recorded_transcript_replays_through_the_engine() {
         let mut summary_chars = None;
         let mut summary_covers = None;
         let mut summary_failed = 0u32;
+        let mut elided_messages = 0u32;
         let records = engine.events().snapshot();
         for record in &records {
             event_bytes = event_bytes.saturating_add(
@@ -397,6 +400,9 @@ async fn a_recorded_transcript_replays_through_the_engine() {
                 }
                 Event::SummaryFailed { .. } => {
                     summary_failed = summary_failed.saturating_add(1);
+                }
+                Event::ContextElided { messages, .. } => {
+                    elided_messages = elided_messages.saturating_add(*messages);
                 }
                 Event::ContextEscalated {
                     from, to, reason, ..
@@ -465,6 +471,7 @@ async fn a_recorded_transcript_replays_through_the_engine() {
             summary_chars,
             summary_covers,
             summary_failed,
+            elided_messages,
             escalations,
             budget_in_force: engine.context_budget(),
             store_bytes,
@@ -475,7 +482,7 @@ async fn a_recorded_transcript_replays_through_the_engine() {
 
         eprintln!(
             "[{}/{total}] prompt {index}: {:.0} s {state} calls={model_calls} tools={tool_calls} \
-             ctx={}/{} {} detail={} digest={} drop={} rec={} sumTok={} recall={} sum={} cov={} in={} out={} \
+             ctx={}/{} {} detail={} digest={} drop={} rec={} sumTok={} recall={} sum={} cov={} el={} in={} out={} \
              esc={} ev={} store={} KB",
             done + 1,
             row.wall_ms as f64 / 1000.0,
@@ -490,6 +497,7 @@ async fn a_recorded_transcript_replays_through_the_engine() {
             row.recall_segments.unwrap_or(0),
             row.summary_updates,
             row.summary_covers.unwrap_or(0),
+            row.elided_messages,
             row.input_tokens,
             row.output_tokens,
             row.escalations.len(),

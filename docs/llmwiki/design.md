@@ -101,16 +101,19 @@ src/lib.rs engine: turn loop, permissions, storage, tools   (no UI types)
   switching, creating, archiving and deleting. A failed action is shown at the
   end of the transcript, not in a notice bar over the composer; the only
   element allowed above the composer is a pending permission or choice card,
-  which the turn blocks on. The latest turn shows its checkpoint diff (files,
-  added and removed lines) and offers undo only when that diff is non-empty;
-  undo restores the workspace files, never the transcript. Each answer's
+  which the turn blocks on. A finished turn shows its own checkpoint diff
+  (files, added and removed lines), captured with the checkpoint pair; undo is
+  offered only on the latest turn and only when its diff is non-empty. Undo
+  restores the workspace files, never the transcript. Each answer's
   action row shows a user-facing cost line on the right — elapsed time, input
   and output tokens, and the share served from the prompt cache — not
   developer event counts. A status line under the composer shows the
   effective permission level, a combined rig · provider · model chip that
   opens settings, and context usage with a per-turn history; the permission
   chip switches `workspace_auto` / `full_auto` through a desktop override
-  (ADR 0034) and reopens the engine.
+  (`workspace_auto` runs reads, writes and commands inside the workspace;
+  `full_auto` also reaches outside it) (ADR 0034) and takes effect on the
+  open engine immediately.
 - **Running turn**: the live view shows the model's thinking (open, muted),
   each tool call as it starts and finishes, and the streamed answer text. The
   desktop polls the engine's per-turn event log every 120 ms for tool
@@ -275,6 +278,20 @@ what the user refers to, the model can call `search_history`, a read-only host
 tool that searches the conversation's stored turns by keyword — ASCII words
 and CJK bigrams, up to eight hits with bounded excerpts and tool names
 (ADR 0037).
+
+## Web access
+
+Two host tools cover the web. `web_search` calls the model provider's own
+search endpoint (DeepSeek serves `{base}/v1/tools/search` on the chat key) and
+is registered only when the configured provider has one, or when the settings
+carry a SearXNG base URL (`{url}/search?format=json`, no key); a profile may
+list it for every provider and the engine drops it from the visible set when
+neither exists. `web_fetch` always exists: it uses the provider's fetch
+endpoint when available and otherwise downloads the URL locally, with
+loopback/private-host checks, a 30 s timeout, a 2 MiB cap and a 60k-character
+output cap. Both are read-only, ask for no confirmation, hold the API key in
+memory only, and exist for a rig only when its `tools.visible` names them
+(ADR 0038).
 
 ## Checkpoints
 

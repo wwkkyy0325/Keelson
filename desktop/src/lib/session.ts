@@ -1,5 +1,7 @@
 import type {
+  FileChange,
   Interaction,
+  LiveBackground,
   LiveTool,
   ProjectEntry,
   SessionMeta,
@@ -21,6 +23,8 @@ export type RunningTurn = {
   process: string[];
   /// Tool calls reported by the running turn, in start order.
   tools: LiveTool[];
+  /// Acceptance checks the turn is running, or null until verification starts.
+  verifying: number | null;
 };
 
 export type SessionState = {
@@ -34,6 +38,9 @@ export type SessionState = {
   /** Finished turns, ascending by seq. */
   turns: Turn[];
   running: RunningTurn | null;
+  /// Background commands of the session. They outlive the turn that started
+  /// them; the engine drops one when it hands the result to the model.
+  background: LiveBackground[];
   pendingInteraction: Interaction | null;
   /** Cursor for the page above `turns`; null means the start is loaded. */
   nextBefore: number | null;
@@ -46,6 +53,9 @@ export type SessionState = {
   /// Bumped when a finished turn's checkpoint pair is recorded, so the change
   /// list reloads without waiting for the snapshot before the turn is shown.
   changesEpoch: number;
+  /// The turn whose checkpoint pair just arrived; the diff belongs to it even
+  /// if a newer turn has started by the time it loads.
+  changedSeq: number | null;
 };
 
 export function initialSession(): SessionState {
@@ -57,12 +67,14 @@ export function initialSession(): SessionState {
     projects: [],
     turns: [],
     running: null,
+    background: [],
     pendingInteraction: null,
     nextBefore: null,
     loadingOlder: false,
     lastError: null,
     epoch: 0,
     changesEpoch: 0,
+    changedSeq: null,
   };
 }
 
@@ -86,7 +98,20 @@ export type Action =
       error: string | null;
       output: string | null;
     }
+  | { type: "background-started"; id: string; program: string; startedAt: number }
+  | {
+      type: "background-finished";
+      id: string;
+      program: string;
+      exitCode: number | null;
+      durationMs: number;
+      outputPath: string;
+      startedAt: number;
+    }
+  | { type: "background-synced"; tasks: LiveBackground[] }
+  | { type: "turn-verifying"; seq: number; checks: number }
   | { type: "turn-changes"; seq: number }
+  | { type: "turn-changes-loaded"; seq: number; changes: FileChange[] }
   | { type: "turn-finished"; turn: Turn }
   | { type: "turn-failed"; seq: number; message: string }
   | { type: "interaction-requested"; interaction: Interaction }
@@ -145,6 +170,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
           thinking: "",
           process: [],
           tools: [],
+          verifying: null,
         },
         lastError: null,
       };
@@ -221,13 +247,81 @@ export function reduce(state: SessionState, action: Action): SessionState {
       return { ...state, running: { ...state.running, tools } };
     }
 
+    case "background-started": {
+      if (state.background.some((task) => task.id === action.id)) {
+        return state;
+      }
+      const task: LiveBackground = {
+        id: action.id,
+        program: action.program,
+        startedAt: action.startedAt,
+        ok: null,
+        durationMs: 0,
+        outputPath: null,
+      };
+      return { ...state, background: [...state.background, task] };
+    }
+
+    case "background-finished": {
+      const ok = action.exitCode === 0;
+      const known = state.background.some((task) => task.id === action.id);
+      const background = known
+        ? state.background.map((task) =>
+            task.id === action.id
+              ? {
+                  ...task,
+                  ok,
+                  durationMs: action.durationMs,
+                  outputPath: action.outputPath,
+                }
+              : task,
+          )
+        : [
+            ...state.background,
+            {
+              id: action.id,
+              program: action.program,
+              startedAt: action.startedAt,
+              ok,
+              durationMs: action.durationMs,
+              outputPath: action.outputPath,
+            },
+          ];
+      return { ...state, background };
+    }
+
+    case "background-synced":
+      return { ...state, background: action.tasks };
+
+    case "turn-verifying":
+      if (state.running?.seq !== action.seq) {
+        return state;
+      }
+      return {
+        ...state,
+        running: { ...state.running, verifying: action.checks },
+      };
+
     case "turn-changes":
       // The pair arrives after the turn row; only the conversation that shows
       // it needs to reload.
       if (!state.turns.some((turn) => turn.seq === action.seq)) {
         return state;
       }
-      return { ...state, changesEpoch: state.changesEpoch + 1 };
+      return {
+        ...state,
+        changesEpoch: state.changesEpoch + 1,
+        changedSeq: action.seq,
+      };
+
+    case "turn-changes-loaded":
+      // Keep the diff on the turn that made it, so it survives the next turn.
+      return {
+        ...state,
+        turns: state.turns.map((turn) =>
+          turn.seq === action.seq ? { ...turn, changes: action.changes } : turn,
+        ),
+      };
 
     case "turn-finished":
       return {
