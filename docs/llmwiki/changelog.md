@@ -2145,3 +2145,17 @@ duration line is what makes the cost of a check measurable at all.
   the target named, the session grant silences later captures, and
   `full_auto` does not ask. The coding, office and research rigs list both
   tools.
+
+## 2026-11-10 — look again, launch, and read controls
+
+- `view_image` reopens a saved screenshot or an attached image by path and
+  attaches it to the result; the read is a normal path permission.
+- `launch_app` starts an application detached and returns its pid;
+  `wait_for_window` polls window titles until the application's window
+  exists. Starting an executable is an `Execute` permission on its resolved
+  path.
+- `list_controls` walks the UI Automation control view of a window (type,
+  name, class, bounds, up to 200 elements and six levels) for labelled
+  controls that pixels describe poorly.
+- All four are listed by every rig. Click-and-type automation is explicitly
+  out of scope (ADR 0043).

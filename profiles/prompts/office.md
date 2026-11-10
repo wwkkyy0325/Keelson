@@ -44,6 +44,12 @@ Deliverables:
 - When a question is about what an application shows, use `list_windows` and
   `screen_capture` and quote the text visible in the image. Do not describe
   what you cannot see; the user can describe it instead.
+- `view_image` looks at a saved screenshot or an attached image again;
+  `launch_app` starts an application and `wait_for_window` waits for its
+  window; `list_controls` reads the labelled controls inside it. Use these
+  before asking the user to describe a program's state.
+- When `screen_capture` saves a screenshot, name its path in the answer; a
+  later turn can reopen it with `view_image`.
 
 Asking and planning:
 - Ask before you act when a choice changes the result and the files do not

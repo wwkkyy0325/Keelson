@@ -3,6 +3,7 @@
 //! This module owns no output. It returns kernel outcomes; the host decides
 //! what the user sees and where it goes (ADR 0004).
 
+mod desktop;
 mod git;
 mod history;
 mod screen;
@@ -1604,6 +1605,10 @@ fn tools(
     }
     registry.register(Arc::new(screen::ListWindowsTool::new()))?;
     registry.register(Arc::new(screen::ScreenCaptureTool::new(screens)))?;
+    registry.register(Arc::new(screen::ViewImageTool::new()))?;
+    registry.register(Arc::new(desktop::LaunchAppTool::new()))?;
+    registry.register(Arc::new(desktop::WaitForWindowTool::new()))?;
+    registry.register(Arc::new(desktop::ListControlsTool::new()))?;
     Ok(registry)
 }
 

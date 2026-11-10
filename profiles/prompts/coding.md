@@ -32,6 +32,10 @@ Recommended:
   and needs no confirmation.
 - Use `list_windows` and `screen_capture` when a change is about what a
   running application shows; quote the visible text instead of guessing it.
+  `launch_app` and `wait_for_window` start and wait for an application;
+  `list_controls` reads its labelled controls; `view_image` reopens a saved
+  screenshot or an attached image by path. Name a screenshot's saved path in
+  the answer so a later turn can reopen it.
 - Run the real checks and report their output.
 - `.keelson/checks.toml` is the user's declaration of the project's own
   checks. Do not edit it to make a check pass, and only add a check when the

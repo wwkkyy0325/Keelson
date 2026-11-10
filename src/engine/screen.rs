@@ -219,6 +219,102 @@ impl Tool for ScreenCaptureTool {
     }
 }
 
+/// Opens a saved image and attaches it, so a later turn can look at a
+/// screenshot again or see an attached picture.
+pub struct ViewImageTool;
+
+impl ViewImageTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Tool for ViewImageTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "view_image".to_owned(),
+            description: "Read an image file (PNG, JPEG, WebP or GIF) and attach it so you can \
+                          look at it. Use it to re-open a screenshot saved earlier or an image \
+                          the user attached, by path."
+                .to_owned(),
+            risk: RiskLevel::ReadOnly,
+            params: vec![ParamSpec {
+                name: "path".to_owned(),
+                kind: ParamKind::String,
+                required: true,
+            }],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let path = args.require_str("path")?;
+        Ok(vec![PermissionRequest {
+            tool: "view_image".to_owned(),
+            access: AccessKind::Read,
+            path: Some(PathBuf::from(path)),
+            detail: None,
+        }])
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        let path = match args.require_str("path") {
+            Ok(path) => path,
+            Err(error) => return ToolResult::failure(ctx.call_id, "view_image", error),
+        };
+        let resolved = keel_core::resolve_path(&ctx.workspace_root, Path::new(path));
+        match read_image(&resolved) {
+            Ok((data, media_type, width, height)) => ToolResult::success(
+                ctx.call_id,
+                "view_image",
+                format!(
+                    "viewed {} ({width}x{height}, {media_type})",
+                    resolved.display()
+                ),
+            )
+            .with_images(vec![ImagePart::new(media_type, data)]),
+            Err(error) => ToolResult::failure(ctx.call_id, "view_image", ToolError::io(error)),
+        }
+    }
+}
+
+fn read_image(path: &Path) -> Result<(Vec<u8>, String, u32, u32), String> {
+    let data =
+        std::fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if data.len() > MAX_IMAGE_BYTES {
+        return Err(format!(
+            "{} is {} bytes, over the {} limit",
+            path.display(),
+            data.len(),
+            MAX_IMAGE_BYTES
+        ));
+    }
+    let format =
+        image::guess_format(&data).map_err(|_| format!("{} is not an image", path.display()))?;
+    let media_type = match format {
+        image::ImageFormat::Png => "image/png",
+        image::ImageFormat::Jpeg => "image/jpeg",
+        image::ImageFormat::WebP => "image/webp",
+        image::ImageFormat::Gif => "image/gif",
+        other => {
+            return Err(format!(
+                "{} is {other:?}, which is not shown",
+                path.display()
+            ))
+        }
+    };
+    let decoded = image::load_from_memory_with_format(&data, format)
+        .map_err(|error| format!("cannot decode {}: {error}", path.display()))?;
+    let (width, height) = (decoded.width(), decoded.height());
+    if width.max(height) > MAX_SIDE {
+        // The provider would resize it anyway; do it once here.
+        let scaled = decoded.resize(MAX_SIDE, MAX_SIDE, image::imageops::FilterType::Triangle);
+        let (png, _, _) = encode_png(scaled.to_rgba8())?;
+        return Ok((png, "image/png".to_owned(), width, height));
+    }
+    Ok((data, media_type.to_owned(), width, height))
+}
+
 fn list_windows() -> Result<String, String> {
     let windows = xcap::Window::all().map_err(|error| format!("cannot list windows: {error}"))?;
     let mut lines = Vec::new();

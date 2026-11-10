@@ -100,6 +100,10 @@ fn the_office_rig_exposes_document_tools() {
         "web_fetch",
         "list_windows",
         "screen_capture",
+        "view_image",
+        "launch_app",
+        "wait_for_window",
+        "list_controls",
     ] {
         assert!(
             tools.iter().any(|tool| tool == needed),
@@ -138,6 +142,10 @@ fn the_research_rig_exposes_search_and_cites_sources() {
         "search_history",
         "list_windows",
         "screen_capture",
+        "view_image",
+        "launch_app",
+        "wait_for_window",
+        "list_controls",
     ] {
         assert!(
             tools.iter().any(|tool| tool == needed),

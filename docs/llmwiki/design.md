@@ -320,6 +320,14 @@ path for the session" silences later ones, and `full_auto` never asks. An
 image is in memory for the turn only; the session document keeps the text and
 the path (ADR 0042, kernel ADR 0051).
 
+Three more host tools support the loop without touching the mouse or the
+keyboard (ADR 0043): `view_image` reopens a saved image or a user attachment
+by path, `launch_app` starts an application detached and `wait_for_window`
+waits for its window, and `list_controls` walks the window's UI Automation
+tree (control type, name, class, bounds, bounded to 200 elements). There is
+no click-and-type automation: the agent looks, launches and reads; the user
+acts.
+
 ## Checkpoints
 
 A shadow git repository per project lives under
