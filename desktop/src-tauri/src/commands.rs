@@ -327,8 +327,8 @@ pub fn save_model(
     // that does not own the field (the wizard) cannot erase it.
     if let Some(url) = search_url.map(|url| url.trim().to_owned()) {
         if !url.is_empty() {
-            let parsed =
-                reqwest::Url::parse(&url).map_err(|error| format!("搜索服务地址不合法：{error}"))?;
+            let parsed = reqwest::Url::parse(&url)
+                .map_err(|error| format!("搜索服务地址不合法：{error}"))?;
             if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
                 return Err("搜索服务地址必须是 http(s) URL".to_owned());
             }
@@ -1071,10 +1071,7 @@ pub async fn send_message(
                                 );
                             }
                             Event::BackgroundStarted {
-                                id,
-                                program,
-                                pid,
-                                ..
+                                id, program, pid, ..
                             } => {
                                 let _ = live_app.emit(
                                     EV_BACKGROUND_STARTED,
@@ -1107,10 +1104,8 @@ pub async fn send_message(
                                 );
                             }
                             Event::VerificationStarted { checks, .. } => {
-                                let _ = live_app.emit(
-                                    EV_TURN_VERIFYING,
-                                    TurnVerifyingEvent { seq, checks },
-                                );
+                                let _ = live_app
+                                    .emit(EV_TURN_VERIFYING, TurnVerifyingEvent { seq, checks });
                             }
                             _ => {}
                         }

@@ -1980,3 +1980,12 @@ duration line is what makes the cost of a check measurable at all.
   on the click. `docs/kernel.md` pins 0.2.9.
 - Queued the session document growth work: `backlog.md` and
   `tasks/session-document-growth.md`.
+
+## 2026-11-10 — the model list opens from cache
+
+- `model_catalog(refresh: false)` no longer touches the network: it returns
+  the cached list (marked stale when older than a day) or the bundled
+  snapshot, so settings and the wizard draw the list immediately instead of
+  waiting on models.dev.
+- A stale list is revalidated behind the visible list, and the explicit
+  refresh control still forces a fetch.

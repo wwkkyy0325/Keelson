@@ -223,8 +223,9 @@ pub fn changes_for_session(
         }
         let changes = match &entry.changes {
             Some(changes) => changes.clone(),
-            None => diff_changes(&git_dir, workspace, &entry.before, &entry.after)
-                .unwrap_or_default(),
+            None => {
+                diff_changes(&git_dir, workspace, &entry.before, &entry.after).unwrap_or_default()
+            }
         };
         out.insert(seq, changes);
     }

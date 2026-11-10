@@ -141,6 +141,8 @@
       modelName = state.model;
       rigName = state.rig;
       await loadCatalog(false, state);
+      // The cached list is on screen; revalidate behind it when it is stale.
+      if (catalog?.stale) void loadCatalog(true, state);
     } catch (cause) {
       error = errText(cause);
       catalogLoading = false;

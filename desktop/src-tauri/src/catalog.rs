@@ -317,19 +317,35 @@ struct RemoteCost {
     output: Option<f64>,
 }
 
-/// Returns a fresh cache, a revalidated cache, a live fetch, a stale cache or
-/// the bundled snapshot, in that order of preference.
+/// What the picker can show right now: the cache, fresh or stale, or the
+/// bundled snapshot. This never touches the network, so opening settings
+/// lists models immediately; `load(.., true)` refreshes behind it.
+pub fn cached(cache_dir: &Path) -> Result<ModelCatalog, String> {
+    let cache_path = cache_dir.join(CACHE_FILE);
+    if let Some(cache) = read_cache(&cache_path) {
+        let fresh = now().saturating_sub(cache.fetched_at) < CACHE_TTL_SECS;
+        return Ok(from_cache(&cache, !fresh));
+    }
+    match fallback() {
+        Some(cache) => Ok(ModelCatalog {
+            source: "fallback".to_owned(),
+            fetched_at: 0,
+            stale: true,
+            providers: cache.providers,
+        }),
+        None => Err("还没有模型目录缓存；请联网刷新一次".to_owned()),
+    }
+}
+
+/// Returns a live fetch or revalidation when `refresh` is set, and the cached
+/// list otherwise (see `cached`). A failed refresh falls back to the cache or
+/// the bundled snapshot.
 pub async fn load(cache_dir: &Path, refresh: bool) -> Result<ModelCatalog, String> {
     let cache_path = cache_dir.join(CACHE_FILE);
-    let cached = read_cache(&cache_path);
-
     if !refresh {
-        if let Some(cache) = &cached {
-            if now().saturating_sub(cache.fetched_at) < CACHE_TTL_SECS {
-                return Ok(from_cache(cache, false));
-            }
-        }
+        return cached(cache_dir);
     }
+    let cached = read_cache(&cache_path);
 
     let etag = cached.as_ref().and_then(|cache| cache.etag.as_deref());
     match fetch(etag).await {
@@ -719,6 +735,30 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn a_cached_list_is_returned_without_the_network() {
+        let dir = std::env::temp_dir().join(format!(
+            "keelson-catalog-cached-{}-{}",
+            now(),
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("a cache dir");
+        let cache = CatalogCache {
+            version: CACHE_VERSION,
+            fetched_at: 1,
+            etag: None,
+            providers: fallback().expect("the fallback parses").providers,
+        };
+        write_cache(&dir.join(CACHE_FILE), &cache).expect("a cache file");
+
+        let value = load(&dir, false).await.expect("the cached list");
+        assert_eq!(value.source, "cache");
+        assert!(value.stale);
+        assert!(!value.providers.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

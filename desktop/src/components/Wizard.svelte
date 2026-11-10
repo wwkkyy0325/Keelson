@@ -108,7 +108,10 @@
   );
 
   onMount(() => {
-    void loadCatalog(false);
+    void loadCatalog(false).then(() => {
+      // The cached list is on screen; revalidate behind it when it is stale.
+      if (catalog?.stale) void loadCatalog(true);
+    });
   });
 
   async function loadCatalog(refresh: boolean): Promise<void> {
