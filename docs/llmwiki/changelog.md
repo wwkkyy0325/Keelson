@@ -1913,3 +1913,10 @@ duration line is what makes the cost of a check measurable at all.
   bottom, which a wheel notch does not always reach, so the next event pulled
   the view back. An upward scroll now releases the follow whatever its size,
   and a wheel up releases it before the browser scrolls.
+
+## 2026-11-10 — kernel 0.2.4: a stream chunk keeps a split character
+
+- Keel 0.2.4 holds an incomplete UTF-8 sequence across network chunks in both
+  model adapters; a live answer had stored three U+FFFD where one Chinese
+  character was cut by a chunk boundary.
+- `docs/kernel.md` pins 0.2.4.
