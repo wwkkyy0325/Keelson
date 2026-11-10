@@ -460,7 +460,7 @@
         <p class="muted">{$t("settings.rigHint")}</p>
         <select
           bind:value={rigName}
-          disabled={busy || (setup?.rigs.length ?? 0) < 2}
+          disabled={busy || (setup?.rigs.length ?? 0) === 0}
           aria-label={$t("settings.rig")}
         >
           {#each setup?.rigs ?? [] as rig (rig.name)}
