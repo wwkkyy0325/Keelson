@@ -42,7 +42,7 @@
         if (disposed) return;
         setup = state;
         locale.set(state.locale === "en" ? "en" : "zh");
-        if (state.onboarded && (state.provider === "mock" || state.hasKey)) {
+        if (state.onboarded && state.hasKey) {
           const failure = await enterApp();
           if (failure) {
             bootError = failure;

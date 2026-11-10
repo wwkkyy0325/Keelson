@@ -71,7 +71,7 @@ async fn the_discount_feature_crosses_the_shop() {
         description: "Add the discount feature across the shop.".to_owned(),
         profile: root.join("profiles/coding.toml"),
         extra_roots: Vec::new(),
-        path: root.join("rigs/coding.toml"),
+        path: root.join("tests/fixtures/coding-rig.toml"),
     };
     let state_dir = base.join("state");
     let store_path = state_dir.join("session.json");

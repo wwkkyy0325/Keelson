@@ -303,14 +303,14 @@ pub fn save_model(
 ) -> Result<(), String> {
     if !matches!(
         provider.as_str(),
-        "anthropic-compatible" | "anthropic" | "openai-compatible" | "openai" | "mock"
+        "anthropic-compatible" | "anthropic" | "openai-compatible" | "openai"
     ) {
         return Err(format!("未知的模型提供方 `{provider}`"));
     }
-    if provider != "mock" && (base_url.trim().is_empty() || model.trim().is_empty()) {
+    if base_url.trim().is_empty() || model.trim().is_empty() {
         return Err("接口地址和模型名不能为空".to_owned());
     }
-    if provider != "mock" && provider_id.trim().is_empty() {
+    if provider_id.trim().is_empty() {
         return Err("提供方不能为空".to_owned());
     }
     let mut config = state
@@ -604,14 +604,10 @@ async fn open_inner(
     }
 
     let provider = config.provider.clone();
-    let key = if provider == "mock" {
-        None
-    } else {
-        Some(
-            config::load_key(&config.provider_id, &config.key_provider)?
-                .ok_or_else(|| "还没有保存密钥；请重新运行初始化".to_owned())?,
-        )
-    };
+    let key = Some(
+        config::load_key(&config.provider_id, &config.key_provider)?
+            .ok_or_else(|| "还没有保存密钥；请重新运行初始化".to_owned())?,
+    );
     let fallback = rig_name_for(&provider);
     let preferred = chosen_rig(&config, fallback);
     let discovery = rig::discover(&rig_dirs());
@@ -789,12 +785,8 @@ pub fn save_rig(state: State<'_, SharedState>, name: String) -> Result<(), Strin
     config::save_config(&config)
 }
 
-fn rig_name_for(provider: &str) -> &'static str {
-    if provider == "mock" {
-        "coding"
-    } else {
-        "coding-live"
-    }
+fn rig_name_for(_provider: &str) -> &'static str {
+    "coding-live"
 }
 
 fn permission_level(level: &str) -> Option<PermissionLevel> {

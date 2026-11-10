@@ -76,20 +76,16 @@
   );
   let activeProviderId = $derived(
     manual
-      ? providerKind === "mock"
-        ? "mock"
-        : manualMatchesSelection
-          ? selectedProviderId
-          : "custom"
+      ? manualMatchesSelection
+        ? selectedProviderId
+        : "custom"
       : selectedProviderId,
   );
   let activeProviderName = $derived(
     manual
-      ? providerKind === "mock"
-        ? $t("wizard.model.mock")
-        : manualMatchesSelection
-          ? (selectedProvider?.name ?? "")
-          : kindLabel(providerKind)
+      ? manualMatchesSelection
+        ? (selectedProvider?.name ?? "")
+        : kindLabel(providerKind)
       : (selectedProvider?.name ?? ""),
   );
   let activeProviderKind = $derived(
@@ -99,7 +95,6 @@
     manual ? baseUrl : (selectedProvider?.baseUrl ?? ""),
   );
   let activeModel = $derived(manual ? modelName : selectedModelId);
-  let isMock = $derived(activeProviderKind === "mock");
   let activeRig = $derived(
     setup?.rigs.find((rig) => rig.name === rigName) ?? null,
   );
@@ -134,9 +129,7 @@
       providerKind =
         state.provider === "anthropic-compatible"
           ? "anthropic-compatible"
-          : state.provider === "mock"
-            ? "mock"
-            : "openai-compatible";
+          : "openai-compatible";
       baseUrl = state.baseUrl;
       modelName = state.model;
       rigName = state.rig;
@@ -164,10 +157,6 @@
       if (state) {
         const current = findSelection(value, selectedProviderId, selectedModelId);
         if (current) return;
-        if (state.provider === "mock") {
-          manual = true;
-          return;
-        }
         const choice = defaultSelection(value, state, !state.model);
         if (choice) {
           choose(choice);
@@ -237,11 +226,11 @@
       error = $t("wizard.error.select");
       return;
     }
-    if (!isMock && (!activeBaseUrl.trim() || !activeModel.trim())) {
+    if (!activeBaseUrl.trim() || !activeModel.trim()) {
       error = $t("wizard.error.model");
       return;
     }
-    if (!isMock && !hasKeyForSelection && !keyDraft.trim()) {
+    if (!hasKeyForSelection && !keyDraft.trim()) {
       error = setup?.hasKey
         ? $t("settings.keyOther")
         : $t("settings.error.key");
@@ -364,14 +353,13 @@
                 <option value="openai-compatible">
                   {$t("wizard.model.openai")}
                 </option>
-                <option value="mock">{$t("wizard.model.mock")}</option>
               </select>
             </label>
             <label>
               <span>{$t("wizard.model.baseUrl")}</span>
               <input
                 bind:value={baseUrl}
-                disabled={providerKind === "mock"}
+               
                 placeholder={$t("wizard.model.baseUrlPlaceholder")}
                 spellcheck="false"
               />
@@ -380,7 +368,7 @@
               <span>{$t("wizard.model.model")}</span>
               <input
                 bind:value={modelName}
-                disabled={providerKind === "mock"}
+               
                 placeholder={$t("wizard.model.modelPlaceholder")}
                 spellcheck="false"
               />
@@ -389,7 +377,7 @@
               <span>{$t("settings.search")}</span>
               <input
                 bind:value={searchUrl}
-                disabled={providerKind === "mock"}
+               
                 placeholder={$t("settings.searchPlaceholder")}
                 spellcheck="false"
               />
@@ -409,30 +397,28 @@
           />
         {/if}
 
-        {#if !isMock}
-          <label>
-            <span>{$t("settings.key")}</span>
-            <div class="key-row">
-              <input
-                type={revealKey ? "text" : "password"}
-                bind:value={keyDraft}
-                placeholder={hasKeyForSelection
-                  ? $t("settings.keySaved")
-                  : $t("wizard.key.placeholder")}
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button class="ghost" onclick={() => (revealKey = !revealKey)}>
-                {revealKey ? $t("wizard.key.hide") : $t("wizard.key.show")}
-              </button>
-            </div>
-          </label>
-          {#if hasKeyForSelection}
-            <p class="hint">{$t("settings.keySavedHint")}</p>
-          {/if}
-          {#if manual}
-            <p class="hint">{$t("settings.keyLocalHint")}</p>
-          {/if}
+        <label>
+          <span>{$t("settings.key")}</span>
+          <div class="key-row">
+            <input
+              type={revealKey ? "text" : "password"}
+              bind:value={keyDraft}
+              placeholder={hasKeyForSelection
+                ? $t("settings.keySaved")
+                : $t("wizard.key.placeholder")}
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="ghost" onclick={() => (revealKey = !revealKey)}>
+              {revealKey ? $t("wizard.key.hide") : $t("wizard.key.show")}
+            </button>
+          </div>
+        </label>
+        {#if hasKeyForSelection}
+          <p class="hint">{$t("settings.keySavedHint")}</p>
+        {/if}
+        {#if manual}
+          <p class="hint">{$t("settings.keyLocalHint")}</p>
         {/if}
       </section>
 

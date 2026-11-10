@@ -33,7 +33,6 @@
   let hasKey = $state(untrack(() => initial.hasKey));
   let keyProvider = $state(untrack(() => initial.keyProvider));
   let manual = $state(false);
-  let offline = $state(false);
   let providerKind = $state(
     untrack(() =>
       initial.provider === "anthropic-compatible"
@@ -142,7 +141,6 @@
   function choose(row: ModelRow): void {
     selectedProviderId = row.provider.id;
     selectedModelId = row.model.id;
-    offline = false;
     error = null;
   }
 
@@ -168,7 +166,6 @@
         if (choice) choose(choice);
       }
     }
-    offline = false;
     error = null;
   }
 
@@ -179,7 +176,6 @@
   }
 
   async function nextFromConnect(): Promise<void> {
-    offline = false;
     if (!manual && !selectedModel) {
       error = $t("wizard.error.select");
       return;
@@ -209,21 +205,6 @@
         activeModel,
         manual ? null : (selectedModel?.context ?? null),
       );
-      go(1);
-    } catch (cause) {
-      error = $t("wizard.error.save", { message: errText(cause) });
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function useOffline(): Promise<void> {
-    busy = true;
-    error = null;
-    try {
-      offline = true;
-      manual = false;
-      await saveModel("mock", "mock", $t("wizard.model.mock"), "", "", null);
       go(1);
     } catch (cause) {
       error = $t("wizard.error.save", { message: errText(cause) });
@@ -393,11 +374,6 @@
         </div>
         {#if error}<div class="banner">{error}</div>{/if}
         <div class="actions">
-          <div class="action-links">
-            <button class="link" onclick={useOffline} disabled={busy}>
-              {$t("wizard.connect.offline")}
-            </button>
-          </div>
           <button
             class="primary"
             onclick={nextFromConnect}
@@ -453,25 +429,19 @@
           <div>
             <span>{$t("wizard.finish.key")}</span>
             <strong>
-              {offline
-                ? $t("wizard.finish.offline")
-                : hasKey
-                  ? $t("wizard.finish.keySaved")
-                  : $t("wizard.finish.key")}
+              {hasKey ? $t("wizard.finish.keySaved") : $t("wizard.finish.key")}
             </strong>
           </div>
           <div>
             <span>{$t("wizard.finish.model")}</span>
             <strong>
-              {offline
-                ? $t("wizard.model.mock")
-                : `${activeProviderName} · ${activeModelLabel}`}
+              {`${activeProviderName} · ${activeModelLabel}`}
             </strong>
           </div>
           <div>
             <span>{$t("wizard.finish.context")}</span>
             <strong>
-              {offline ? "—" : formatContext(selectedModel?.context ?? null)}
+              {formatContext(selectedModel?.context ?? null)}
             </strong>
           </div>
           <div>

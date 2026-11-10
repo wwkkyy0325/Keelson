@@ -66,7 +66,7 @@ async fn a_discount_is_added_across_two_modules() {
         description: "Add the discount feature.".to_owned(),
         profile: root.join("profiles/coding.toml"),
         extra_roots: Vec::new(),
-        path: root.join("rigs/coding.toml"),
+        path: root.join("tests/fixtures/coding-rig.toml"),
     };
     let state_dir = temp.path().join("state");
     let store_path = state_dir.join("session.json");

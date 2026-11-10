@@ -1,0 +1,6 @@
+# The offline model harness used by the eval tests. It is not installed as a
+# user-facing rig: the app's rig picker never sees this file.
+name = "coding"
+title = "Coding (eval)"
+description = "Read, edit and verify a codebase against the mock model."
+profile = "../../profiles/coding.toml"

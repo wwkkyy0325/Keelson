@@ -93,7 +93,7 @@ async fn an_ambiguous_brief_makes_the_model_ask() {
         description: "Diagnose a discount report.".to_owned(),
         profile: root.join("profiles/coding.toml"),
         extra_roots: Vec::new(),
-        path: root.join("rigs/coding.toml"),
+        path: root.join("tests/fixtures/coding-rig.toml"),
     };
     let state_dir = temp.path().join("state");
     let store_path = state_dir.join("session.json");

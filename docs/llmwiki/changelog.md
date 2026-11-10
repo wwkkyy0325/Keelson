@@ -1989,3 +1989,12 @@ duration line is what makes the cost of a check measurable at all.
   waiting on models.dev.
 - A stale list is revalidated behind the visible list, and the explicit
   refresh control still forces a fetch.
+
+## 2026-11-10 — the offline mock is gone
+
+- The `coding` rig (mock provider) is removed; the app's rig list now has one
+  rig, `coding-live`. Settings and the wizard no longer offer an offline
+  provider, and a saved offline config goes back through setup.
+- The eval suite keeps the mock only as a test fixture
+  (`tests/fixtures/coding-rig.toml` plus `profiles/coding.toml`), which no
+  rig directory exposes.

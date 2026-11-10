@@ -130,7 +130,7 @@ async fn run_the_task() {
         description: "Run a real task.".to_owned(),
         profile: root.join("profiles/coding.toml"),
         extra_roots: Vec::new(),
-        path: root.join("rigs/coding.toml"),
+        path: root.join("tests/fixtures/coding-rig.toml"),
     };
     let engine = Engine::open(OpenRequest {
         rig,

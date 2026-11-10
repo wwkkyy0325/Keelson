@@ -144,6 +144,16 @@ pub fn load_config() -> DesktopConfig {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default();
+    // Offline mode is gone; an install that used it goes through setup again
+    // instead of failing to load a key for the removed provider.
+    if config.provider == "mock" {
+        config = DesktopConfig {
+            locale: config.locale,
+            last_workspace: config.last_workspace,
+            projects: config.projects,
+            ..DesktopConfig::default()
+        };
+    }
     seed_key_providers(&mut config);
     config
 }
