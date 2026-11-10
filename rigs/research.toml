@@ -1,0 +1,8 @@
+# The research rig: find, verify and cite, not a codebase.
+#
+# The endpoint and the credential env var are in the profile.
+
+name = "research"
+title = "Research"
+description = "Find, verify and cite information, with a source ledger."
+profile = "../profiles/research-live.toml"

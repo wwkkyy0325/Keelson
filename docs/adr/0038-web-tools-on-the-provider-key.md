@@ -68,3 +68,8 @@ extra credential for the provider this host currently uses.
   aborted at 30.0 s and succeeded on the retry at 28.4 s.
 - A failed request appends the reqwest source chain to the message
   (`...: operation timed out`), so a model can tell a timeout from a bad URL.
+- The tools URL is built from the API origin, not from the chat base path.
+  The desktop's Anthropic-compatible provider uses
+  `https://api.deepseek.com/anthropic`, and appending `/v1/tools/...` to it
+  produced a path the tools are not served from; `/v1` was already stripped
+  and the compatibility path was not.

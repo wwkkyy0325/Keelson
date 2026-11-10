@@ -25,7 +25,8 @@ desktop/         Tauri shell + Svelte frontend            (the only face)
   bundler; it consumes the same library engine and adds no engine branch
   (ADR 0003). The CLI starts no session and runs no turn.
 - Rigs are files. Do not add a rig editor or per-rig behavior toggles: the
-  app only chooses which rig file runs (settings → Rig), never what it does.
+  app only chooses which rig file runs (the rig chip in an empty conversation;
+  settings has no rig picker), never what it does.
   The one exception is the permission-level override in the composer status
   line (ADR 0034); it lives in the desktop config, not in a rig file. There is
   no theme picker.

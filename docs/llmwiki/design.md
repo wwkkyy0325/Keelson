@@ -13,7 +13,10 @@ tool for rigs and the kernel handshake, not a second interface.
 | host | The desktop app. Loads a rig, runs turns, renders the conversation, stores sessions. |
 
 A rig is data. Switching rigs changes behavior, tools and scopes; it does not
-open a panel of toggles.
+open a panel of toggles. The host ships three: `coding-live`, `research` and
+`office`. They are split by output contract — code, cited answers, documents —
+not by topic (ADR 0040). A conversation fixes its rig at its first turn and
+the setting is only the default for the next one (ADR 0039).
 
 ## Why this shape
 
@@ -97,7 +100,11 @@ src/lib.rs engine: turn loop, permissions, storage, tools   (no UI types)
   conversation is one JSON document under
   `<state>/sessions/<workspace-hash>/` with an opaque, immutable id; title and
   archive flag live in the document, and `index.json` is a listing cache
-  reconciled against the directory (ADR 0006). A running turn blocks
+  reconciled against the directory (ADR 0006). The composer takes files by
+  paperclip or a window drop; each is copied into
+  `<state>/attachments/<workspace-key>/<session-id>/`, a read-only root added
+  when the conversation opens, and the message carries the copied paths
+  (ADR 0041). A running turn blocks
   switching, creating, archiving and deleting. A failed action is shown at the
   end of the transcript, not in a notice bar over the composer; the only
   element allowed above the composer is a pending permission or choice card,
@@ -108,8 +115,9 @@ src/lib.rs engine: turn loop, permissions, storage, tools   (no UI types)
   action row shows a user-facing cost line on the right — elapsed time, input
   and output tokens, and the share served from the prompt cache — not
   developer event counts. A status line under the composer shows the
-  effective permission level, a combined rig · provider · model chip that
-  opens settings, and context usage with a per-turn history; the permission
+  effective permission level, the rig · provider · model in force (a rig
+  select while the conversation has no turns, plain text after that), and
+  context usage with a per-turn history; the permission
   chip switches `workspace_auto` / `full_auto` through a desktop override
   (`workspace_auto` runs reads, writes and commands inside the workspace;
   `full_auto` also reaches outside it) (ADR 0034) and takes effect on the
@@ -420,12 +428,31 @@ M4f — Undo a turn (done)
 - Verify: desktop checkpoint tests restore modify/create/delete and refuse a
   repeat or missing record; the UI is type-checked and built.
 
-M5 — A second rig
+M5 — A second rig (done)
 
-- The proof that this is a shell host: one non-coding rig built from a file,
+- The proof that this is a shell host: a non-coding rig built from a file,
   with no engine change.
-- Starts only after M4, so the coding rig exposes what the engine actually
-  needs.
+- A conversation keeps the rig recorded in its document; the setting is the
+  default for a conversation that has none yet. The empty conversation's
+  status line is a rig chip, and picking one there sets the default for the
+  next conversation; settings has no rig picker. After the first turn the
+  chip is plain text (ADR 0039).
+
+M6 — Rigs split by output contract (done)
+
+- The first non-coding rig was a generic "general"; it was renamed `office`
+  and joined by `research`, because the two have different deliverables and
+  failure modes. `research` (`rigs/research.toml` →
+  `profiles/research-live.toml` → `prompts/research.md`) treats every answer
+  as a cited claim: each factual sentence carries a source id, and the reply
+  ends with a source ledger naming the title, URL, what was read (page text,
+  search snippet only, or a local file) and the supporting quotation.
+  `office` covers documents: targeted edits that leave the rest verbatim,
+  deliverables written to files, and file organisation.
+- The split follows the contract, not the topic: a deck or a video becomes
+  its own rig only when its artifact can be verified (a file that opens, a
+  rendered page, a probe on duration and resolution), not because the subject
+  is different (ADR 0040).
 
 D1 — Basic desktop shell (done)
 

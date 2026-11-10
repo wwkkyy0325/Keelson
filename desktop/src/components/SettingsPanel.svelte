@@ -5,11 +5,10 @@
     saveKey,
     saveLocale,
     saveModel,
-    saveRig,
     setupState,
   } from "../lib/api";
   import { defaultSelection, findSelection, type ModelRow } from "../lib/catalog";
-  import { locale, rigLabel, t } from "../lib/i18n";
+  import { locale, t } from "../lib/i18n";
   import type { ModelCatalog, SetupState } from "../lib/protocol";
   import ModelPicker from "./ModelPicker.svelte";
 
@@ -23,14 +22,13 @@
     onReconnect: () => Promise<string | null>;
   } = $props();
 
-  /// The persisted connection and rig, so the save button can tell an edited
-  /// form from an untouched one.
+  /// The persisted connection, so the save button can tell an edited form
+  /// from an untouched one.
   type FormSnapshot = {
     kind: string;
     providerId: string;
     baseUrl: string;
     model: string;
-    rig: string;
     searchUrl: string;
   };
 
@@ -52,7 +50,6 @@
   let keyDraft = $state("");
   /// A SearXNG base URL for models whose provider has no search endpoint.
   let searchUrl = $state("");
-  let rigName = $state("");
   let revealKey = $state(false);
   let busy = $state(false);
   /// Saving and reconnecting are two visible steps: the button says which one
@@ -95,9 +92,6 @@
     manual ? baseUrl : (selectedProvider?.baseUrl ?? ""),
   );
   let activeModel = $derived(manual ? modelName : selectedModelId);
-  let activeRig = $derived(
-    setup?.rigs.find((rig) => rig.name === rigName) ?? null,
-  );
   let hasKeyForSelection = $derived(
     !!setup?.keyProviders?.includes(activeProviderId),
   );
@@ -109,7 +103,6 @@
           activeProviderId !== saved.providerId ||
           activeBaseUrl !== saved.baseUrl ||
           activeModel !== saved.model ||
-          rigName !== saved.rig ||
           searchUrl.trim() !== saved.searchUrl)),
   );
 
@@ -144,7 +137,6 @@
         providerId: state.providerId,
         baseUrl: state.baseUrl,
         model: state.model,
-        rig: state.rig,
         searchUrl: state.searchUrl ?? "",
       };
       searchUrl = state.searchUrl ?? "";
@@ -154,7 +146,6 @@
           : "openai-compatible";
       baseUrl = state.baseUrl;
       modelName = state.model;
-      rigName = state.rig;
       const value = await catalogTask;
       if (value) applySelection(value, state);
       // The cached list is on screen; revalidate behind it when it is stale.
@@ -289,12 +280,6 @@
         manual ? null : (selectedModel?.context ?? null),
         searchUrl.trim(),
       );
-      // The rig is part of the same form: choosing it must not save and close
-      // on its own, and one reconnect covers both settings.
-      if (setup && rigName !== setup.rig) {
-        await saveRig(rigName);
-        setup.rig = rigName;
-      }
       pendingApply = true;
       phase = "reconnecting";
       const reconnectError = await onReconnect();
@@ -307,7 +292,6 @@
         providerId: activeProviderId,
         baseUrl: activeBaseUrl,
         model: activeModel,
-        rig: rigName,
         searchUrl: searchUrl.trim(),
       };
       pendingApply = false;
@@ -452,25 +436,6 @@
         {/if}
         {#if manual}
           <p class="hint">{$t("settings.keyLocalHint")}</p>
-        {/if}
-      </section>
-
-      <section>
-        <h3>{$t("settings.rig")}</h3>
-        <p class="muted">{$t("settings.rigHint")}</p>
-        <select
-          bind:value={rigName}
-          disabled={busy || (setup?.rigs.length ?? 0) === 0}
-          aria-label={$t("settings.rig")}
-        >
-          {#each setup?.rigs ?? [] as rig (rig.name)}
-            <option value={rig.name}>
-              {$rigLabel(rig.name, rig).title}
-            </option>
-          {/each}
-        </select>
-        {#if activeRig}
-          <p class="hint">{$rigLabel(activeRig.name, activeRig).description}</p>
         {/if}
       </section>
 

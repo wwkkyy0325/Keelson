@@ -33,12 +33,34 @@
   let showSettings = $state(false);
   let unlisteners: UnlistenFn[] = [];
 
+  /// A backend that never answers must not leave the boot screen up forever.
+  function withTimeout<T>(
+    promise: Promise<T>,
+    ms: number,
+    message: string,
+  ): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(message)), ms),
+      ),
+    ]);
+  }
+
   onMount(() => {
     let disposed = false;
     (async () => {
       try {
-        unlisteners = await listenToEvents();
-        const state = await setupState();
+        unlisteners = await withTimeout(
+          listenToEvents(),
+          10000,
+          $t("app.bootTimeout"),
+        );
+        const state = await withTimeout(
+          setupState(),
+          10000,
+          $t("app.bootTimeout"),
+        );
         if (disposed) return;
         setup = state;
         locale.set(state.locale === "en" ? "en" : "zh");
@@ -68,7 +90,11 @@
     sessionId?: string,
   ): Promise<string | null> {
     try {
-      const view = await openSession(workspace ?? null, sessionId ?? null);
+      const view = await withTimeout(
+        openSession(workspace ?? null, sessionId ?? null),
+        15000,
+        $t("app.openTimeout"),
+      );
       dispatch({ type: "session-opened", view });
       phase = "app";
       return null;
@@ -107,7 +133,10 @@
     onDone={onWizardDone}
   />
 {:else}
-  <Chat onSettings={() => (showSettings = true)} />
+  <Chat
+    onSettings={() => (showSettings = true)}
+    rigs={setup?.rigs ?? []}
+  />
   {#if showSettings}
     <SettingsPanel
       workspace={$session.workspace}

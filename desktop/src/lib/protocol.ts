@@ -98,6 +98,20 @@ export type ProjectEntry = {
   openedAt: number;
 };
 
+/// One rig file the host found, as setup and the status line show it.
+export type RigOption = {
+  name: string;
+  title: string;
+  description: string;
+};
+
+/// One file copied into the conversation's read-only attachment folder.
+export type Attachment = {
+  name: string;
+  path: string;
+  size: number;
+};
+
 export type SessionView = {
   rig: string;
   workspace: string;
@@ -124,7 +138,7 @@ export type SetupState = {
   /// A SearXNG base URL for models whose provider has no search endpoint.
   searchUrl?: string | null;
   rig: string;
-  rigs: { name: string; title: string; description: string }[];
+  rigs: RigOption[];
   problems: string[];
 };
 

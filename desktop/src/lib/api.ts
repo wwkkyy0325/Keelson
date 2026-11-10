@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  Attachment,
   BackgroundFinished,
   BackgroundStarted,
   BackgroundTaskView,
@@ -72,6 +73,14 @@ export function openSession(
   return invoke("open_session", { workspace, sessionId });
 }
 
+/// Reopens a conversation, blank or not, under the current settings.
+export function reopenSession(
+  workspace: string | null,
+  sessionId: string,
+): Promise<SessionView> {
+  return invoke("reopen_session", { workspace, sessionId });
+}
+
 export function branchSession(seq: number): Promise<SessionView> {
   return invoke("branch_session", { seq });
 }
@@ -113,6 +122,16 @@ export function archiveSession(
 
 export function sendMessage(input: string): Promise<void> {
   return invoke("send_message", { input });
+}
+
+/// Copies the picked files into this conversation's attachment folder and
+/// returns where they landed.
+export function attachFiles(
+  workspace: string,
+  sessionId: string,
+  paths: string[],
+): Promise<Attachment[]> {
+  return invoke("attach_files", { workspace, sessionId, paths });
 }
 
 export function cancelTurn(): Promise<boolean> {

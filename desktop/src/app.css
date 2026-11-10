@@ -1725,10 +1725,68 @@ footer {
   margin: 0 auto;
 }
 
+.composer-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
 .composer textarea {
   flex: 1;
   resize: none;
   overflow-y: hidden;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 16rem;
+  padding: 0.14rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-remove {
+  flex: none;
+  padding: 0 0.15rem;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.attachment-remove:hover {
+  color: var(--text);
+}
+
+.attach {
+  align-self: flex-end;
 }
 
 /* Composer status line: permission, connection and context usage. */
@@ -1780,6 +1838,15 @@ footer {
 
 .status-item:disabled {
   opacity: 0.55;
+}
+
+/* The rig is a chip with a popover only while the conversation is empty;
+   afterwards it is plain text and never opens anything. */
+.status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-item .caret {

@@ -1,0 +1,8 @@
+# The office rig: documents, writing and file work, not a codebase.
+#
+# The endpoint and the credential env var are in the profile.
+
+name = "office"
+title = "Office"
+description = "Write, edit and organise documents and files with the live model."
+profile = "../profiles/office-live.toml"

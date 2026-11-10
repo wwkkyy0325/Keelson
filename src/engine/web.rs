@@ -78,8 +78,12 @@ fn provider_endpoint(base_url: Option<&str>, api_key: &str) -> Option<(String, S
 }
 
 fn provider_tools_url(base: &str, leaf: &str) -> String {
-    let base = base.strip_suffix("/v1").unwrap_or(base);
-    format!("{base}/v1/tools/{leaf}")
+    // The chat base may carry a compatibility path (`/anthropic`, `/v1`);
+    // Search and Fetch are served from the API root.
+    let root = Url::parse(base)
+        .map(|url| url.origin().ascii_serialization())
+        .unwrap_or_else(|_| base.trim_end_matches('/').to_owned());
+    format!("{root}/v1/tools/{leaf}")
 }
 
 fn searxng_search_url(url: &str, query: &str) -> Option<Url> {
@@ -861,6 +865,16 @@ mod tests {
         assert_eq!(
             provider_tools_url("https://api.deepseek.com/v1", "search"),
             "https://api.deepseek.com/v1/tools/search"
+        );
+        // The chat base used by the Anthropic-compatible provider carries a
+        // path; the tools live at the API root, not under it.
+        assert_eq!(
+            provider_tools_url("https://api.deepseek.com/anthropic", "search"),
+            "https://api.deepseek.com/v1/tools/search"
+        );
+        assert_eq!(
+            provider_tools_url("https://api.deepseek.com/anthropic/v1", "fetch"),
+            "https://api.deepseek.com/v1/tools/fetch"
         );
         assert!(matches!(
             WebBackend::resolve(

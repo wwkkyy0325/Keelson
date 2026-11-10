@@ -1,12 +1,17 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
+  import type { UnlistenFn } from "@tauri-apps/api/event";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import { t } from "../lib/i18n";
+  import type { Attachment } from "../lib/protocol";
 
   let {
     running,
     onSend,
     onCancel,
     onError,
+    onAttach,
     initialDraft = "",
     history = [],
   }: {
@@ -14,6 +19,8 @@
     onSend: (text: string) => Promise<void>;
     onCancel: () => Promise<void> | void;
     onError: (message: string) => void;
+    /// Copies picked paths into the conversation folder and returns them.
+    onAttach?: (paths: string[]) => Promise<Attachment[]>;
     /// Text a branch opens with, so the user can edit the turn they moved from.
     initialDraft?: string;
     /// Earlier user inputs, oldest first: ArrowUp/ArrowDown walk them.
@@ -36,6 +43,14 @@
   /// this closes the gap in which a second Enter could reach the backend.
   let sending = $state(false);
   let cancelling = $state(false);
+  /// A file chosen for the next message. Nothing is copied until the send:
+  /// dropping a file is only a note about what to hand over.
+  type Pending = { name: string; source: string };
+  let pending = $state<Pending[]>([]);
+
+  function baseName(path: string): string {
+    return path.split(/[\\/]/).pop() || path;
+  }
 
   function autosize(): void {
     if (!textarea) return;
@@ -54,22 +69,80 @@
   onMount(() => {
     const onResize = (): void => autosize();
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    // Native drops anywhere in the window land here; the composer is the only
+    // place they can go.
+    let disposed = false;
+    let unlisten: UnlistenFn | null = null;
+    void getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type === "drop") addPaths(event.payload.paths);
+      })
+      .then((off) => {
+        if (disposed) off();
+        else unlisten = off;
+      });
+    return () => {
+      disposed = true;
+      window.removeEventListener("resize", onResize);
+      unlisten?.();
+    };
   });
+
+  /// A drop or a pick only records the source; the same path twice is one
+  /// entry. The copy is made when the message is sent.
+  function addPaths(paths: string[]): void {
+    const known = new Set(pending.map((file) => file.source));
+    const added: Pending[] = [];
+    for (const path of paths) {
+      if (known.has(path)) continue;
+      known.add(path);
+      added.push({ name: baseName(path), source: path });
+    }
+    if (added.length > 0) pending = [...pending, ...added];
+  }
+
+  async function pick(): Promise<void> {
+    try {
+      const picked = await openDialog({ multiple: true, title: $t("app.attach") });
+      if (!picked) return;
+      addPaths(Array.isArray(picked) ? picked : [picked]);
+    } catch (error) {
+      onError(errText(error));
+    }
+  }
+
+  function removeAttachment(source: string): void {
+    pending = pending.filter((file) => file.source !== source);
+  }
+
+  /// The copied paths travel in the message itself, so the transcript and the
+  /// model see the same list after a restart.
+  function compose(text: string, files: Attachment[]): string {
+    if (files.length === 0) return text;
+    const list = files.map((file) => `- ${file.path}`).join("\n");
+    const block = `${$t("app.attachmentsHeader")}\n${list}`;
+    return text ? `${text}\n\n${block}` : block;
+  }
 
   async function send(): Promise<void> {
     const text = draft.trim();
-    if (!text || running || sending) return;
+    if ((!text && pending.length === 0) || running || sending) return;
     sending = true;
     // The box empties on the click; the turn row appears from the event. A
-    // rejected send puts the text back rather than losing it.
+    // rejected send puts the text and the files back rather than losing them.
+    const sent = pending;
     draft = "";
+    pending = [];
     cursor = -1;
     savedDraft = "";
     try {
-      await onSend(text);
+      const files = sent.length > 0 && onAttach
+        ? await onAttach(sent.map((file) => file.source))
+        : [];
+      await onSend(compose(text, files));
     } catch (error) {
       if (!draft.trim()) draft = text;
+      pending = sent;
       onError(errText(error));
     } finally {
       sending = false;
@@ -147,20 +220,64 @@
 </script>
 
 <div class="composer">
-  <textarea
-    bind:this={textarea}
-    bind:value={draft}
-    onkeydown={onKeydown}
-    placeholder={$t("app.placeholder")}
-    rows="2"
-  ></textarea>
-  {#if running}
-    <button onclick={cancel} disabled={cancelling}>
-      {cancelling ? $t("app.cancelling") : $t("app.cancel")}
+  <div class="composer-main">
+    {#if pending.length > 0}
+      <div class="attachments">
+        {#each pending as file (file.source)}
+          <span class="attachment" title={file.source}>
+            <span class="attachment-name">{file.name}</span>
+            <button
+              class="attachment-remove"
+              aria-label={$t("app.removeAttachment")}
+              onclick={() => removeAttachment(file.source)}
+            >
+              ×
+            </button>
+          </span>
+        {/each}
+      </div>
+    {/if}
+    <textarea
+      bind:this={textarea}
+      bind:value={draft}
+      onkeydown={onKeydown}
+      placeholder={$t("app.placeholder")}
+      rows="2"
+    ></textarea>
+  </div>
+  <div class="composer-actions">
+    <button
+      class="icon attach"
+      onclick={pick}
+      disabled={!onAttach}
+      aria-label={$t("app.attach")}
+      title={$t("app.attach")}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="15"
+        height="15"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+      >
+        <path
+          d="M21 12.5 12.2 21.3a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"
+        />
+      </svg>
     </button>
-  {:else}
-    <button onclick={send} disabled={!draft.trim() || sending}>
-      {$t("app.send")}
-    </button>
-  {/if}
+    {#if running}
+      <button onclick={cancel} disabled={cancelling}>
+        {cancelling ? $t("app.cancelling") : $t("app.cancel")}
+      </button>
+    {:else}
+      <button
+        onclick={send}
+        disabled={(!draft.trim() && pending.length === 0) || sending}
+      >
+        {$t("app.send")}
+      </button>
+    {/if}
+  </div>
 </div>

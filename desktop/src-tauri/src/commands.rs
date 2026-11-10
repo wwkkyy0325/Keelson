@@ -211,6 +211,104 @@ struct SessionUpdated {
     meta: SessionMeta,
 }
 
+/// One file copied into the conversation's read-only attachment folder.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attachment {
+    pub name: String,
+    pub path: String,
+    pub size: u64,
+}
+
+const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_ATTACHMENTS: usize = 10;
+
+/// Attachments live in the host state directory, not in the workspace: a drop
+/// must not appear as a change the turn made, and undo must not delete it.
+fn attachments_dir(state_dir: &Path, workspace: &Path, session_id: &str) -> PathBuf {
+    state_dir
+        .join("attachments")
+        .join(sessions::workspace_key(workspace))
+        .join(session_id)
+}
+
+/// `name (2).ext` when the name is taken; the extension stays.
+fn unique_name(dir: &Path, name: &str) -> PathBuf {
+    let candidate = dir.join(name);
+    if !candidate.exists() {
+        return candidate;
+    }
+    let path = Path::new(name);
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| name.to_owned());
+    let extension = path
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    for count in 2u32.. {
+        let next = dir.join(format!("{stem} ({count}){extension}"));
+        if !next.exists() {
+            return next;
+        }
+    }
+    unreachable!("an unused name always exists")
+}
+
+async fn copy_attachment(dir: &Path, source: &Path, max_bytes: u64) -> Result<Attachment, String> {
+    let metadata = tokio::fs::metadata(source)
+        .await
+        .map_err(|error| format!("无法读取 {}：{error}", source.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("{} 不是文件", source.display()));
+    }
+    if metadata.len() > max_bytes {
+        return Err(format!(
+            "{} 超过 {} MB 上限",
+            source.display(),
+            max_bytes / (1024 * 1024)
+        ));
+    }
+    let name = source
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| format!("无法从 {} 取文件名", source.display()))?;
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|error| format!("无法创建附件目录 {}：{error}", dir.display()))?;
+    // Re-attaching the same unchanged file reuses the copy instead of
+    // numbering a duplicate. A changed file with the same name still gets a
+    // new number.
+    let same_name = dir.join(&name);
+    if let Ok(existing) = tokio::fs::read(&same_name).await {
+        if existing.len() as u64 == metadata.len() {
+            if let Ok(source_bytes) = tokio::fs::read(source).await {
+                if source_bytes == existing {
+                    return Ok(Attachment {
+                        name,
+                        path: display_path(&same_name),
+                        size: metadata.len(),
+                    });
+                }
+            }
+        }
+    }
+    let destination = unique_name(dir, &name);
+    tokio::fs::copy(source, &destination)
+        .await
+        .map_err(|error| format!("无法复制 {}：{error}", source.display()))?;
+    Ok(Attachment {
+        name: destination
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or(name),
+        path: display_path(&destination),
+        size: metadata.len(),
+    })
+}
+
 #[tauri::command]
 pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
     let config = state
@@ -426,6 +524,23 @@ pub async fn branch_session(
     open_inner(app, state, current.workspace, Some(id), false).await
 }
 
+/// Reopens a conversation under its current settings.
+///
+/// The empty-conversation rig picker needs this: a blank conversation has no
+/// document yet, so `open_session` would refuse it. The id stays the same, so
+/// the composer keeps whatever the user has typed.
+#[tauri::command]
+pub async fn reopen_session(
+    app: AppHandle,
+    state: State<'_, SharedState>,
+    workspace: Option<String>,
+    session_id: String,
+) -> Result<SessionView, String> {
+    let state = state.inner().clone();
+    let workspace = resolve_workspace(&state, workspace);
+    open_inner(app, state, workspace, Some(session_id), true).await
+}
+
 /// Opens a blank conversation without writing a document. The row appears in
 /// the project's history only when the first turn writes the document, so
 /// pressing 新对话 and leaving does not litter the list.
@@ -439,6 +554,60 @@ pub async fn new_session(
     ensure_idle(&state)?;
     let workspace = resolve_workspace(&state, workspace);
     open_inner(app, state, workspace, Some(sessions::fresh_id()), true).await
+}
+
+/// Copies dropped or picked files into the conversation's attachment folder.
+/// Every file is validated before anything is copied, so a rejected batch
+/// leaves no half-copied set behind.
+#[tauri::command]
+pub async fn attach_files(
+    state: State<'_, SharedState>,
+    workspace: Option<String>,
+    session_id: String,
+    paths: Vec<String>,
+) -> Result<Vec<Attachment>, String> {
+    if !sessions::valid_id(&session_id) {
+        return Err("会话 id 不合法".to_owned());
+    }
+    if paths.len() > MAX_ATTACHMENTS {
+        return Err(format!("一次最多添加 {MAX_ATTACHMENTS} 个文件"));
+    }
+    let state = state.inner().clone();
+    let workspace = resolve_workspace(&state, workspace);
+    let state_dir = state_dir_for(&workspace);
+    let dir = attachments_dir(&state_dir, &workspace, &session_id);
+
+    let mut planned = Vec::new();
+    for path in &paths {
+        let source = PathBuf::from(path);
+        let metadata = tokio::fs::metadata(&source)
+            .await
+            .map_err(|error| format!("无法读取 {}：{error}", source.display()))?;
+        if !metadata.is_file() {
+            return Err(format!("{} 不是文件", source.display()));
+        }
+        if metadata.len() > MAX_ATTACHMENT_BYTES {
+            return Err(format!(
+                "{} 超过 {} MB 上限",
+                source.display(),
+                MAX_ATTACHMENT_BYTES / (1024 * 1024)
+            ));
+        }
+        if source
+            .file_name()
+            .map(|name| name.to_string_lossy().trim().is_empty())
+            .unwrap_or(true)
+        {
+            return Err(format!("无法从 {} 取文件名", source.display()));
+        }
+        planned.push(source);
+    }
+
+    let mut added = Vec::with_capacity(planned.len());
+    for source in planned {
+        added.push(copy_attachment(&dir, &source, MAX_ATTACHMENT_BYTES).await?);
+    }
+    Ok(added)
 }
 
 #[tauri::command]
@@ -485,7 +654,10 @@ pub fn delete_session(
     if !sessions::is_archived(&state_dir, &workspace, &session_id)? {
         return Err("请先归档再删除".to_owned());
     }
-    sessions::remove(&state_dir, &workspace, &session_id)
+    sessions::remove(&state_dir, &workspace, &session_id)?;
+    // The attachments belong to the conversation; nothing else reads them.
+    let _ = std::fs::remove_dir_all(attachments_dir(&state_dir, &workspace, &session_id));
+    Ok(())
 }
 
 #[tauri::command]
@@ -610,14 +782,6 @@ async fn open_inner(
     );
     let fallback = rig_name_for(&provider);
     let preferred = chosen_rig(&config, fallback);
-    let discovery = rig::discover(&rig_dirs());
-    let rig = discovery
-        .rigs
-        .iter()
-        .find(|rig| rig.name == preferred)
-        .or_else(|| discovery.rigs.iter().find(|rig| rig.name == fallback))
-        .cloned()
-        .ok_or_else(|| format!("找不到 rig `{preferred}`"))?;
 
     let state_dir = state_dir_for(&workspace);
     let (session_id, session_list) = {
@@ -647,6 +811,15 @@ async fn open_inner(
         let list = sessions::list(&state_dir, &workspace);
         (session_id, list)
     };
+    let wanted = rig_for_session(&session_list, &session_id, &preferred);
+    let discovery = rig::discover(&rig_dirs());
+    let rig = discovery
+        .rigs
+        .iter()
+        .find(|rig| rig.name == wanted)
+        .or_else(|| discovery.rigs.iter().find(|rig| rig.name == fallback))
+        .cloned()
+        .ok_or_else(|| format!("找不到 rig `{wanted}`"))?;
     let store_path = sessions::session_path(&state_dir, &workspace, &session_id);
 
     let model = key.map(|api_key| ModelOverride {
@@ -672,6 +845,17 @@ async fn open_inner(
         search_url: config.search_url.clone(),
     })
     .map_err(|error| error.to_string())?;
+    // Dropped files are readable by the agent and cannot be written back to:
+    // the folder is a read-only root, and it is outside the workspace so it
+    // never shows up in the turn's checkpoint diff.
+    let attachments = attachments_dir(&state_dir, &workspace, &session_id);
+    if std::fs::create_dir_all(&attachments).is_ok()
+        && engine
+            .add_root(&attachments, keel_core::AccessKind::Read)
+            .is_err()
+    {
+        eprintln!("attachments root was not added: {}", attachments.display());
+    }
     let engine = Arc::new(engine);
     let workspace_label = display_path(engine.workspace());
     let page = engine.history(None, 30);
@@ -759,8 +943,8 @@ fn state_dir_for(workspace: &Path) -> PathBuf {
     rig::state_dir().unwrap_or_else(|| workspace.join(".keel"))
 }
 
-/// The rig to run: the chosen file when it is set, otherwise the one the
-/// provider implies (offline runs the mock profile).
+/// The rig a new conversation starts with: the chosen file when it is set,
+/// otherwise the host's default.
 fn chosen_rig(config: &config::DesktopConfig, fallback: &str) -> String {
     let chosen = config.rig.trim();
     if chosen.is_empty() {
@@ -768,6 +952,23 @@ fn chosen_rig(config: &config::DesktopConfig, fallback: &str) -> String {
     } else {
         chosen.to_owned()
     }
+}
+
+/// A conversation keeps the rig it started with. The setting only chooses the
+/// rig for a conversation that has none yet; a recorded rig whose file is gone
+/// falls back to the setting.
+fn rig_for_session(
+    session_list: &[sessions::SessionMeta],
+    session_id: &str,
+    preferred: &str,
+) -> String {
+    session_list
+        .iter()
+        .find(|meta| meta.id == session_id)
+        .map(|meta| meta.rig.trim())
+        .filter(|rig| !rig.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| preferred.to_owned())
 }
 
 #[tauri::command]
@@ -1343,4 +1544,80 @@ fn is_home_dir(path: &Path) -> bool {
 
 fn normalized(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_attachment, rig_for_session};
+    use crate::sessions::SessionMeta;
+
+    fn meta(id: &str, rig: &str) -> SessionMeta {
+        SessionMeta {
+            id: id.to_owned(),
+            title: String::new(),
+            archived: false,
+            rig: rig.to_owned(),
+            created_at: 0,
+            updated_at: 0,
+            turns: 0,
+        }
+    }
+
+    #[test]
+    fn a_conversation_keeps_the_rig_it_started_with() {
+        let list = vec![meta("s-1", "general"), meta("s-2", "")];
+        assert_eq!(rig_for_session(&list, "s-1", "coding-live"), "general");
+    }
+
+    #[test]
+    fn a_conversation_without_a_rig_takes_the_setting() {
+        let list = vec![meta("s-1", "  ")];
+        assert_eq!(rig_for_session(&list, "s-1", "coding-live"), "coding-live");
+        assert_eq!(rig_for_session(&[], "s-9", "general"), "general");
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_file_is_reused_and_a_changed_one_is_numbered() {
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let dir = temp.path().join("attachments");
+        let source = temp.path().join("notes.txt");
+        std::fs::write(&source, "hello").expect("the source");
+
+        let first = copy_attachment(&dir, &source, 1024)
+            .await
+            .expect("the first copy");
+        let again = copy_attachment(&dir, &source, 1024)
+            .await
+            .expect("the same content");
+        assert_eq!(first.name, "notes.txt");
+        assert_eq!(again.name, "notes.txt");
+        assert_eq!(again.path, first.path);
+        assert_eq!(
+            std::fs::read_to_string(&first.path).expect("the copy"),
+            "hello"
+        );
+
+        std::fs::write(&source, "hello again").expect("the edit");
+        let changed = copy_attachment(&dir, &source, 1024)
+            .await
+            .expect("the changed file");
+        assert_eq!(changed.name, "notes (2).txt");
+        assert_eq!(
+            std::fs::read_to_string(&changed.path).expect("the copy"),
+            "hello again"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_oversized_attachment_is_refused() {
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let source = temp.path().join("big.txt");
+        std::fs::write(&source, "0123456789").expect("the source");
+
+        let error = copy_attachment(&temp.path().join("attachments"), &source, 5)
+            .await
+            .expect_err("a file over the cap is refused");
+
+        assert!(error.contains("上限"), "{error}");
+    }
 }

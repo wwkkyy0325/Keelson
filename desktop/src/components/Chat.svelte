@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import {
     archiveSession,
+    attachFiles,
     backgroundTasks,
     branchSession,
     cancelTurn,
@@ -10,8 +11,10 @@
     newSession,
     openSession,
     renameSession,
+    reopenSession,
     respondInteraction,
     savePermission,
+    saveRig,
     sendMessage,
     sessionStatus,
     turnChanges,
@@ -27,9 +30,12 @@
   import Sidebar from "./Sidebar.svelte";
   import StatusBar from "./StatusBar.svelte";
   import Transcript from "./Transcript.svelte";
-  import type { SessionStatus, Turn } from "../lib/protocol";
+  import type { RigOption, SessionStatus, Turn } from "../lib/protocol";
 
-  let { onSettings }: { onSettings: () => void } = $props();
+  let {
+    onSettings,
+    rigs = [],
+  }: { onSettings: () => void; rigs?: RigOption[] } = $props();
 
   let uiError = $state<string | null>(null);
   let answering = $state<string | null>(null);
@@ -157,6 +163,29 @@
     try {
       await savePermission(level);
       await loadStatus();
+    } catch (error) {
+      uiError = errText(error);
+    }
+  }
+
+  /// A conversation with no turns is the only place the rig is chosen; after
+  /// the first turn it belongs to the conversation and never changes.
+  let emptyConversation = $derived(
+    $session.turns.length === 0 && $session.running === null,
+  );
+
+  async function chooseRig(name: string): Promise<void> {
+    if (!emptyConversation || !$session.sessionId || status?.rig === name) {
+      return;
+    }
+    uiError = null;
+    try {
+      await saveRig(name);
+      const view = await reopenSession(
+        $session.workspace || null,
+        $session.sessionId,
+      );
+      dispatch({ type: "session-opened", view });
     } catch (error) {
       uiError = errText(error);
     }
@@ -366,6 +395,8 @@
           onSend={send}
           onCancel={cancel}
           onError={(message) => (uiError = message)}
+          onAttach={(paths) =>
+            attachFiles($session.workspace, $session.sessionId, paths)}
           initialDraft={prefillDraft}
           history={promptHistory}
         />
@@ -374,8 +405,10 @@
       <StatusBar
         {status}
         rigTitle={status ? $rigTitle(status.rig, status.rig) : ""}
+        rigs={rigs}
+        rigSelectable={emptyConversation}
         busy={$session.running !== null}
-        onSettings={onSettings}
+        onRigChange={chooseRig}
         onPermission={changePermission}
       />
     </footer>

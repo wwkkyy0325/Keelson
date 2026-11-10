@@ -122,6 +122,24 @@
 
   let lastTop = 0;
 
+  // A session switch replaces the whole transcript. The browser resets the
+  // scroll position, and the scroll handler reads that reset as the user
+  // scrolling back, which used to leave an opened conversation at the top.
+  // Jump to the newest turn and reset the tracker instead.
+  let lastSessionId: string | null = null;
+  $effect(() => {
+    const id = $session.sessionId;
+    if (id === lastSessionId) return;
+    lastSessionId = id;
+    stick = true;
+    requestAnimationFrame(() => {
+      if (!scroller) return;
+      scroller.scrollTop = scroller.scrollHeight;
+      lastTop = scroller.scrollTop;
+      stick = true;
+    });
+  });
+
   function onScroll(): void {
     if (!scroller) return;
     const top = scroller.scrollTop;

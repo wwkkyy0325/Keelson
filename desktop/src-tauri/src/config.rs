@@ -290,4 +290,3 @@ mod tests {
         assert_eq!(projects[0].name, "Keelson");
     }
 }
-

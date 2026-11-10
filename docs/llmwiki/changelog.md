@@ -2010,3 +2010,99 @@ duration line is what makes the cost of a check measurable at all.
 - Settings starts the catalog load independently of `setup_state`, and both
   calls time out after eight seconds with an error, so a restarting backend
   cannot leave the model and rig lists spinning forever.
+
+## 2026-11-10 — a second rig, and a rig fixed per conversation
+
+- `general` joins `coding-live`: a file-only rig (`rigs/general.toml` →
+  `profiles/general-live.toml` → `prompts/general.md`) for writing, research
+  and file work, without the code-only tools. No engine change.
+- A conversation now runs the rig recorded in its document. Before this the
+  setting decided the rig on every open, so changing it silently changed
+  conversations already in progress; the document's field was written but
+  never read (ADR 0039).
+- The setting is the default rig for new conversations. The empty
+  conversation's status line is a rig select; picking one saves the default
+  and reopens the blank conversation under the same id, keeping the draft.
+  After the first turn the segment is plain text and the rig never changes.
+- The rig · provider · model segment no longer opens settings; the header
+  gear remains the only entry. The permission chip stays interactive.
+- The rig chooser is a chip with the same popover as the permission menu, not
+  a native select: the native dropdown drew over its neighbours in the status
+  line.
+- Opening a conversation scrolls to the newest turn again. Replacing the
+  transcript fires a scroll event that the follow tracker read as "the user
+  scrolled back", so the view stayed at the top.
+- Settings no longer has a Rig section. The default rig is now set by picking
+  it in an empty conversation, the only place a rig is chosen.
+
+## 2026-11-10 — research and office rigs, split by output contract
+
+- The `general` rig is renamed `office`; its tools gain `code_search` and
+  `multi_edit`. Its prompt now states the scenario rules that were missing:
+  edit only the requested range, write deliverables to files, cite outside
+  claims, ask once on ambiguity, use a todo list, and the kernel behaviour
+  (context folding, result clipping, wrap-up).
+- `research` is a new rig for cited answers. Every factual sentence carries a
+  source id and the reply ends with a source ledger: title, URL, how it was
+  read (page text, search snippet only, local file), the quotation, and the
+  claim it supports. Unsourceable claims are listed as unverified. The prompt
+  states the access boundary: no bypassing captchas, login walls, paywalls or
+  rate limits.
+- The split follows the output contract rather than the topic; a deck or
+  video rig arrives only when the host can verify the artifact (ADR 0040).
+
+## 2026-11-10 — scenario evals for office and research
+
+- `tests/office_eval.rs` checks the document contract: a targeted edit leaves
+  every other byte of the file alone, a summary is written to the file the
+  user named, and an ambiguous "organise this" asks before acting.
+- `tests/research_eval.rs` checks the evidence contract with local sources so
+  no search backend is needed: a conflict is reported with both files and a
+  quotation, and a licence the sources never mention is not invented.
+- Both are `#[ignore]` live tests that assert on workspace artifacts. They
+  skip when no endpoint is configured; each rig's pass rate is tracked on its
+  own suite.
+
+## 2026-11-10 — the tools URL follows the API origin
+
+- `web_search` and `web_fetch` built their URL by appending `/v1/tools/...` to
+  the chat base. The desktop's Anthropic-compatible provider uses
+  `https://api.deepseek.com/anthropic`, so the request went to
+  `/anthropic/v1/tools/...` instead of the documented `/v1/tools/...`. The
+  base is now reduced to its origin before the tools path is added.
+
+## 2026-11-10 — rig wiring checked without a provider
+
+- `tests/rig_tools.rs` opens each rig with a model override that is never
+  called and asserts the effective tool set: office has the document tools
+  (`multi_edit`, `code_search`, file operations, web) and not the coding-only
+  `git_diff`/`apply_edits`; research has search, content search and file
+  writes, and neither file reorganisation nor the batch edit tools. Both
+  personas are asserted to have loaded.
+- The research profile no longer lists `list_trash`/`restore_file`, which
+  only make sense beside `delete_file` that the rig does not expose.
+
+## 2026-11-10 — the composer takes files
+
+- A file dropped on the window or picked with the paperclip is copied into
+  `<state>/attachments/<workspace-key>/<session-id>/` and the conversation
+  folder is added as a read-only root. The message carries an
+  `Attachments (read-only):` block of paths, so the transcript and the model
+  agree after a restart and no session schema changed.
+- Copies live outside the workspace: a dropped file never appears in the
+  turn's checkpoint diff, and undo cannot delete it. Duplicate names number
+  themselves; 50 MB per file and 10 files per message; a batch is validated
+  before the first copy. Deleting a conversation removes the folder (ADR
+  0041).
+- Images are accepted as files but are not sent to the model: the kernel's
+  message content is a string and both adapters send text blocks, so vision
+  needs a kernel change and a vision model.
+
+## 2026-11-10 — attachments copy on send, once
+
+- Choosing a file no longer copies it. The composer records the source path
+  and shows a chip; the copy happens when the message is sent, so browsing a
+  drop or removing a chip has no side effect.
+- The same source path is one chip. Sending an unchanged file again reuses
+  the existing copy instead of numbering a duplicate; only a changed file
+  with the same name becomes `notes (2).txt` (ADR 0041, amended).

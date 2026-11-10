@@ -1,23 +1,35 @@
 <script lang="ts">
-  import { t } from "../lib/i18n";
-  import type { SessionStatus } from "../lib/protocol";
+  import { rigLabel, t } from "../lib/i18n";
+  import type { RigOption, SessionStatus } from "../lib/protocol";
 
   let {
     status,
     rigTitle,
+    rigs = [],
+    rigSelectable = false,
     busy = false,
-    onSettings,
+    onRigChange,
     onPermission,
   }: {
     status: SessionStatus | null;
     rigTitle: string;
+    rigs?: RigOption[];
+    rigSelectable?: boolean;
     busy?: boolean;
-    onSettings: () => void;
+    onRigChange: (name: string) => Promise<void>;
     onPermission: (level: string) => Promise<void>;
   } = $props();
 
   let permissionOpen = $state(false);
   let contextOpen = $state(false);
+  let rigOpen = $state(false);
+
+  /// The localized title of the running rig, or its file name if the list is
+  /// stale.
+  function rigLabelOf(name: string): string {
+    const found = rigs.find((rig) => rig.name === name);
+    return found ? $rigLabel(found.name, found).title : name;
+  }
 
   let used = $derived(
     status && status.recent.length > 0
@@ -109,13 +121,49 @@
         {/if}
       </div>
 
-      <button
-        class="status-item"
-        onclick={onSettings}
-        title={$t("status.settingsHint")}
-      >
-        {rigTitle} · {status.providerName || status.provider} {status.model}
-      </button>
+      {#if rigSelectable && rigs.length > 0}
+        <div class="status-menu">
+          <button
+            class="status-item"
+            onclick={() => (rigOpen = !rigOpen)}
+            aria-haspopup="menu"
+            aria-expanded={rigOpen}
+            title={$t("status.rigChoose")}
+          >
+            {rigLabelOf(status.rig)}
+            <span class="caret">▾</span>
+          </button>
+          {#if rigOpen}
+            <button
+              class="status-backdrop"
+              aria-label={$t("app.dismiss")}
+              onclick={() => (rigOpen = false)}
+            ></button>
+            <div class="status-popover" role="menu">
+              {#each rigs as rig (rig.name)}
+                <button
+                  role="menuitem"
+                  class:active={rig.name === status.rig}
+                  onclick={() => {
+                    rigOpen = false;
+                    void onRigChange(rig.name);
+                  }}
+                >
+                  <strong>{$rigLabel(rig.name, rig).title}</strong>
+                  <span>{$rigLabel(rig.name, rig).description}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        <span class="status-text">
+          · {status.providerName || status.provider} {status.model}
+        </span>
+      {:else}
+        <span class="status-text">
+          {rigTitle} · {status.providerName || status.provider} {status.model}
+        </span>
+      {/if}
     </div>
 
     <div class="status-menu">
