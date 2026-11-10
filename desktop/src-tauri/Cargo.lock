@@ -1495,6 +1495,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -1909,7 +1910,7 @@ dependencies = [
 
 [[package]]
 name = "keel-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "serde",
@@ -1919,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "keel-model-anthropic"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "keel-core",
@@ -1930,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "keel-model-openai"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "keel-core",
@@ -1941,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "keel-policy"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "keel-core",
  "serde",
@@ -1950,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "keel-runtime"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "ignore",
@@ -1973,6 +1974,7 @@ dependencies = [
  "keel-model-openai",
  "keel-policy",
  "keel-runtime",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tokio",
@@ -3029,6 +3031,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams 0.4.2",
  "web-sys",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4781,6 +4784,15 @@ dependencies = [
  "pkg-config",
  "soup3-sys",
  "system-deps",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5f280bbb2b287bc8e7de7e3852945a0ff50d1bbcb5ed42b6c7a568c546df171"
+dependencies = [
+ "rustls-pki-types",
 ]
 
 [[package]]
