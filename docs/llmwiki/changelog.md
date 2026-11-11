@@ -2198,3 +2198,12 @@ duration line is what makes the cost of a check measurable at all.
   record, memo and a bounded recall excerpt. Restore applies both rules, so
   an old document shrinks on its next save. Host tests still pass against the
   new kernel.
+
+## 2026-11-11 — restore is idempotent
+
+- Restoring every real conversation document twice exposed a defect in the
+  kernel cap: an entry that already carried the note was capped again, and its
+  count became the note's own length (about 60).
+- Kernel 0.2.14 keeps a capped entry unchanged on the next restore (ADR 0052
+  amendment). Real documents: 5,556,594 -> 4,159,190 bytes across seven
+  conversations, records, turns and recall unchanged.
