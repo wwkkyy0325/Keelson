@@ -1,18 +1,37 @@
 {
   "title": "The film's title",
   "output": "out/film.mp4",
-  "glossary": ["one term per concept"],
-  "format": { "width": 1920, "height": 1080, "fps": 30, "voice": "zh-CN-XiaoxiaoNeural" },
+  "glossary": [
+    {
+      "term": "one term per concept",
+      "scenes": [
+        "01"
+      ],
+      "must_be_said": "The sentence the narration says when the term is on screen",
+      "note": "The synonym this film does not use"
+    }
+  ],
+  "format": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "voice": "zh-CN-XiaoxiaoNeural"
+  },
   "scenes": [
     {
       "id": "01",
       "kicker": "01 / a short label",
-      "headline": ["One idea", "in one line"],
+      "headline": [
+        "One idea",
+        "in one line"
+      ],
       "narration": "The sentence the voice says over this scene.",
       "visual": "What the frame shows, and which part of data/model.json it draws.",
       "asset_type": "canvas",
       "motion": "what moves",
-      "claims": ["c1"],
+      "claims": [
+        "c1"
+      ],
       "source_card": "The publisher named on screen",
       "simplification": "What is a sketch, labelled 示意"
     }

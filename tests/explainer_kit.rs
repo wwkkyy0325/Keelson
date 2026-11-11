@@ -165,6 +165,30 @@ fn the_claim_gate_needs_independent_sources() {
     );
     std::fs::write(root.join("storyboard.json"), board).expect("the storyboard is back");
 
+    // A glossary entry may scope its term to scenes; an object entry must
+    // still be checked.
+    std::fs::write(
+        root.join("storyboard.json"),
+        r#"{
+  "format": { "width": 1920, "height": 1080, "fps": 30, "voice": "zh-CN-XiaoxiaoNeural" },
+  "glossary": [ { "term": "society", "scenes": ["01"] } ],
+  "scenes": [ { "id": "01", "headline": "society", "narration": "a claim",
+                "claims": ["c1"], "source_card": "first" } ]
+}"#,
+    )
+    .expect("a storyboard with a glossary");
+    let glossary = run(&python, &root, "data/check_claims.py");
+    assert!(
+        !glossary.status.success(),
+        "the on-screen term is not narrated"
+    );
+    assert!(
+        String::from_utf8_lossy(&glossary.stdout).contains("not in the narration"),
+        "{}",
+        String::from_utf8_lossy(&glossary.stdout)
+    );
+    std::fs::write(root.join("storyboard.json"), board).expect("the storyboard is back");
+
     // A quote is verbatim; an ellipsis is a hidden cut.
     let stitched = two.replace("the claim again", "the claim ...... again");
     std::fs::write(root.join("claims.json"), &stitched).expect("a ledger");

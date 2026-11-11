@@ -121,8 +121,18 @@ def main() -> int:
             str(part)
             for part in (scene.get("kicker", ""), headline, scene.get("visual", ""))
         )
-        for term in board.get("glossary", []):
-            if term and term in onscreen and term not in scene.get("narration", ""):
+        for entry in board.get("glossary", []):
+            if isinstance(entry, dict):
+                term = entry.get("term")
+                scenes = entry.get("scenes")
+            else:
+                term = entry
+                scenes = None
+            if not isinstance(term, str) or not term:
+                continue
+            if scenes is not None and scene["id"] not in scenes:
+                continue
+            if term in onscreen and term not in scene.get("narration", ""):
                 errors.append(
                     f"scene {scene['id']}: on-screen `{term}` is not in the narration"
                 )

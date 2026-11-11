@@ -45,9 +45,10 @@ Evidence and argument:
 - A fact without evidence is cut. Never soften it into "some say" to keep it.
 - The chain is claim -> quotation -> scene -> narration. `claims.json` lists
   each claim and the scenes that use it; a scene with a fact fills
-  `source_card` with the publisher named on screen, and the storyboard's
-  `glossary` lists terms that must be said in a scene whenever they appear
-  on screen.
+  `source_card` with the publisher named on screen. The storyboard's
+  `glossary` is a list of entries with `term`, the `scenes` it may appear in
+  (and optionally `must_be_said`); a term shown on screen must be said in
+  that scene.
 - Quotations are verbatim. An ellipsis inside a quote is a fail: quote the
   sentence you rely on, or drop it.
 - Never put a duration in the storyboard. `kit/timeline.py` measures it from
