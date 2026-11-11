@@ -853,8 +853,10 @@ pub fn delete_session(
         return Err("请先归档再删除".to_owned());
     }
     sessions::remove(&state_dir, &workspace, &session_id)?;
-    // The attachments belong to the conversation; nothing else reads them.
+    // The attachments and screenshots belong to the conversation; nothing
+    // else reads them.
     let _ = std::fs::remove_dir_all(attachments_dir(&state_dir, &workspace, &session_id));
+    keelson::engine::remove_session_screens(&state_dir, &workspace, &session_id);
     Ok(())
 }
 

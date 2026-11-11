@@ -1547,6 +1547,16 @@ fn has_node_test(workspace: &Path) -> bool {
 
 /// One project's outputs and trash. The account state root is shared, but a
 /// project must not list or restore another project's files.
+/// Removes the screenshots of one conversation. The host calls this when the
+/// conversation is deleted; the engine owns the folder layout, so the host
+/// does not have to know it.
+pub fn remove_session_screens(state_dir: &Path, workspace: &Path, session_id: &str) {
+    let workspace = std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
+    let state_dir = std::fs::canonicalize(state_dir).unwrap_or_else(|_| state_dir.to_path_buf());
+    let project = project_state_dir(&state_dir, &workspace);
+    let _ = std::fs::remove_dir_all(screen::screens_dir_for(&project, session_id));
+}
+
 fn project_state_dir(state_dir: &Path, workspace: &Path) -> PathBuf {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in workspace.to_string_lossy().as_bytes() {

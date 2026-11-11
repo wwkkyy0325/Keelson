@@ -2179,3 +2179,10 @@ duration line is what makes the cost of a check measurable at all.
   call. The OpenAI adapter inserted the image message between tool results;
   it now emits every tool message first and one user image message after the
   group.
+
+## 2026-11-11 — cleanup after a conversation, and a clearer capture prompt
+
+- Deleting a conversation removes its screenshots with its attachments; the
+  engine owns the screens folder layout and exposes it to the host.
+- A capture confirmation names the window without calling it a command
+  (kernel 0.2.12); the screen capture requests a write scoped to its folder.

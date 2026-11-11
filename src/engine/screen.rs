@@ -119,9 +119,12 @@ impl Tool for ScreenCaptureTool {
             "region" => "screen region".to_owned(),
             _ => "the screen".to_owned(),
         };
+        // The tool writes the screenshot into the folder, so the request is a
+        // write scoped to that folder. Outside every root, `workspace_auto`
+        // confirms it and a session grant covers later captures.
         Ok(vec![PermissionRequest {
             tool: "screen_capture".to_owned(),
-            access: AccessKind::Read,
+            access: AccessKind::Write,
             path: Some(self.screens.clone()),
             detail: Some(detail),
         }])
@@ -490,7 +493,12 @@ pub fn screens_dir(project_dir: &Path, store_path: &Path) -> PathBuf {
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_else(|| "session".to_owned());
-    project_dir.join("screens").join(session)
+    screens_dir_for(project_dir, &session)
+}
+
+/// The screenshots of one conversation, by its id.
+pub fn screens_dir_for(project_dir: &Path, session_id: &str) -> PathBuf {
+    project_dir.join("screens").join(session_id)
 }
 
 #[cfg(test)]
@@ -515,7 +523,7 @@ mod tests {
         let requests = tool.permission_requests(&args).expect("a request");
 
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].access, AccessKind::Read);
+        assert_eq!(requests[0].access, AccessKind::Write);
         assert_eq!(requests[0].path.as_deref(), Some(Path::new("/tmp/screens")));
         assert_eq!(requests[0].detail.as_deref(), Some("window Notepad"));
     }
