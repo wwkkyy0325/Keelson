@@ -23,7 +23,7 @@ def main():
     fps = int(board["format"]["fps"])
     lead = plan["lead"]
     tail = plan["tail"]
-    output = ROOT / board.get("output", "out/film.mp4")
+    output = ROOT / (board.get("output") or "out/film.mp4")
     SCENES.mkdir(parents=True, exist_ok=True)
 
     for scene in plan["scenes"]:

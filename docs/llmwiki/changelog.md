@@ -2244,3 +2244,9 @@ duration line is what makes the cost of a check measurable at all.
   sides for a conflict. A scene names the claims it uses.
 - Pictures are programmatic scenes plus user-supplied `assets/`. The rig does
   not download images or footage, and every asset records its license.
+
+## 2026-11-11 — the explainer proves itself on a real topic
+
+- A live run on the argumentative topic "为什么很多人觉得整个社会都在'去责任化'" produced 14 claims (10 facts, 3 interpretations, 1 value), two conflicts carried in the open, five unevidenced sub-claims deleted, and a six-scene script and storyboard. The claim gate passed.
+- The source check found one dead citation; a repair turn replaced it, and all 15 sources now resolve. The run also showed that a null `output` and a `format.rate` were not handled; both are fixed in the kit.
+- The gate now also rejects a stitched quote, a revealed fact without a `source_card`, a duration typed into the storyboard, and a ledger/scene mismatch.

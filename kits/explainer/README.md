@@ -41,8 +41,11 @@ python kit/qa.py --video      # gates + contact sheet
 - The film is the size and length the storyboard says, has audio, and sits
   near -16 LUFS.
 - A fact claim has two independent publishers or one primary source, with a
-  quotation and an access date. An interpretation names its framework; a
-  value judgment carries an on-screen label. A conflict keeps both sides.
+  verbatim quotation and an access date. An interpretation names its
+  framework; a value judgment carries an on-screen label. A conflict keeps
+  both sides.
+- A scene that shows a fact fills `source_card`; `glossary` terms that appear
+  on screen must be in that scene's narration; durations are never typed.
 - Pictures are scenes plus user-supplied `assets/`; the rig does not download
   images, and every asset records its license.
 

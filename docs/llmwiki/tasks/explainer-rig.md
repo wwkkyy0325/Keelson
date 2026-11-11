@@ -48,6 +48,15 @@ film's claims and layout checked before anyone watches it.
 - Verify: `the_claim_gate_needs_independent_sources` (one publisher fails,
   two pass, an unlabelled value fails).
 
-## 6. Documentation — done
+## 6. Live proof — done
+
+- [x] One turn on a real argumentative topic produced the ledger, the script
+      and the storyboard; the gate passed, one dead citation was found, and a
+      repair turn replaced it. 15 sources checked, none 404.
+- Verify: `tests/explainer_eval.rs` (ignored; needs a key). The run exposed a
+  kernel issue: `deepseek-flash` runs in thinking mode and its thinking block
+  is not echoed back on a tool follow-up, so the run used `deepseek-chat`.
+
+## 7. Documentation — done
 
 - [x] ADR 0044; design and README list four rigs; changelog.

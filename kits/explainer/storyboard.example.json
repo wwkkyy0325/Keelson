@@ -1,6 +1,7 @@
 {
   "title": "The film's title",
   "output": "out/film.mp4",
+  "glossary": ["one term per concept"],
   "format": { "width": 1920, "height": 1080, "fps": 30, "voice": "zh-CN-XiaoxiaoNeural" },
   "scenes": [
     {
@@ -10,7 +11,10 @@
       "narration": "The sentence the voice says over this scene.",
       "visual": "What the frame shows, and which part of data/model.json it draws.",
       "asset_type": "canvas",
-      "motion": "what moves"
+      "motion": "what moves",
+      "claims": ["c1"],
+      "source_card": "The publisher named on screen",
+      "simplification": "What is a sketch, labelled 示意"
     }
   ]
 }

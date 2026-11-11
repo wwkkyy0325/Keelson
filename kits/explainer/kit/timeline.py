@@ -62,6 +62,7 @@ def parse_srt(text: str):
 def main() -> int:
     board = json.loads((ROOT / "storyboard.json").read_text(encoding="utf-8"))
     voice = board["format"]["voice"]
+    rate = board["format"].get("rate")
     audio_dir = ROOT / "out" / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,20 +73,23 @@ def main() -> int:
         scene_id = scene["id"]
         mp3 = audio_dir / f"{scene_id}.mp3"
         srt = audio_dir / f"{scene_id}.srt"
+        command = [
+            sys.executable,
+            "-m",
+            "edge_tts",
+            "--voice",
+            voice,
+            "--text",
+            scene["narration"],
+            "--write-media",
+            str(mp3),
+            "--write-subtitles",
+            str(srt),
+        ]
+        if rate:
+            command.extend(["--rate", str(rate)])
         subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "edge_tts",
-                "--voice",
-                voice,
-                "--text",
-                scene["narration"],
-                "--write-media",
-                str(mp3),
-                "--write-subtitles",
-                str(srt),
-            ],
+            command,
             check=True,
             stdout=subprocess.DEVNULL,
         )

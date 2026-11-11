@@ -44,8 +44,16 @@ Evidence and argument:
   narration what is contested. Do not average a conflict away.
 - A fact without evidence is cut. Never soften it into "some say" to keep it.
 - The chain is claim -> quotation -> scene -> narration. `claims.json` lists
-  each claim and the scenes that use it; a scene with a fact shows a source
-  card or a citation line naming the publisher.
+  each claim and the scenes that use it; a scene with a fact fills
+  `source_card` with the publisher named on screen, and the storyboard's
+  `glossary` lists terms that must be said in a scene whenever they appear
+  on screen.
+- Quotations are verbatim. An ellipsis inside a quote is a fail: quote the
+  sentence you rely on, or drop it.
+- Never put a duration in the storyboard. `kit/timeline.py` measures it from
+  the audio; a typed `duration`/`seconds` field fails the gate.
+- The ledger and the scenes agree in both directions: every claim names the
+  scenes that use it, and every scene names the claims it uses.
 - This applies to social and argumentative films too: statistics, surveys,
   laws and quotations are facts; a theory about "society" is an
   interpretation; a recommendation is a value judgment.

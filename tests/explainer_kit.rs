@@ -99,14 +99,12 @@ fn the_claim_gate_needs_independent_sources() {
     let temp = tempfile::TempDir::new().expect("a temp dir");
     let root = temp.path().join("film");
     copy_dir(&kit_root().join("data"), &root.join("data"));
-    std::fs::write(
-        root.join("storyboard.json"),
-        r#"{
+    let board = r#"{
   "format": { "width": 1920, "height": 1080, "fps": 30, "voice": "zh-CN-XiaoxiaoNeural" },
-  "scenes": [ { "id": "01", "narration": "a claim", "claims": ["c1"] } ]
-}"#,
-    )
-    .expect("a storyboard");
+  "scenes": [ { "id": "01", "narration": "a claim", "claims": ["c1"],
+                "source_card": "first" } ]
+}"#;
+    std::fs::write(root.join("storyboard.json"), board).expect("a storyboard");
 
     let one = r#"{
   "claims": [ {
@@ -148,6 +146,36 @@ fn the_claim_gate_needs_independent_sources() {
         "{}",
         String::from_utf8_lossy(&independent.stdout)
     );
+
+    // A fact on screen without a publisher is not verifiable by a viewer.
+    std::fs::write(
+        root.join("storyboard.json"),
+        r#"{
+  "format": { "width": 1920, "height": 1080, "fps": 30, "voice": "zh-CN-XiaoxiaoNeural" },
+  "scenes": [ { "id": "01", "narration": "a claim", "claims": ["c1"] } ]
+}"#,
+    )
+    .expect("a storyboard without a publisher");
+    let no_card = run(&python, &root, "data/check_claims.py");
+    assert!(!no_card.status.success(), "a fact needs a source card");
+    assert!(
+        String::from_utf8_lossy(&no_card.stdout).contains("without a `source_card`"),
+        "{}",
+        String::from_utf8_lossy(&no_card.stdout)
+    );
+    std::fs::write(root.join("storyboard.json"), board).expect("the storyboard is back");
+
+    // A quote is verbatim; an ellipsis is a hidden cut.
+    let stitched = two.replace("the claim again", "the claim ...... again");
+    std::fs::write(root.join("claims.json"), &stitched).expect("a ledger");
+    let ellipsis = run(&python, &root, "data/check_claims.py");
+    assert!(!ellipsis.status.success(), "an ellipsis quote must fail");
+    assert!(
+        String::from_utf8_lossy(&ellipsis.stdout).contains("ellipsis"),
+        "{}",
+        String::from_utf8_lossy(&ellipsis.stdout)
+    );
+    std::fs::write(root.join("claims.json"), two).expect("the ledger is back");
 
     let unlabelled = r#"{
   "claims": [ {
