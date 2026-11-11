@@ -55,27 +55,26 @@ def parse_srt(text: str):
         if len(lines) < 3:
             continue
         start, end = lines[1].split(" --> ")
-        items.append((to_seconds(start), to_seconds(end), chr(10).join(lines[2:])))
+        items.append((to_seconds(start), to_seconds(end), "\n".join(lines[2:])))
     return items
 
 
 PUNCT = "，。；：、！？,;:"
 
 
-def wrap(text: str, limit: int = 22) -> str:
+def wrap(text: str, limit: int = 28) -> str:
     """Split a long cue into two readable lines, at a punctuation mark."""
     if len(text) <= limit:
         return text
     candidates = [index + 1 for index, char in enumerate(text) if char in PUNCT]
-    max_cut = max(1, len(text) - limit)
-    feasible = [cut for cut in candidates if 0 < cut <= max_cut]
+    low = max(1, len(text) - limit)
+    high = max(low, min(limit, len(text) - 1))
+    feasible = [cut for cut in candidates if low <= cut <= high]
     if feasible:
         middle = len(text) // 2
         cut = min(feasible, key=lambda cut: abs(cut - middle))
-    elif candidates:
-        cut = min(candidates, key=lambda cut: abs(cut - len(text) // 2))
     else:
-        cut = max_cut
+        cut = high
     return text[:cut].strip() + chr(10) + text[cut:].strip()
 
 

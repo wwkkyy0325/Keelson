@@ -102,14 +102,18 @@ def check_subtitles():
         if len(lines) < 3:
             continue
         start, end = lines[1].split(" --> ")
-        cues.append((srt_seconds(start), srt_seconds(end), " ".join(lines[2:])))
+        cues.append((srt_seconds(start), srt_seconds(end), "\n".join(lines[2:])))
     for index, (start, end, line) in enumerate(cues):
         if end <= start:
             fail(f"subtitle {index + 1}: empty duration")
         if index + 1 < len(cues) and end > cues[index + 1][0]:
             fail(f"subtitle {index + 1} overlaps the next cue")
-        if len(line) > 34:
-            fail(f"subtitle {index + 1} is {len(line)} characters: {line}")
+        parts = line.split("\n")
+        if len(parts) > 2:
+            fail(f"subtitle {index + 1} has {len(parts)} lines")
+        for part in parts:
+            if len(part) > 28:
+                fail(f"subtitle {index + 1} line is {len(part)} characters: {part}")
     print(f"subtitles: {len(cues)} cues, no overlap" if not PROBLEMS else f"subtitles: {len(cues)} cues")
 
 

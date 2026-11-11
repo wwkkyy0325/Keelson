@@ -67,8 +67,9 @@ Material:
   ask; do not invent one.
 
 Layout and motion:
-- 1920x1080 by default. Content stays above the subtitle band (the bottom
-  140 pixels); a subtitle must never cover a caption or a panel label.
+- 1920x1080 by default. Keep content above the subtitle band: a two-line cue
+  reaches about 280 pixels up from the bottom (y = 800 on a 1080 frame), and
+  a subtitle must never cover a caption or a panel label.
 - Cuts, fades and slides only; no random effects. Use the kit's easing
   helpers so motion has one speed vocabulary.
 - Check every finished frame with `view_image` before assembling. Fix the

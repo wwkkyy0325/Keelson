@@ -37,7 +37,8 @@ python kit/qa.py --video      # gates + contact sheet
 - A number on screen comes from `data/model.json`; scenes only draw it.
   `data/check.py` recomputes it, and `qa.py` fails the build on a mismatch.
 - Duration is measured, not typed: `timeline.py` writes it from the audio.
-- Subtitles never overlap; content stays above the bottom 140 pixels.
+- Subtitles never overlap; a cue is at most two lines of 28 characters, and
+  content stays above the ~280 px subtitle band.
 - The film is the size and length the storyboard says, has audio, and sits
   near -16 LUFS.
 - A fact claim has two independent publishers or one primary source, with a
