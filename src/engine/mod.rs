@@ -8,6 +8,7 @@ mod git;
 mod history;
 mod screen;
 mod store;
+mod video;
 mod web;
 
 use std::path::{Path, PathBuf};
@@ -1645,6 +1646,8 @@ fn tools(
     registry.register(Arc::new(screen::ListWindowsTool::new()))?;
     registry.register(Arc::new(screen::ScreenCaptureTool::new(screens)))?;
     registry.register(Arc::new(screen::ViewImageTool::new()))?;
+    registry.register(Arc::new(video::RenderSceneTool::new()))?;
+    registry.register(Arc::new(video::ProbeMediaTool::new()))?;
     registry.register(Arc::new(desktop::LaunchAppTool::new()))?;
     registry.register(Arc::new(desktop::WaitForWindowTool::new()))?;
     registry.register(Arc::new(desktop::ListControlsTool::new()))?;

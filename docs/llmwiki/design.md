@@ -13,10 +13,11 @@ tool for rigs and the kernel handshake, not a second interface.
 | host | The desktop app. Loads a rig, runs turns, renders the conversation, stores sessions. |
 
 A rig is data. Switching rigs changes behavior, tools and scopes; it does not
-open a panel of toggles. The host ships three: `coding-live`, `research` and
-`office`. They are split by output contract — code, cited answers, documents —
-not by topic (ADR 0040). A conversation fixes its rig at its first turn and
-the setting is only the default for the next one (ADR 0039).
+open a panel of toggles. The host ships four: `coding-live`, `research`,
+`office` and `explainer`. They are split by output contract — code, cited
+answers, documents, a narrated film — not by topic (ADR 0040, 0044). A
+conversation fixes its rig at its first turn and the setting is only the
+default for the next one (ADR 0039).
 
 ## Why this shape
 

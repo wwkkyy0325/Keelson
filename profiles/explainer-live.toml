@@ -1,0 +1,29 @@
+[profile]
+name = "explainer-live"
+
+[model]
+provider = "anthropic-compatible"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com/anthropic"
+api_key_env = "ANTHROPIC_AUTH_TOKEN"
+thinking_budget = 0
+max_output_tokens = 32768
+context_window = 1048576
+
+[context]
+stages = ["system", "memory", "history", "latest"]
+budget_tokens = 64000
+max_budget_tokens = 262144
+
+[tools]
+visible = ["read_file", "write_file", "edit_file", "multi_edit", "list_trash", "restore_file", "list_dir", "glob", "code_search", "move_file", "delete_file", "shell", "todo", "search_history", "web_search", "web_fetch", "view_image", "render_scene", "probe_media"]
+budget = 1000
+
+[verification]
+mode = "none"
+
+[permission]
+level = "workspace_auto"
+
+[persona]
+system = "prompts/explainer.md"

@@ -123,6 +123,46 @@ fn the_office_rig_exposes_document_tools() {
 }
 
 #[test]
+fn the_explainer_rig_exposes_render_and_probe() {
+    let temp = tempfile::TempDir::new().expect("a temp dir");
+    let engine = open("explainer", "profiles/explainer-live.toml", temp.path());
+    let tools = &engine.config().visible_tool_names;
+
+    for needed in [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "multi_edit",
+        "list_dir",
+        "glob",
+        "code_search",
+        "shell",
+        "todo",
+        "search_history",
+        "web_search",
+        "web_fetch",
+        "view_image",
+        "render_scene",
+        "probe_media",
+    ] {
+        assert!(
+            tools.iter().any(|tool| tool == needed),
+            "explainer is missing `{needed}`: {tools:?}"
+        );
+    }
+    for elsewhere in ["screen_capture", "launch_app", "git_diff", "apply_edits"] {
+        assert!(
+            !tools.iter().any(|tool| tool == elsewhere),
+            "`{elsewhere}` does not belong to the explainer rig: {tools:?}"
+        );
+    }
+    assert!(
+        engine.config().system_prompt.contains("storyboard"),
+        "the explainer persona did not load its contract"
+    );
+}
+
+#[test]
 fn the_research_rig_exposes_search_and_cites_sources() {
     let temp = tempfile::TempDir::new().expect("a temp dir");
     let engine = open("research", "profiles/research-live.toml", temp.path());

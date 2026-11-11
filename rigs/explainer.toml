@@ -1,0 +1,8 @@
+# The explainer rig: a narrated film built from programmatic scenes.
+#
+# The endpoint and the credential env var are in the profile.
+
+name = "explainer"
+title = "Explainer"
+description = "Write, storyboard and render a narrated explainer film, with every number checked."
+profile = "../profiles/explainer-live.toml"

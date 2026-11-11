@@ -1,0 +1,40 @@
+{
+  "note": "One entry per claim the narration makes. A scene names the ids it uses.",
+  "claims": [
+    {
+      "id": "c1",
+      "type": "fact",
+      "statement": "A factual sentence, close to the wording used on screen.",
+      "scenes": ["01"],
+      "status": "supported",
+      "sources": [
+        {
+          "title": "Primary document",
+          "publisher": "The organisation that published it",
+          "url": "https://example.org/report",
+          "kind": "primary",
+          "accessed": "2026-11-11",
+          "quote": "The exact sentence the film relies on."
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "type": "interpretation",
+      "statement": "A reading of the evidence, not a measurement.",
+      "basis": "The framework or author it borrows from",
+      "scenes": ["02"],
+      "status": "supported",
+      "sources": []
+    },
+    {
+      "id": "c3",
+      "type": "value",
+      "statement": "A judgment the film makes.",
+      "label": "本片观点",
+      "scenes": ["03"],
+      "status": "supported",
+      "sources": []
+    }
+  ]
+}

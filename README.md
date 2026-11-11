@@ -8,20 +8,17 @@ workspace. The workspace itself is picked in the app.
 
 ```
 $ keelson rig list
-coding        Coding
 coding-live   Coding (live)
-$ keelson doctor
-keelson 0.1.0  kernel 0.1.0  events 1  snapshot 1
-rig dirs    rigs
-rigs        2
-  coding      profile coding (WorkspaceAuto)
-  coding-live profile coding-live (WorkspaceAuto)
+explainer     Explainer
+office        Office
+research      Research
 ```
 
-Coding is the first rig and the reference for the shape. A second rig is a
-file, not a new binary: the kernel already resolves a profile into an
-immutable configuration per turn, so switching shells changes behavior, tools
-and scopes without touching the engine.
+Coding is the reference for the shape. Another rig is a file, not a new
+binary: the kernel already resolves a profile into an immutable configuration
+per turn, so switching shells changes behavior, tools and scopes without
+touching the engine. Rigs are split by output contract, not by topic
+(ADR 0040): code, cited answers, documents, and a narrated film.
 
 ## Desktop
 

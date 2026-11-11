@@ -2217,3 +2217,30 @@ duration line is what makes the cost of a check measurable at all.
   5,556,594 -> 4,268,489 bytes with usage, context, answers and snapshot
   unchanged. After one more turn (which also applies kernel 0.2.14's bounded
   history) the same seven documents total 2,883,218 bytes, 48.1% smaller.
+
+## 2026-11-11 — the explainer rig
+
+- A fourth rig, `explainer`, whose deliverable is a narrated film. The script,
+  storyboard, style anchor, contact sheet and a 30-second preview are stop
+  points; the full render waits for approval (ADR 0044).
+- Duration is measured from the generated narration; subtitles are shifted
+  onto the same timeline. Numbers have one source (`data/spec.json`), are
+  derived by `data/build.py`, drawn from `data/model.json`, and recomputed by
+  `data/check.py`, which QA runs.
+- Two host tools: `render_scene` renders a project scene to a PNG sequence
+  through a headless browser and a loopback frame sink; `probe_media` reports
+  a file's duration, geometry and streams. The starter kit lives in
+  `kits/explainer/`.
+- A real pilot produced a 55-second CNN explainer; reviewing its frames
+  caught a hand-typed result that disagreed with the feature map, a
+  single-row sweep under "扫完整张图", and two subtitle/panel collisions.
+
+## 2026-11-11 — evidence and material gates
+
+- `claims.json` splits every claim into fact, interpretation and value.
+  `data/check_claims.py` (run by QA) requires two independent publishers or
+  one primary source with a quotation and access date for a fact, a named
+  framework for an interpretation, an on-screen label for a value, and both
+  sides for a conflict. A scene names the claims it uses.
+- Pictures are programmatic scenes plus user-supplied `assets/`. The rig does
+  not download images or footage, and every asset records its license.

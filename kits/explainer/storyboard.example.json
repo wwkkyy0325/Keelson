@@ -1,0 +1,16 @@
+{
+  "title": "The film's title",
+  "output": "out/film.mp4",
+  "format": { "width": 1920, "height": 1080, "fps": 30, "voice": "zh-CN-XiaoxiaoNeural" },
+  "scenes": [
+    {
+      "id": "01",
+      "kicker": "01 / a short label",
+      "headline": ["One idea", "in one line"],
+      "narration": "The sentence the voice says over this scene.",
+      "visual": "What the frame shows, and which part of data/model.json it draws.",
+      "asset_type": "canvas",
+      "motion": "what moves"
+    }
+  ]
+}

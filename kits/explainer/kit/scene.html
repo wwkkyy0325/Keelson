@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>scene</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c" width="1920" height="1080"></canvas>
+    <script src="/kit/design.js"></script>
+    <script>
+      (async function () {
+        const params = new URLSearchParams(location.search);
+        const id = params.get("scene");
+        const duration = parseFloat(params.get("duration") || "1");
+        const fps = parseInt(params.get("fps") || "30", 10);
+
+        // The scene draws numbers, never computes them: the model comes from
+        // data/model.json, which data/build.py derived from data/spec.json.
+        window.DATA = await (await fetch("/data/model.json")).json();
+        await new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = "/scenes/" + id + ".js";
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.appendChild(script);
+        });
+        await document.fonts.ready;
+
+        const canvas = document.getElementById("c");
+        const ctx = canvas.getContext("2d");
+        const count = Math.max(1, Math.round(duration * fps));
+        for (let i = 0; i < count; i++) {
+          const t = i / fps;
+          ctx.save();
+          window.SCENE.draw(ctx, t, duration);
+          ctx.restore();
+          const data = canvas.toDataURL("image/png");
+          await fetch("/frame?scene=" + id + "&index=" + String(i).padStart(4, "0"), {
+            method: "POST",
+            body: data,
+          });
+        }
+        await fetch("/done", { method: "POST" });
+      })();
+    </script>
+  </body>
+</html>
