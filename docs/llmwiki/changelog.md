@@ -2258,3 +2258,11 @@ duration line is what makes the cost of a check measurable at all.
   block. `deepseek-flash` no longer rejects the second model call with 400.
 - The live probe `thinking_probe` uses the rig's own model and passes; the
   explainer eval no longer needs the `deepseek-chat` workaround.
+
+## 2026-11-11 — a malformed tool payload is retried
+
+- Kernel 0.2.16 retries a model call once when the error is a malformed
+  tool-argument payload (`InvalidResponse`), discarding the failed attempt's
+  draft text. Provider errors and stream cuts keep their previous path.
+- The live flash run no longer needs a special model for this class of
+  failure; the dossier it wrote before the error is already gated.
