@@ -60,3 +60,15 @@ A load (parse) measured 21 ms in a debug build; every send did one
       so an old document shrinks on its next save.
       Verify: kernel tests for the cap, the restore cap, the covered-segment
       drop and recall through the stored excerpt.
+
+## 5. Absorb old event streams on save — done
+
+- [x] A document written before the fields existed folds each turn's usage
+      and last context point from its events into the stored fields, then
+      drops the stream. Every save path goes through it (a turn, a title, an
+      archive), so an old document loses its events on the first save.
+- Verify: `absorbing_an_old_turns_events_keeps_the_numbers`,
+      `absorbing_events_keeps_a_stored_value`, and
+      `saving_an_old_document_absorbs_its_events`. Real documents: 28 streams
+      across seven conversations absorbed, 5,556,594 -> 4,268,489 bytes with
+      usage, context, answers and snapshot unchanged.

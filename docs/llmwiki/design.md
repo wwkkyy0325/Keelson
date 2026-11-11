@@ -146,8 +146,9 @@ One run is one turn. A project directory under
 with `<state>` from `$KEELSON_HOME` (default `~/.keelson`). Each document holds
 the kernel snapshot, the task list and one row per turn: the answer, the
 bounded tool lines and thinking, usage, and the turn's last context point.
-The event stream is not stored for new turns; documents written before that
-change keep it and are still read through it. The workspace is recorded in
+The event stream is not stored for new turns; a document written before that
+change is still read through it, and folds its usage and last context point
+into the fields on the next save, which drops the stream. The workspace is recorded in
 the document, so a conversation is
 refused against a different project; the workspace hash keeps separate
 projects from ever sharing a document.

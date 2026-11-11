@@ -2207,3 +2207,13 @@ duration line is what makes the cost of a check measurable at all.
 - Kernel 0.2.14 keeps a capped entry unchanged on the next restore (ADR 0052
   amendment). Real documents: 5,556,594 -> 4,159,190 bytes across seven
   conversations, records, turns and recall unchanged.
+
+## 2026-11-11 — old documents lose their event streams
+
+- A document written before the usage/context fields existed now folds each
+  turn's numbers out of its events and drops the stream on the next save. A
+  turn, a title or an archive all go through the same save path.
+- Real documents: 28 streams across seven conversations absorbed;
+  5,556,594 -> 4,268,489 bytes with usage, context, answers and snapshot
+  unchanged. After one more turn (which also applies kernel 0.2.14's bounded
+  history) the same seven documents total 2,883,218 bytes, 48.1% smaller.

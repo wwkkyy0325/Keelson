@@ -281,20 +281,11 @@ fn cap_tool_lines(lines: &mut [ToolLine]) {
     }
 }
 
-/// The context point a turn reports: the stored field, or the last event in a
-/// document written before the field existed.
-fn context_point(turn: &StoredTurn) -> Option<ContextPoint> {
-    if let Some(context) = turn.context {
-        return Some(ContextPoint {
-            seq: turn.seq,
-            used: context.used,
-            ceiling: context.ceiling,
-        });
-    }
+/// The last context point an old document's event stream carries.
+fn context_from_events(turn: &StoredTurn) -> Option<StoredContext> {
     turn.events.iter().rev().find_map(|event| {
         let pressure = event.payload.get("context_pressure")?;
-        Some(ContextPoint {
-            seq: turn.seq,
+        Some(StoredContext {
             used: pressure
                 .get("used")?
                 .as_u64()
@@ -305,6 +296,34 @@ fn context_point(turn: &StoredTurn) -> Option<ContextPoint> {
                 .and_then(|v| u32::try_from(v).ok())?,
         })
     })
+}
+
+/// The context point a turn reports: the stored field, or the last event in a
+/// document written before the field existed.
+fn context_point(turn: &StoredTurn) -> Option<ContextPoint> {
+    let context = turn.context.or_else(|| context_from_events(turn))?;
+    Some(ContextPoint {
+        seq: turn.seq,
+        used: context.used,
+        ceiling: context.ceiling,
+    })
+}
+
+/// Folds an old turn's event stream into the fields the host reads, then drops
+/// the stream. New turns never wrote events, so this is a one-time migration
+/// for documents from before the fields: the numbers stay, the bytes go.
+fn absorb_events(turn: &mut StoredTurn) {
+    if turn.events.is_empty() {
+        return;
+    }
+    let usage = turn_usage(turn);
+    if turn.usage == StoredUsage::default() {
+        turn.usage = usage;
+    }
+    if turn.context.is_none() {
+        turn.context = context_from_events(turn);
+    }
+    turn.events.clear();
 }
 
 #[derive(Default)]
@@ -700,7 +719,7 @@ impl Engine {
             // what the transcript and the status line read.
             events: Vec::new(),
         });
-        self.store.save(&session)
+        self.save_session(&mut session)
     }
 
     /// Sets the host-owned title on the open conversation. Persisted now, so
@@ -711,7 +730,7 @@ impl Engine {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         session.title = title.to_owned();
-        self.store.save(&session)
+        self.save_session(&mut session)
     }
 
     /// Sets the host-owned archive flag on the open conversation.
@@ -721,7 +740,17 @@ impl Engine {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         session.archived = archived;
-        self.store.save(&session)
+        self.save_session(&mut session)
+    }
+
+    /// Saves the open conversation, folding any pre-field event stream into
+    /// the usage and context fields first, so an old document shrinks on its
+    /// next save instead of carrying its events forever.
+    fn save_session(&self, session: &mut StoredSession) -> Result<(), KernelError> {
+        for turn in &mut session.turns {
+            absorb_events(turn);
+        }
+        self.store.save(session)
     }
 
     pub fn config(&self) -> &RuntimeConfig {
@@ -1919,6 +1948,73 @@ system = "prompt.md"
         assert_eq!(
             session.turns[0].tools[0].args.as_deref(),
             Some("text=mock input")
+        );
+    }
+
+    #[tokio::test]
+    async fn saving_an_old_document_absorbs_its_events() {
+        let fixture = Fixture::new();
+        let workspace = std::fs::canonicalize(fixture.dir.path().join("workspace"))
+            .expect("a canonical workspace");
+        let mut old = stored_turn();
+        old.events = vec![
+            StoredEvent {
+                name: "model_finished".to_owned(),
+                payload: serde_json::json!({
+                    "model_finished": {
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 7,
+                            "cached_input_tokens": 60
+                        }
+                    }
+                }),
+            },
+            StoredEvent {
+                name: "context_pressure".to_owned(),
+                payload: serde_json::json!({
+                    "context_pressure": { "used": 40, "ceiling": 64 }
+                }),
+            },
+        ];
+        Store::open(fixture.dir.path().join("state/sessions/test.json"))
+            .save(&StoredSession {
+                workspace,
+                rig: "test".to_owned(),
+                title: String::new(),
+                archived: false,
+                snapshot: keel_core::SessionSnapshot::default(),
+                todos: None,
+                turns: vec![old],
+            })
+            .expect("the old document saves");
+
+        let engine = fixture.engine(Arc::new(DeferAllInteractionPort));
+        engine
+            .run_turn("next", CancelToken::new())
+            .await
+            .expect("the turn runs");
+
+        let session = fixture.session();
+        assert_eq!(session.turns.len(), 2);
+        assert!(
+            session.turns[0].events.is_empty(),
+            "the old stream is gone after one save"
+        );
+        assert_eq!(
+            session.turns[0].usage,
+            StoredUsage {
+                input_tokens: 100,
+                output_tokens: 7,
+                cached_input_tokens: 60,
+            }
+        );
+        assert_eq!(
+            session.turns[0].context,
+            Some(StoredContext {
+                used: 40,
+                ceiling: 64,
+            })
         );
     }
 
@@ -3307,6 +3403,112 @@ system = "prompt.md"
                 seq: 1,
                 used: 40,
                 ceiling: 64,
+            })
+        );
+    }
+
+    #[test]
+    fn absorbing_an_old_turns_events_keeps_the_numbers() {
+        let mut turn = stored_turn();
+        turn.events = vec![
+            StoredEvent {
+                name: "model_finished".to_owned(),
+                payload: serde_json::json!({
+                    "model_finished": {
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 7,
+                            "cached_input_tokens": 60
+                        }
+                    }
+                }),
+            },
+            StoredEvent {
+                name: "context_pressure".to_owned(),
+                payload: serde_json::json!({
+                    "context_pressure": { "used": 40, "ceiling": 64 }
+                }),
+            },
+        ];
+
+        absorb_events(&mut turn);
+
+        assert!(turn.events.is_empty(), "the stream is gone");
+        assert_eq!(
+            turn.usage,
+            StoredUsage {
+                input_tokens: 100,
+                output_tokens: 7,
+                cached_input_tokens: 60,
+            }
+        );
+        assert_eq!(
+            turn.context,
+            Some(StoredContext {
+                used: 40,
+                ceiling: 64,
+            })
+        );
+        assert_eq!(TurnView::from(&turn).usage, turn.usage);
+        assert_eq!(
+            context_point(&turn),
+            Some(ContextPoint {
+                seq: 1,
+                used: 40,
+                ceiling: 64,
+            })
+        );
+    }
+
+    #[test]
+    fn absorbing_events_keeps_a_stored_value() {
+        let mut turn = stored_turn();
+        turn.usage = StoredUsage {
+            input_tokens: 3,
+            output_tokens: 1,
+            cached_input_tokens: 0,
+        };
+        turn.context = Some(StoredContext {
+            used: 7,
+            ceiling: 9,
+        });
+        turn.events = vec![
+            StoredEvent {
+                name: "model_finished".to_owned(),
+                payload: serde_json::json!({
+                    "model_finished": {
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 7,
+                            "cached_input_tokens": 60
+                        }
+                    }
+                }),
+            },
+            StoredEvent {
+                name: "context_pressure".to_owned(),
+                payload: serde_json::json!({
+                    "context_pressure": { "used": 40, "ceiling": 64 }
+                }),
+            },
+        ];
+
+        absorb_events(&mut turn);
+
+        assert!(turn.events.is_empty(), "the stream is gone");
+        assert_eq!(
+            turn.usage,
+            StoredUsage {
+                input_tokens: 3,
+                output_tokens: 1,
+                cached_input_tokens: 0,
+            }
+        );
+        assert_eq!(
+            turn.context,
+            Some(StoredContext {
+                used: 7,
+                ceiling: 9,
             })
         );
     }
