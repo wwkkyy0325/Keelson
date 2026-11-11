@@ -2266,3 +2266,12 @@ duration line is what makes the cost of a check measurable at all.
   draft text. Provider errors and stream cuts keep their previous path.
 - The live flash run no longer needs a special model for this class of
   failure; the dossier it wrote before the error is already gated.
+
+## 2026-11-11 — a 3D scene over the same frame sink
+
+- `kit/scene3d.html` renders Three.js (vendored, MIT) into an offscreen WebGL
+  canvas and composites it under the 2D labels; `render_scene` gained a `page`
+  argument and starts the headless browser with SwiftShader. A 12-second AC
+  airflow pilot (particle field, camera drift, labels) passed QA.
+- A 3D picture is labelled 示意 unless a real simulation produced it; the
+  scene's flow and camera are analytic and seeded, so frames are repeatable.

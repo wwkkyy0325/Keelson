@@ -59,6 +59,17 @@ Evidence and argument:
   laws and quotations are facts; a theory about "society" is an
   interpretation; a recommendation is a value judgment.
 
+3D scenes:
+- A scene may be 3D: `kit/scene3d.html` composes a WebGL layer under the 2D
+  labels, and `scenes/<id>.js` exports `createScene` returning `render(t)` and
+  `overlay(ctx, t)`. Render it with `render_scene(..., page:
+  "kit/scene3d.html")`.
+- The camera, the flow field and every particle path are analytic and seeded;
+  the same t renders the same frame. Describe the model in the storyboard.
+- A 3D picture is 示意 unless a real simulation produced it. Say so on screen
+  and never call it CFD; if physical accuracy matters, cite the simulation or
+  the measurements.
+
 Material:
 - Pictures are programmatic scenes and files the user supplied under
   `assets/`. Do not download images or footage from the web, and do not

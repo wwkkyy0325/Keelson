@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>scene3d</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #000;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="c" width="1920" height="1080"></canvas>
+    <script type="module">
+      import * as THREE from "/kit/three.module.min.js";
+
+      const params = new URLSearchParams(location.search);
+      const id = params.get("scene");
+      const duration = parseFloat(params.get("duration") || "1");
+      const fps = parseInt(params.get("fps") || "30", 10);
+
+      // The visible canvas is 2D: the WebGL layer is composited onto it, so
+      // the labels can use the same design kit as the flat scenes.
+      const canvas = document.getElementById("c");
+      const ctx = canvas.getContext("2d");
+      const offscreen = document.createElement("canvas");
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const renderer = new THREE.WebGLRenderer({
+        canvas: offscreen,
+        antialias: true,
+        alpha: false,
+        preserveDrawingBuffer: true,
+      });
+      renderer.setPixelRatio(1);
+      renderer.setSize(canvas.width, canvas.height, false);
+      renderer.setClearColor(0x0b1418, 1);
+
+      const module = await import("/scenes/" + id + ".js");
+      const scene = module.createScene({
+        THREE,
+        renderer,
+        width: canvas.width,
+        height: canvas.height,
+        fps,
+        duration,
+      });
+      await document.fonts.ready;
+
+      const count = Math.max(1, Math.round(duration * fps));
+      for (let i = 0; i < count; i++) {
+        const t = i / fps;
+        scene.render(t);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(offscreen, 0, 0);
+        scene.overlay(ctx, t);
+        const data = canvas.toDataURL("image/png");
+        await fetch("/frame?scene=" + id + "&index=" + String(i).padStart(4, "0"), {
+          method: "POST",
+          body: data,
+        });
+      }
+      await fetch("/done", { method: "POST" });
+    </script>
+  </body>
+</html>

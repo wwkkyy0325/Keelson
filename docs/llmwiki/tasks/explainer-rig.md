@@ -60,3 +60,12 @@ film's claims and layout checked before anyone watches it.
 ## 7. Documentation — done
 
 - [x] ADR 0044; design and README list four rigs; changelog.
+
+## 8. 3D scenes — done
+
+- [x] `kit/scene3d.html` composes a WebGL layer under the 2D labels; Three.js
+      r160 is vendored (MIT); `render_scene` takes `page` and launches the
+      browser with SwiftShader. The flow field and camera are analytic and
+      seeded, and a 3D picture is labelled 示意.
+- Verify: `a_page_must_stay_under_the_kit`; the live 3D kit test; the AC
+      airflow pilot (12 s, 1080p) passed frames, subtitles and loudness.

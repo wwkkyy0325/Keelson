@@ -75,6 +75,11 @@ impl Tool for RenderSceneTool {
                     required: false,
                 },
                 ParamSpec {
+                    name: "page".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+                ParamSpec {
                     name: "out".to_owned(),
                     kind: ParamKind::String,
                     required: false,
@@ -86,6 +91,7 @@ impl Tool for RenderSceneTool {
     fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
         let root = PathBuf::from(args.require_str("root")?);
         let scene = args.require_str("scene")?.to_owned();
+        page_path(args)?;
         let out = frame_dir(&root, args)?;
         Ok(vec![PermissionRequest {
             tool: "render_scene".to_owned(),
@@ -140,14 +146,19 @@ impl Tool for RenderSceneTool {
             }
             Err(error) => return ToolResult::failure(ctx.call_id, "render_scene", error),
         };
+        let page = match page_path(&args) {
+            Ok(page) => page,
+            Err(error) => return ToolResult::failure(ctx.call_id, "render_scene", error),
+        };
         let out = match frame_dir(&root, &args) {
             Ok(out) => out,
             Err(error) => return ToolResult::failure(ctx.call_id, "render_scene", error),
         };
 
-        let rendered =
-            tokio::task::spawn_blocking(move || render(&root, &scene, duration_ms, fps, &out))
-                .await;
+        let rendered = tokio::task::spawn_blocking(move || {
+            render(&root, &page, &scene, duration_ms, fps, &out)
+        })
+        .await;
         match rendered {
             Ok(Ok(text)) => ToolResult::success(ctx.call_id, "render_scene", text),
             Ok(Err(error)) => {
@@ -232,6 +243,33 @@ fn integer(args: &ToolArgs, name: &str, default: Option<i64>) -> Result<i64, Too
     }
 }
 
+fn page_path(args: &ToolArgs) -> Result<String, ToolError> {
+    let page = match args.get("page") {
+        Some(ArgValue::String(page)) if !page.trim().is_empty() => page.trim().to_owned(),
+        Some(ArgValue::String(_)) => {
+            return Err(ToolError::invalid_arguments("`page` is empty"));
+        }
+        Some(other) => {
+            return Err(ToolError::invalid_arguments(format!(
+                "`page` must be a string, got {}",
+                other.kind().as_str()
+            )));
+        }
+        None => "kit/scene.html".to_owned(),
+    };
+    let path = Path::new(&page);
+    if path.is_absolute()
+        || page.contains("..")
+        || !page.starts_with("kit/")
+        || !page.ends_with(".html")
+    {
+        return Err(ToolError::invalid_arguments(
+            "`page` must be an HTML file under `kit/`, like `kit/scene3d.html`",
+        ));
+    }
+    Ok(page)
+}
+
 fn frame_dir(root: &Path, args: &ToolArgs) -> Result<PathBuf, ToolError> {
     let scene = args.require_str("scene")?;
     match args.get("out") {
@@ -254,6 +292,7 @@ struct SinkState {
 
 fn render(
     root: &Path,
+    page: &str,
     scene: &str,
     duration_ms: u64,
     fps: u32,
@@ -262,7 +301,7 @@ fn render(
     let root = root
         .canonicalize()
         .map_err(|error| format!("cannot open {}: {error}", root.display()))?;
-    let scene_html = root.join("kit").join("scene.html");
+    let scene_html = root.join(page);
     if !scene_html.is_file() {
         return Err(format!(
             "{} is missing; the project needs the explainer kit",
@@ -306,7 +345,7 @@ fn render(
     let profile =
         std::env::temp_dir().join(format!("keelson-edge-{}-{}", std::process::id(), now_ms()));
     let url = format!(
-        "http://127.0.0.1:{port}/kit/scene.html?scene={scene}&duration={:.3}&fps={fps}",
+        "http://127.0.0.1:{port}/{page}?scene={scene}&duration={:.3}&fps={fps}",
         duration_ms as f64 / 1000.0
     );
     let mut child = launch_browser(&profile, &url)?;
@@ -806,6 +845,31 @@ mod tests {
     }
 
     #[test]
+    fn a_page_must_stay_under_the_kit() {
+        let args = ToolArgs::new();
+        assert_eq!(
+            page_path(&args).expect("the default page"),
+            "kit/scene.html"
+        );
+
+        let mut args = ToolArgs::new();
+        args.insert("page", ArgValue::String("kit/scene3d.html".to_owned()));
+        assert_eq!(page_path(&args).expect("a 3D page"), "kit/scene3d.html");
+
+        for bad in [
+            "../scene.html",
+            "/kit/scene.html",
+            "kit/../secret.html",
+            "scenes/01.html",
+            "kit/scene.js",
+        ] {
+            let mut args = ToolArgs::new();
+            args.insert("page", ArgValue::String(bad.to_owned()));
+            assert!(page_path(&args).is_err(), "{bad} should be refused");
+        }
+    }
+
+    #[test]
     fn a_static_request_cannot_leave_the_root() {
         let temp = tempfile::TempDir::new().expect("a temp dir");
         let root = temp.path().join("project");
@@ -930,6 +994,44 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("duration:"), "{text}");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs Microsoft Edge"]
+    async fn the_shipped_kit_renders_a_3d_scene() {
+        let kit = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("kits")
+            .join("explainer");
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let root = temp.path().join("project");
+        copy_dir(&kit.join("kit"), &root.join("kit"));
+        std::fs::create_dir_all(root.join("scenes")).expect("the scenes dir");
+        std::fs::copy(
+            kit.join("scenes/scene3d-template.js"),
+            root.join("scenes/01.js"),
+        )
+        .expect("the 3D template");
+
+        let context = ctx(temp.path());
+        let mut args = ToolArgs::new();
+        args.insert("root", ArgValue::String(root.display().to_string()));
+        args.insert("scene", ArgValue::String("01".to_owned()));
+        args.insert("duration_ms", ArgValue::Integer(500));
+        args.insert("fps", ArgValue::Integer(30));
+        args.insert("page", ArgValue::String("kit/scene3d.html".to_owned()));
+        let rendered = RenderSceneTool::new().call(args, &context).await;
+        assert!(rendered.is_success(), "{:?}", rendered.error());
+
+        let folder = root.join("out/frames/01");
+        let frames: Vec<PathBuf> = std::fs::read_dir(&folder)
+            .expect("the frame dir")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("png"))
+            .collect();
+        assert_eq!(frames.len(), 15, "half a second at 30 fps");
+        let first = std::fs::read(&frames[0]).expect("a frame");
+        assert!(first.len() > 1_000, "the 3D frame is not blank");
     }
 
     #[tokio::test]

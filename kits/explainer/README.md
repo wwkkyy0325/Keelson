@@ -5,7 +5,9 @@ write the script and the scenes for the topic.
 
 ```
 kit/design.js       palette, type scale, motion helpers, the mascot
-kit/scene.html      the frame harness: draws t, posts one PNG per frame
+kit/scene.html      the 2D frame harness: draws t, posts one PNG per frame
+kit/scene3d.html    the 3D harness: WebGL layer composited under 2D labels
+kit/three.module.min.js  Three.js r160 (MIT), vendored for offline renders
 kit/timeline.py     narration -> measured durations -> timeline + subtitles
 kit/assemble.py     frames + voice -> scenes -> film, burns subtitles
 kit/qa.py           data, blank frames, subtitles, video and loudness checks
@@ -16,7 +18,7 @@ data/check_claims.py  checks the evidence ledger; qa.py runs it
 data/model.json     what the scenes draw
 claims.json         one entry per claim: fact, interpretation or value
 assets/             files the user supplied, with their license in assets.md
-scenes/*.js         one file per scene, each a draw(ctx, t) function
+scenes/*.js         one file per scene: draw(ctx, t), or createScene for 3D
 storyboard.example.json  the contract's shape; copy to storyboard.json
 ```
 
@@ -49,6 +51,21 @@ python kit/qa.py --video      # gates + contact sheet
   on screen must be in that scene's narration; durations are never typed.
 - Pictures are scenes plus user-supplied `assets/`; the rig does not download
   images, and every asset records its license.
+
+## 3D scenes
+
+A 3D scene uses `kit/scene3d.html` and exports `createScene({ THREE, renderer,
+width, height, fps, duration })` returning `render(t)` and `overlay(ctx, t)`.
+Render it with the tool's `page` argument:
+
+```
+render_scene(root, scene, duration_ms, fps, page: "kit/scene3d.html")
+```
+
+WebGL runs on SwiftShader in the headless browser, so no GPU is required. The
+flow, camera and particles must be analytic and seeded, and a 3D picture is
+labelled 示意 unless a real simulation produced it. Three.js is vendored at
+r160 under the MIT license.
 
 ## The example data
 
