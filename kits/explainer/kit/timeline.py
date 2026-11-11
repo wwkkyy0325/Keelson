@@ -55,8 +55,28 @@ def parse_srt(text: str):
         if len(lines) < 3:
             continue
         start, end = lines[1].split(" --> ")
-        items.append((to_seconds(start), to_seconds(end), " ".join(lines[2:])))
+        items.append((to_seconds(start), to_seconds(end), chr(10).join(lines[2:])))
     return items
+
+
+PUNCT = "，。；：、！？,;:"
+
+
+def wrap(text: str, limit: int = 22) -> str:
+    """Split a long cue into two readable lines, at a punctuation mark."""
+    if len(text) <= limit:
+        return text
+    candidates = [index + 1 for index, char in enumerate(text) if char in PUNCT]
+    max_cut = max(1, len(text) - limit)
+    feasible = [cut for cut in candidates if 0 < cut <= max_cut]
+    if feasible:
+        middle = len(text) // 2
+        cut = min(feasible, key=lambda cut: abs(cut - middle))
+    elif candidates:
+        cut = min(candidates, key=lambda cut: abs(cut - len(text) // 2))
+    else:
+        cut = max_cut
+    return text[:cut].strip() + chr(10) + text[cut:].strip()
 
 
 def main() -> int:
@@ -105,7 +125,7 @@ def main() -> int:
             }
         )
         for a, b, text in parse_srt(srt.read_text(encoding="utf-8-sig")):
-            subtitles.append((start + LEAD + a, start + LEAD + b, text))
+            subtitles.append((start + LEAD + a, start + LEAD + b, wrap(text)))
         cursor += duration
 
     # A cue never overlaps the next one: two lines at once are unreadable.
