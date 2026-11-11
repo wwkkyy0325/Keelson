@@ -2250,3 +2250,11 @@ duration line is what makes the cost of a check measurable at all.
 - A live run on the argumentative topic "为什么很多人觉得整个社会都在'去责任化'" produced 14 claims (10 facts, 3 interpretations, 1 value), two conflicts carried in the open, five unevidenced sub-claims deleted, and a six-scene script and storyboard. The claim gate passed.
 - The source check found one dead citation; a repair turn replaced it, and all 15 sources now resolve. The run also showed that a null `output` and a `format.rate` were not handled; both are fixed in the kit.
 - The gate now also rejects a stitched quote, a revealed fact without a `source_card`, a duration typed into the storyboard, and a ledger/scene mismatch.
+
+## 2026-11-11 — thinking-mode tool follow-ups work
+
+- Kernel 0.2.15 keeps a signed Anthropic thinking block with the tool-call
+  message and sends it first on the follow-up, including an empty signed
+  block. `deepseek-flash` no longer rejects the second model call with 400.
+- The live probe `thinking_probe` uses the rig's own model and passes; the
+  explainer eval no longer needs the `deepseek-chat` workaround.

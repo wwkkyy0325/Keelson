@@ -124,10 +124,9 @@ async fn a_topic_becomes_an_evidence_dossier_and_a_storyboard() {
         extra_roots: Vec::new(),
         path: repo.join("rigs/explainer.toml"),
     };
-    // `deepseek-flash` runs in thinking mode, and the kernel's Anthropic
-    // adapter does not yet echo thinking blocks back on a tool follow-up.
-    // Setting KEELSON_EVAL_MODEL=deepseek-chat runs the same endpoint without
-    // that mode; the default keeps the rig's own model.
+    // An optional override pins a different model. Since kernel 0.2.15 the
+    // rig's own `deepseek-flash` also survives a thinking-mode tool follow-up,
+    // so the default path is the normal one.
     let model = std::env::var("KEELSON_EVAL_MODEL")
         .ok()
         .map(|name| ModelOverride {

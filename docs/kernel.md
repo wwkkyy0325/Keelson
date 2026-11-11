@@ -7,12 +7,12 @@ model adapter of its own; those come from the Keel crates.
 
 | What | Value |
 |---|---|
-| Kernel release | `v0.2.14` |
-| `KERNEL_VERSION` | `0.2.14` |
+| Kernel release | `v0.2.15` |
+| `KERNEL_VERSION` | `0.2.15` |
 | `EVENT_FORMAT_VERSION` | `1` |
 | `SNAPSHOT_VERSION` | `1` |
 | Source during joint development | `path = "../Keel/crates/keel-*"` |
-| Source for a frozen build | `git = "file:///D:/workspace-new/wwkkyy0325/Keel", tag = "v0.2.14"` |
+| Source for a frozen build | `git = "file:///D:/workspace-new/wwkkyy0325/Keel", tag = "v0.2.15"` |
 
 `Cargo.toml` uses path dependencies while the kernel and this host change
 together. A release build switches every `keel-*` entry to the tag and never to
