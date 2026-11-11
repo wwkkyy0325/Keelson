@@ -41,7 +41,10 @@ checkable like any other.
 - The kit grows by about 670 KB (Three.js) and a 3D page; a 2D-only film pays
   nothing at runtime.
 - WebGL runs on the CPU, so a long 3D shot renders slower than a flat one;
-  the pilot rendered 11.8 s of 1080p in about 16 s.
+  the pilot rendered 11.8 s of 1080p in about 38 s.
+- The page blooms the WebGL layer with a squared, blurred 2D pass before the
+  labels. It roughly doubles the render time and is what makes a streak read
+  as light in air rather than a line.
 - Three.js is the only new third-party dependency in the kit; it is scoped to
   the scene page and has no host code.
 - A 3D scene is still not a simulation: the particles illustrate a model, and

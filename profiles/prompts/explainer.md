@@ -66,6 +66,17 @@ Evidence and argument:
   "kit/scene3d.html")`.
 - The camera, the flow field and every particle path are analytic and seeded;
   the same t renders the same frame. Describe the model in the storyboard.
+- Keep the subject inside the frame: fit the camera to a rectangle that leaves
+  the title and subtitle bands clear, and re-fit as the camera drifts. A near
+  corner that clips the frame is a defect, not a crop.
+- A closed room is closed in the model, not by clamping. Use a field whose
+  normal velocity vanishes at the walls, and route the return air through an
+  intake that respawns it at the vent; clamping particles to a wall leaves a
+  bright line of stuck particles.
+- Anchor labels to projected 3D points and draw each arrow from the local field
+  direction, so a label cannot contradict the flow it names.
+- Draw a parcel as a short curved trail and fade it with vertex alpha. Dimming
+  the colour instead paints black lines over a dark scene.
 - A 3D picture is 示意 unless a real simulation produced it. Say so on screen
   and never call it CFD; if physical accuracy matters, cite the simulation or
   the measurements.

@@ -67,6 +67,19 @@ flow, camera and particles must be analytic and seeded, and a 3D picture is
 labelled 示意 unless a real simulation produced it. Three.js is vendored at
 r160 under the MIT license.
 
+Boundaries are part of the scene:
+
+- Fit the camera to a safe rectangle, title and subtitle bands excluded, and
+  re-fit as the camera drifts. Do not let the near floor corner clip.
+- Keep a closed room closed in the model: a stream function whose normal
+  velocity vanishes at the walls, plus an intake that returns air to the vent.
+  Clamping particles to a wall leaves a visible line of stuck particles.
+- Anchor labels to projected 3D points and draw the arrows from the local
+  field direction.
+- The page squares the 3D layer, blurs it and adds it back before the labels,
+  so bright streaks glow and the text stays sharp. Fade a trail with vertex
+  alpha, not a dimmed colour: a dimmed colour paints black lines.
+
 ## The example data
 
 `data/spec.json` is a convolutional-network demo so the kit works out of the

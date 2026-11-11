@@ -69,3 +69,31 @@ film's claims and layout checked before anyone watches it.
       seeded, and a 3D picture is labelled 示意.
 - Verify: `a_page_must_stay_under_the_kit`; the live 3D kit test; the AC
       airflow pilot (12 s, 1080p) passed frames, subtitles and loudness.
+
+## 9. 3D boundaries and pilot polish — done
+
+- [x] The camera fits the room to a safe rectangle (title and subtitle bands
+      excluded) and recentres it vertically, so the near floor corner no
+      longer clips and the room fills the band instead of sitting small and
+      low. The fit repeats per frame as the camera drifts.
+- [x] The flow is one closed stream function whose normal velocity vanishes on
+      every wall, with an intake that returns air to the vent. The old clamp
+      is gone; particles no longer stick to a ceiling plane.
+- [x] Temperature relaxes to a spatial ambient field, so the colour shows
+      where the air is rather than when the particle was born. A slow seeded
+      noise breaks the cold/warm boundary into wisps.
+- [x] Supply air leaves the vent with a decaying impulse, so the jet is
+      visible instead of the plume appearing from nowhere.
+- [x] Parcels draw as curved three-segment trails faded with vertex alpha;
+      a dimmed colour painted black lines over the dark room.
+- [x] The page squares the 3D layer, blurs it and adds it back before the
+      labels: bright streaks glow, the walls do not fog, text stays sharp.
+      The safe box shrinks five percent over the shot for a slow push-in.
+- [x] The unit gained a display, a contact shadow and a vent detail; the floor
+      and grid were lifted so the room does not float.
+- [x] Labels are anchored to projected 3D points and their arrows come from
+      the local field direction, so a label cannot contradict the flow.
+- Verify: pilot re-rendered (355 frames, 38 s); consecutive-frame difference
+      has no spike (mean 3.45, max 3.73 grey levels); the kit's live 3D test
+      passes with the bloom page; QA passed at 12.00 s, 1080p, −18.04 LUFS;
+      the film is 16 MB.

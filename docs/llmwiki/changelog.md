@@ -2275,3 +2275,27 @@ duration line is what makes the cost of a check measurable at all.
   airflow pilot (particle field, camera drift, labels) passed QA.
 - A 3D picture is labelled 示意 unless a real simulation produced it; the
   scene's flow and camera are analytic and seeded, so frames are repeatable.
+
+## 2026-11-11 — 3D scene boundaries
+
+- The explainer's 3D rules now require a fitted camera (title and subtitle
+  bands kept clear), a closed model instead of wall clamping, and labels
+  anchored to projected points with arrows taken from the local field.
+- The AC airflow pilot was rebuilt to follow them: the stream function is
+  tangent to every wall, return air leaves through the intake and respawns at
+  the vent, temperature relaxes to a spatial field, and parcels draw as short
+  streaks. The room now fits the safe band and the labels follow the flow.
+
+## 2026-11-11 — the 3D airflow shot, finished
+
+- The AC pilot was taken to its final look: curved three-segment trails faded
+  with vertex alpha, a seeded temperature noise that breaks the cold/warm
+  boundary into wisps, a decaying supply impulse so the cold jet leaves the
+  vent, a squared and blurred bloom added before the labels, a five percent
+  push-in, a detailed unit with a display and contact shadow, and a lifted
+  floor. The bloom lives in `kit/scene3d.html`, so every 3D scene gets it.
+- The alpha fade is a rule now: dimming a trail's colour painted black lines
+  over the dark room. The prompt and the kit README say so.
+- Verify: 355 frames in 38 s; the frame-to-frame difference has no spike
+  (mean 3.45, max 3.73 grey levels); the kit's live 3D test passes; QA at
+  12.00 s, 1080p, −18.04 LUFS, 16 MB.

@@ -54,12 +54,38 @@
       });
       await document.fonts.ready;
 
+      // A soft bloom over the 3D layer only. The layer is squared before the
+      // blur so the dark walls do not fog over: only the bright heads glow.
+      // Labels are drawn afterwards, so they stay sharp.
+      const bloom = document.createElement("canvas");
+      bloom.width = canvas.width;
+      bloom.height = canvas.height;
+      const bloomContext = bloom.getContext("2d");
+      const glow = document.createElement("canvas");
+      glow.width = canvas.width;
+      glow.height = canvas.height;
+      const glowContext = glow.getContext("2d");
+
       const count = Math.max(1, Math.round(duration * fps));
       for (let i = 0; i < count; i++) {
         const t = i / fps;
         scene.render(t);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(offscreen, 0, 0);
+        bloomContext.clearRect(0, 0, bloom.width, bloom.height);
+        bloomContext.drawImage(offscreen, 0, 0);
+        bloomContext.globalCompositeOperation = "multiply";
+        bloomContext.drawImage(offscreen, 0, 0);
+        bloomContext.globalCompositeOperation = "source-over";
+        glowContext.clearRect(0, 0, glow.width, glow.height);
+        glowContext.filter = "blur(16px)";
+        glowContext.drawImage(bloom, 0, 0);
+        glowContext.filter = "none";
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        ctx.globalAlpha = 0.55;
+        ctx.drawImage(glow, 0, 0);
+        ctx.restore();
         scene.overlay(ctx, t);
         const data = canvas.toDataURL("image/png");
         await fetch("/frame?scene=" + id + "&index=" + String(i).padStart(4, "0"), {
