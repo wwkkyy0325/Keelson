@@ -47,8 +47,16 @@ A load (parse) measured 21 ms in a debug build; every send did one
   reads `current.archived` and calls no `Store::load`; the delete path still
   reads the document, because it runs after the conversation closes.
 
-## 4. Decide on the snapshot (kernel)
+## 4. Decide on the snapshot (kernel) — done
 
-- [ ] The 318k kernel snapshot is owned by `keel-core`; decide whether to
-      trim segment entries, or split the host document into an index and
-      per-turn blobs. Either needs an ADR before code.
+- [x] Measured a real 1.1 MB document: the snapshot was 434k characters and
+      423k of them were the verbatim assistant entries of one segment that
+      never sealed (eleven entries of about 38k, mostly tool summaries).
+      Splitting the host document would not have helped: the snapshot is one
+      field.
+- [x] Kernel ADR 0052: one entry is capped at 12 000 characters with a note,
+      and a segment a summary covers drops its transcript while keeping its
+      record, memo and a bounded recall excerpt. Restore applies both rules,
+      so an old document shrinks on its next save.
+      Verify: kernel tests for the cap, the restore cap, the covered-segment
+      drop and recall through the stored excerpt.

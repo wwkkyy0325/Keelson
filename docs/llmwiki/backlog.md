@@ -6,9 +6,11 @@ Cases that are not scheduled yet, with the evidence and the first step.
 
 Queued 2026-11-10. Task: `tasks/session-document-growth.md`.
 
-Step 4 is open: the kernel snapshot. Steps 1–3 are done — new turns store no
-event stream, tool output and thinking are capped, and the send path no longer
-parses the document.
+All four steps are done (kernel 0.2.13, ADR 0052): no event stream is stored
+for new turns, tool output and thinking are capped, the send path reads a
+cached archive flag, and the kernel bounds one history entry while a
+summary-covered segment drops its transcript. A real 1.1 MB document shrinks
+on its next save.
 
 A live 8-turn conversation reached 1.5 MB on disk. Every send parses the
 document (`is_archived`) and every turn rewrites it; a parse measured 21 ms

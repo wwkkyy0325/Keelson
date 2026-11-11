@@ -2186,3 +2186,15 @@ duration line is what makes the cost of a check measurable at all.
   engine owns the screens folder layout and exposes it to the host.
 - A capture confirmation names the window without calling it a command
   (kernel 0.2.12); the screen capture requests a write scoped to its folder.
+
+## 2026-11-11 — the snapshot stops growing with every turn
+
+- Measured a real 1.1 MB conversation: 423k of its 434k snapshot was the
+  verbatim assistant transcript of one segment that never sealed (eleven
+  entries of about 38k, mostly tool summaries). Splitting the host document
+  would not shrink that field.
+- Kernel 0.2.13 (ADR 0052): one entry is capped at 12 000 characters with a
+  note; a segment a summary covers drops its transcript while keeping its
+  record, memo and a bounded recall excerpt. Restore applies both rules, so
+  an old document shrinks on its next save. Host tests still pass against the
+  new kernel.
