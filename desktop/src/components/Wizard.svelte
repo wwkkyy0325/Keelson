@@ -32,7 +32,9 @@
   let revealKey = $state(false);
   let hasKey = $state(untrack(() => initial.hasKey));
   let keyProvider = $state(untrack(() => initial.keyProvider));
-  let manual = $state(false);
+  let manual = $state(
+    untrack(() => initial.providerId === "custom" || !!initial.manual),
+  );
   let providerKind = $state(
     untrack(() =>
       initial.provider === "anthropic-compatible"
@@ -140,6 +142,7 @@
         "模型列表加载超时；请点刷新重试",
       );
       catalog = value;
+      if (manual) return;
       const current = findSelection(value, selectedProviderId, selectedModelId);
       if (current) return;
       const choice = defaultSelection(value, initial, !initial.onboarded);

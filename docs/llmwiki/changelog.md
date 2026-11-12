@@ -2595,3 +2595,6 @@ A 128k local model was being sent the profile's one-million-token window, and
 a turn on a dev root spent minutes hashing unrelated directories before the
 first model call. Both are configuration and scope problems, not model
 problems.
+- The settings panel opens a custom endpoint on the manual tab instead of
+  falling back to the catalog's default provider; the saved local endpoint is
+  now visible when the panel reopens.

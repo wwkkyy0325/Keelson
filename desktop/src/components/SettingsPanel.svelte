@@ -146,6 +146,9 @@
         "设置加载超时；请关闭后重试",
       );
       setup = state;
+      // A custom endpoint is not in the catalog; keep the manual form open
+      // instead of silently showing the catalog's default provider.
+      manual = state.providerId === "custom" || !!state.manual;
       saved = {
         kind: state.provider,
         providerId: state.providerId,
@@ -203,6 +206,7 @@
   /// Picks a model from the catalog for the saved connection, or falls back
   /// to the manual fields when nothing matches.
   function applySelection(value: ModelCatalog, state: SetupState): void {
+    if (manual) return;
     const current = findSelection(value, selectedProviderId, selectedModelId);
     if (current) return;
     const choice = defaultSelection(value, state, !state.model);
