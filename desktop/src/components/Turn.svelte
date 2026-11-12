@@ -23,10 +23,26 @@
 
   let passed = $derived(turn.verification?.passed ?? turn.verificationPassed);
   let copied = $state<string | null>(null);
+  /// A collapsed `<details>` still puts its text in the DOM, and a long turn
+  /// carries hundreds of tool rows. Render a row's payload only once it is
+  /// opened.
+  let openTools = $state<Set<number>>(new Set());
+
+  function setToolOpen(index: number, open: boolean): void {
+    const next = new Set(openTools);
+    if (open) next.add(index);
+    else next.delete(index);
+    openTools = next;
+  }
   let added = $derived(changes.reduce((total, change) => total + change.added, 0));
   let removed = $derived(
     changes.reduce((total, change) => total + change.removed, 0),
   );
+  /// A generated artifact tree can list thousands of paths; render a bounded
+  /// sample and keep the true count in the header.
+  const SHOWN_CHANGES = 200;
+  let shownChanges = $derived(changes.slice(0, SHOWN_CHANGES));
+  let hiddenChanges = $derived(Math.max(0, changes.length - SHOWN_CHANGES));
 
   async function copy(text: string, key: string): Promise<void> {
     try {
@@ -62,7 +78,10 @@
   );
   let cacheShare = $derived(
     usage.inputTokens > 0
-      ? Math.round((usage.cachedInputTokens / usage.inputTokens) * 100)
+      ? Math.min(
+          100,
+          Math.round((usage.cachedInputTokens / usage.inputTokens) * 100),
+        )
       : 0,
   );
 
@@ -125,8 +144,15 @@
           </div>
         </details>
       {/if}
-      {#each turn.tools as tool}
-        <details class="tool">
+      {#each turn.tools as tool, index}
+        <details
+          class="tool"
+          ontoggle={(event) =>
+            setToolOpen(
+              index,
+              (event.currentTarget as HTMLDetailsElement).open,
+            )}
+        >
           <summary>
             <span
               class:fail={tool.ok === false}
@@ -142,17 +168,19 @@
               <span class="tool-time">{took(tool.durationMs, tool.ok)}</span>
             {/if}
           </summary>
-          {#if tool.args}
-            <div class="tool-detail">
-              <span class="tool-label">{$t("turn.toolArgs")}</span>
-              <pre>{tool.args}</pre>
-            </div>
-          {/if}
-          {#if tool.output}
-            <div class="tool-detail">
-              <span class="tool-label">{$t("turn.toolOutput")}</span>
-              <pre>{tool.output}</pre>
-            </div>
+          {#if openTools.has(index)}
+            {#if tool.args}
+              <div class="tool-detail">
+                <span class="tool-label">{$t("turn.toolArgs")}</span>
+                <pre>{tool.args}</pre>
+              </div>
+            {/if}
+            {#if tool.output}
+              <div class="tool-detail">
+                <span class="tool-label">{$t("turn.toolOutput")}</span>
+                <pre>{tool.output}</pre>
+              </div>
+            {/if}
           {/if}
         </details>
       {/each}
@@ -176,7 +204,7 @@
                   <span class="change-add">+{added}</span>
                   <span class="change-del">−{removed}</span>
                 </summary>
-                {#each changes as change}
+                {#each shownChanges as change}
                   <div class="change-row">
                     <span class="change-status">{change.status}</span>
                     <span class="change-path" title={change.path}>{change.path}</span>
@@ -184,6 +212,14 @@
                     <span class="change-del">−{change.removed}</span>
                   </div>
                 {/each}
+                {#if hiddenChanges > 0}
+                  <div class="change-row change-more">
+                    <span></span>
+                    <span class="change-path">
+                      {$t("turn.moreChanges", { count: hiddenChanges })}
+                    </span>
+                  </div>
+                {/if}
               </details>
             </div>
           {/if}
@@ -265,6 +301,11 @@
             <span title={$t("turn.outputTokensHint")}>
               ↓{compactCount(usage.outputTokens)}
             </span>
+            {#if turn.modelCalls > 0}
+              <span title={$t("turn.callsHint")}>
+                {$t("turn.calls", { count: turn.modelCalls })}
+              </span>
+            {/if}
             {#if usage.cachedInputTokens > 0}
               <span title={$t("turn.cacheHint")}>
                 {$t("turn.cacheShare", { percent: cacheShare })}

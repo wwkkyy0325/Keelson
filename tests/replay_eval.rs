@@ -293,6 +293,7 @@ async fn a_recorded_transcript_replays_through_the_engine() {
         permission: None,
         acceptance: false,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

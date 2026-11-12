@@ -2299,3 +2299,176 @@ duration line is what makes the cost of a check measurable at all.
 - Verify: 355 frames in 38 s; the frame-to-frame difference has no spike
   (mean 3.45, max 3.73 grey levels); the kit's live 3D test passes; QA at
   12.00 s, 1080p, −18.04 LUFS, 16 MB.
+
+## 2026-11-11 — mixed films render from the storyboard
+
+- `render_film` renders a whole film in one call: it reads the storyboard and
+  the measured timeline, chooses `kit/scene.html` or `kit/scene3d.html` from
+  each scene's `asset_type`, and validates ids and durations. `render_scene`
+  stays for one scene while iterating.
+- The prompt and kit README now state the editorial split between the two
+  registers: 2D carries the model, 3D carries space; alternate at topic
+  boundaries; one 3D space per section; about a third of the runtime unless
+  the topic is spatial.
+- The kit ships `GLOSSARY.md`, an English-to-Chinese mapping of its terms.
+- ADR 0056 records the decision. The live mixed test renders a 2D and a 3D
+  scene through one call.
+
+## 2026-11-11 — the first live mixed film passes acceptance
+
+- Keelson ran the responsibility brief end to end in one live turn: 86.29 s,
+  7 scenes (06 is `scene3d` at 13.88 s), 13 claims (9 fact, 2 interpretation,
+  2 value), 8 reachable sources, 13 cues, -16.18 LUFS. The live film test
+  passed; every source resolved.
+- The first cut had tofu subtitles: the shell ran under WSL, and libass there
+  does not index the mounted Windows fonts. `kit/assemble.py` now adds
+  `fontsdir=/mnt/c/Windows/Fonts` under WSL and stops if no CJK font exists;
+  the film was re-burned and the subtitles render.
+
+## 2026-11-11 — a stuck retry, a frozen clock, a Stop button
+
+- The kernel retry for a malformed tool call now carries a correction: the
+  driver tells the model that its arguments were not valid JSON and asks for
+  a complete call, instead of resending the same context (Keel ADR 0055).
+  The parse error also names a bounded sample of what arrived, and the
+  OpenAI-wire accumulator accepts cumulative argument resends.
+- The background row no longer runs a local clock at all: it shows the
+  engine's measured `duration_ms`, refreshed by the one-second poll. A local
+  ticker competed with the poll (and was restarted on every sync, so it could
+  starve), and the poll itself could stop after one transient error. The view
+  now reconciles with the engine on every session open, so a task that
+  outlived a switch or a reconnect reappears instead of waiting for an event
+  that will never replay; a failed poll retries on the next tick.
+- A new registry continues after the `bg-N.log` handles already on disk, so a
+  restarted app no longer appends a new task to an older handle's log.
+- A running background command has a Stop button. The engine exposes
+  `stop_background`, the kernel kills the process tree and keeps the task
+  registered so the model still receives its exit at the next safe point
+  (Keel ADR 0056).
+- A webview reload during a running turn stranded that turn: the engine
+  refuses to open a session while it runs, and a boot failure sent an
+  already-onboarded app to the setup wizard, where the running turn has no
+  cancel control. An onboarded boot failure now shows a retry screen with
+  "cancel the running turn and retry"; the wizard is reserved for a first
+  run.
+- A background-reconcile effect read `$session.epoch` directly. The store
+  replaces its value on every dispatch, so the effect re-ran on every state
+  change and its own `background-synced` dispatch fed it again: an async IPC
+  loop that held the webview renderer at 100% CPU. The effect now depends on
+  a `$derived` value, and the poll effect depends on a derived boolean, so
+  neither re-runs unless the value it names changes. Measured on the live
+  app: renderer CPU fell from ~100% to ~1.6%.
+- A collapsed tool row no longer mounts its arguments and output. A long turn
+  carries hundreds of rows; rendering every hidden payload put megabytes of
+  text in the DOM and made the transcript sluggish to load and scroll. The
+  row now renders its payload when it is opened.
+- `render_scene` and `render_film` declared themselves read-only while asking
+  for write access to the frame folder; `screen_capture` had the same pairing.
+  The dispatcher rejects that combination before the permission gate, so even
+  full auto saw a denial with no prompt. All three now declare `Mutating`,
+  which matches the write they request.
+- The live tool poller cloned the whole turn's event log every 120 ms. It now
+  reads only records after the last sequence it emitted (`EventLog::since`),
+  so a tool-heavy turn no longer pays for the events it has already shown.
+- The turn usage line's tooltips now say the number is the sum over every
+  model call (cache hits included); the cache share is clamped at 100%. The
+  large input totals are the conversation resent per tool round, not a leak.
+- The running turn now shows its own cost line: elapsed time, input/output
+  tokens, model calls and cache share, updated as each model call finishes
+  (`keelson:model-finished`). A finished turn's meta shows the model call
+  count (`52x`) as well.
+- `StoredTurn` records `model_calls`; documents written before the field
+  existed recover the count from their `model_finished` events, the same way
+  old usage totals are recovered.
+- `render_scene`'s relative `out` is now resolved against the project root.
+  It was used as a literal relative path, so frames landed next to the app
+  binary (`desktop/src-tauri/out/...`) while the caller looked under the
+  project; `view_image` then reported the frame missing.
+- The scene render budget now comes from the frame count (one second per
+  frame plus a minute, capped at 30 minutes) instead of ten times the scene's
+  wall-clock length. A 14-second 30 fps scene is 413 frames and can take
+  minutes in the software headless browser; the old 198-second budget cut it
+  off at 225 frames. Timeout errors name the output directory.
+- The render tools declare a 40-minute call timeout. The session's 300-second
+  tool timeout killed a 413-frame render at 300 seconds even though the
+  renderer's own budget allowed longer. The kernel's `Tool::timeout()` lets a
+  tool raise its ceiling (Keel ADR 0057); the dispatcher takes the larger of
+  the session limit and the declared one. `render_scene` and `render_film`
+  use it, and the renderer's internal budget still fires first.
+- The scene page now reports its own failure: the frame loop is wrapped in a
+  try/catch that posts `/error?message=...`, and a frame POST is retried
+  three times before giving up. A rejected fetch or a throwing `draw` used to
+  stop the loop silently while the browser stayed alive, so the renderer
+  waited out its whole budget.
+- Frames travel as PNG blobs again (`canvas.toBlob`) instead of base64 data
+  URLs; the sink accepts both, so an older kit copy still renders. That skips
+  the base64 detour and its garbage on every frame.
+- The render loop fails after 90 seconds without a new frame, naming the last
+  frame it received, instead of waiting for the multi-minute budget.
+- A tool call whose arguments are not valid JSON is now a failed tool row the
+  model can correct, not a turn failure (Keel ADR 0058). A 303-second turn
+  with 30 model calls died on an `edit_file` call that wrote raw code as the
+  `new` value; the retry repeated it. The model now sees the parse error and
+  the received sample as the tool result, and the turn continues.
+
+## 2026-11-11 — a local model can use DeepSeek for the web tools
+
+- A saved DeepSeek key now serves `web_search` and `web_fetch` even when the
+  chat model is a local OpenAI-compatible server. The backend used to be
+  derived from the chat base URL, so a local model got only the plain local
+  `web_fetch`, and `web_search` was dropped from the visible set.
+- `OpenRequest` carries `search_key`; the desktop loads it from the DeepSeek
+  keychain slot when a session opens. The key stays in memory and never
+  reaches a prompt, a log or a stored turn.
+- The settings hint says the saved DeepSeek key takes precedence over the
+  SearXNG URL.
+
+### Why
+
+The local Strata server has no search endpoint. A user who runs `q2_0`
+locally still needs provider-quality search, and the DeepSeek key is already
+in the keychain; the search backend should not depend on which model answers
+the turn.
+
+## 2026-11-11 — the explainer kit seeds itself
+
+- The desktop seeds `kits/explainer` into an explainer project when a
+  conversation opens. It writes only missing files, so an existing script,
+  claims, scenes and data are untouched.
+- The kit is embedded in the binary at build time (`build.rs` plus
+  `include_bytes!`), so neither a dev run nor a packaged app needs a separate
+  resource directory or a manual copy.
+- The explainer prompt no longer tells the model to ask the user to copy the
+  kit; a missing `kit/scene.html` is reported as an incomplete installation.
+
+### Why
+
+An empty project could not render: the model stopped before the script and
+asked the user to copy the kit by hand. The host knows where the kit is and
+can write it without touching anything the project already owns.
+
+## 2026-11-12 — quiet checkpoints, quiet consoles, release rigs
+
+- The shadow checkpoint repository excludes generated directories
+  (`.keel/`, `out/`, `node_modules/`, `target/`, `dist/`, `build/`,
+  virtualenvs and Python/Next caches). A render writes thousands of frames
+  under `out/`; every snapshot and diff walked them, one turn reported 15,785
+  changed files and the change list took a long time to load.
+- Existing shadow indexes drop the newly excluded paths once; stored turn
+  records are filtered on read, so old turns stop listing frames.
+- A turn's changed-file list renders at most 200 rows and keeps the true
+  count in the header.
+- Windows child processes — shell, background, git, `ffprobe`, the headless
+  browser and `taskkill` — are created with `CREATE_NO_WINDOW`. A release GUI
+  build no longer flashes a black console for every tool call (kernel ADR
+  0059).
+- Release builds from the source tree now find the repository's `rigs/`; the
+  search path was debug-only, so a release build reported
+  `找不到 rig 'explainer'`.
+
+### Why
+
+The nine seconds of a render's output are cheap to regenerate and expensive
+to checkpoint. The host should show the script and the scenes a turn changed,
+not every frame it drew, and a GUI app should not open a console for the
+commands it runs.

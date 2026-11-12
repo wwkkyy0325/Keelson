@@ -72,6 +72,7 @@ async fn a_frontend_change_skips_the_python_check() {
         permission: None,
         acceptance: true,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

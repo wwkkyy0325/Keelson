@@ -10,6 +10,7 @@
 //! video geometry. The model reads frames with `view_image`; neither tool
 //! inspects content.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -31,6 +32,8 @@ const MAX_HEADER_BYTES: usize = 16 * 1024;
 const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 /// Rendering longer than this is a mistake, not a film.
 const MAX_DURATION_MS: u64 = 10 * 60 * 1000;
+/// A page that produces no frame for this long is stuck, not slow.
+const STALL_WINDOW: Duration = Duration::from_secs(90);
 
 /// Renders one scene to `out/<index>.png` by asking the page for each frame.
 pub struct RenderSceneTool;
@@ -52,7 +55,10 @@ impl Tool for RenderSceneTool {
                           back; the tool writes 0000.png, 0001.png and so on. Look at a frame \
                           with view_image before assembling anything."
                 .to_owned(),
-            risk: RiskLevel::ReadOnly,
+            // The frames land in the workspace. A read-only declaration and a
+            // write request are contradictory, and the dispatcher refuses the
+            // pair before the permission gate sees it.
+            risk: RiskLevel::Mutating,
             params: vec![
                 ParamSpec {
                     name: "root".to_owned(),
@@ -99,6 +105,13 @@ impl Tool for RenderSceneTool {
             path: Some(out),
             detail: Some(format!("scene {scene}")),
         }])
+    }
+
+    fn timeout(&self) -> Option<Duration> {
+        // A 1080p frame costs a canvas draw and a PNG encode in a software
+        // headless browser; hundreds of frames can exceed the session's
+        // default tool timeout without being hung.
+        Some(Duration::from_secs(40 * 60))
     }
 
     async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
@@ -167,6 +180,279 @@ impl Tool for RenderSceneTool {
             Err(error) => ToolResult::failure(
                 ctx.call_id,
                 "render_scene",
+                ToolError::io(format!("the renderer did not finish: {error}")),
+            ),
+        }
+    }
+}
+
+/// Renders every scene in the storyboard, each from the page its `asset_type`
+/// names, at the durations the timeline measured.
+pub struct RenderFilmTool;
+
+impl RenderFilmTool {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct Storyboard {
+    #[serde(default)]
+    format: Option<StoryboardFormat>,
+    scenes: Vec<StoryboardScene>,
+}
+
+#[derive(serde::Deserialize)]
+struct StoryboardFormat {
+    #[serde(default)]
+    fps: Option<i64>,
+}
+
+#[derive(serde::Deserialize)]
+struct StoryboardScene {
+    id: String,
+    #[serde(default)]
+    asset_type: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct Timeline {
+    scenes: Vec<TimelineScene>,
+}
+
+#[derive(serde::Deserialize)]
+struct TimelineScene {
+    id: String,
+    duration: f64,
+}
+
+/// The page a scene is rendered from. `canvas` is the flat design kit;
+/// `scene3d` is the WebGL page. The storyboard decides, not the caller.
+fn page_for(asset_type: Option<&str>) -> Result<&'static str, ToolError> {
+    match asset_type.unwrap_or("canvas") {
+        "canvas" => Ok("kit/scene.html"),
+        "scene3d" => Ok("kit/scene3d.html"),
+        other => Err(ToolError::invalid_arguments(format!(
+            "`asset_type` must be `canvas` or `scene3d`, got `{other}`"
+        ))),
+    }
+}
+
+fn plain_scene(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+#[async_trait]
+impl Tool for RenderFilmTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema {
+            name: "render_film".to_owned(),
+            description: "Render every scene of a film in one call. Reads `storyboard.json` \
+                          and the measured durations in `out/timeline.json`, and renders each \
+                          scene from the page its `asset_type` names: `scene3d` uses \
+                          `kit/scene3d.html`, everything else `kit/scene.html`. Run \
+                          `python kit/timeline.py` first; check frames with view_image."
+                .to_owned(),
+            // Writes `out/frames/<scene>/`; see render_scene.
+            risk: RiskLevel::Mutating,
+            params: vec![
+                ParamSpec {
+                    name: "root".to_owned(),
+                    kind: ParamKind::String,
+                    required: true,
+                },
+                ParamSpec {
+                    name: "fps".to_owned(),
+                    kind: ParamKind::Integer,
+                    required: false,
+                },
+            ],
+        }
+    }
+
+    fn permission_requests(&self, args: &ToolArgs) -> Result<Vec<PermissionRequest>, ToolError> {
+        let root = PathBuf::from(args.require_str("root")?);
+        Ok(vec![PermissionRequest {
+            tool: "render_film".to_owned(),
+            access: AccessKind::Write,
+            path: Some(root.join("out").join("frames")),
+            detail: Some("every scene in the storyboard".to_owned()),
+        }])
+    }
+
+    fn timeout(&self) -> Option<Duration> {
+        // A whole film is many scenes' worth of frames; see render_scene.
+        Some(Duration::from_secs(40 * 60))
+    }
+
+    async fn call(&self, args: ToolArgs, ctx: &ToolCtx) -> ToolResult {
+        let root = match args.require_str("root") {
+            Ok(root) => PathBuf::from(root),
+            Err(error) => return ToolResult::failure(ctx.call_id, "render_film", error),
+        };
+        let root = keel_core::resolve_path(&ctx.workspace_root, &root);
+
+        let board_text = match std::fs::read_to_string(root.join("storyboard.json")) {
+            Ok(text) => text,
+            Err(error) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "render_film",
+                    ToolError::invalid_arguments(format!("cannot read storyboard.json: {error}")),
+                )
+            }
+        };
+        let board: Storyboard = match serde_json::from_str(&board_text) {
+            Ok(board) => board,
+            Err(error) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "render_film",
+                    ToolError::invalid_arguments(format!("storyboard.json is not valid: {error}")),
+                )
+            }
+        };
+        let timeline_text = match std::fs::read_to_string(root.join("out").join("timeline.json")) {
+            Ok(text) => text,
+            Err(error) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "render_film",
+                    ToolError::invalid_arguments(format!(
+                        "cannot read out/timeline.json; run `python kit/timeline.py` first: {error}"
+                    )),
+                )
+            }
+        };
+        let timeline: Timeline = match serde_json::from_str(&timeline_text) {
+            Ok(timeline) => timeline,
+            Err(error) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "render_film",
+                    ToolError::invalid_arguments(format!(
+                        "out/timeline.json is not valid: {error}"
+                    )),
+                )
+            }
+        };
+
+        let default_fps = board
+            .format
+            .as_ref()
+            .and_then(|format| format.fps)
+            .unwrap_or(30);
+        let fps = match integer(&args, "fps", Some(default_fps)) {
+            Ok(value) if (1..=60).contains(&value) => value as u32,
+            Ok(_) => {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "render_film",
+                    ToolError::invalid_arguments("`fps` must be between 1 and 60"),
+                )
+            }
+            Err(error) => return ToolResult::failure(ctx.call_id, "render_film", error),
+        };
+
+        if board.scenes.is_empty() {
+            return ToolResult::failure(
+                ctx.call_id,
+                "render_film",
+                ToolError::invalid_arguments("storyboard.json has no scenes"),
+            );
+        }
+
+        let durations: HashMap<&str, f64> = timeline
+            .scenes
+            .iter()
+            .map(|scene| (scene.id.as_str(), scene.duration))
+            .collect();
+        let mut plan: Vec<(String, &'static str, f64)> = Vec::new();
+        for scene in &board.scenes {
+            if !plain_scene(&scene.id) {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "render_film",
+                    ToolError::invalid_arguments(format!(
+                        "`scene` must be a plain name, like `01`; got `{}`",
+                        scene.id
+                    )),
+                );
+            }
+            if plan.iter().any(|(id, _, _)| id == &scene.id) {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "render_film",
+                    ToolError::invalid_arguments(format!(
+                        "storyboard.json lists `{}` twice",
+                        scene.id
+                    )),
+                );
+            }
+            let page = match page_for(scene.asset_type.as_deref()) {
+                Ok(page) => page,
+                Err(error) => return ToolResult::failure(ctx.call_id, "render_film", error),
+            };
+            let duration = match durations.get(scene.id.as_str()) {
+                Some(duration) => *duration,
+                None => {
+                    return ToolResult::failure(
+                        ctx.call_id,
+                        "render_film",
+                        ToolError::invalid_arguments(format!(
+                            "`{}` has no measured duration; run `python kit/timeline.py` first",
+                            scene.id
+                        )),
+                    )
+                }
+            };
+            if !duration.is_finite()
+                || duration <= 0.0
+                || duration * 1000.0 > MAX_DURATION_MS as f64
+            {
+                return ToolResult::failure(
+                    ctx.call_id,
+                    "render_film",
+                    ToolError::invalid_arguments(format!(
+                        "`{}` has an unusable duration: {duration}",
+                        scene.id
+                    )),
+                );
+            }
+            plan.push((scene.id.clone(), page, duration));
+        }
+
+        let rendered = tokio::task::spawn_blocking(move || {
+            let mut lines = Vec::new();
+            for (id, page, duration) in &plan {
+                let out = root.join("out").join("frames").join(id);
+                let duration_ms = (duration * 1000.0).round() as u64;
+                let summary = render(&root, page, id, duration_ms, fps, &out)
+                    .map_err(|error| format!("{id}: {error}"))?;
+                let register = if *page == "kit/scene3d.html" {
+                    "3D"
+                } else {
+                    "2D"
+                };
+                lines.push(format!("{id} [{register}] {duration:.2}s: {summary}"));
+            }
+            Ok::<String, String>(format!(
+                "rendered {} scene(s):\n{}",
+                lines.len(),
+                lines.join("\n")
+            ))
+        })
+        .await;
+        match rendered {
+            Ok(Ok(text)) => ToolResult::success(ctx.call_id, "render_film", text),
+            Ok(Err(error)) => ToolResult::failure(ctx.call_id, "render_film", ToolError::io(error)),
+            Err(error) => ToolResult::failure(
+                ctx.call_id,
+                "render_film",
                 ToolError::io(format!("the renderer did not finish: {error}")),
             ),
         }
@@ -273,7 +559,17 @@ fn page_path(args: &ToolArgs) -> Result<String, ToolError> {
 fn frame_dir(root: &Path, args: &ToolArgs) -> Result<PathBuf, ToolError> {
     let scene = args.require_str("scene")?;
     match args.get("out") {
-        Some(ArgValue::String(out)) if !out.trim().is_empty() => Ok(PathBuf::from(out)),
+        Some(ArgValue::String(out)) if !out.trim().is_empty() => {
+            let out = PathBuf::from(out);
+            // A relative `out` belongs to the project, not to the process's
+            // working directory; the two used to diverge, so the frames landed
+            // next to the app while the caller looked under `root`.
+            Ok(if out.is_absolute() {
+                out
+            } else {
+                root.join(out)
+            })
+        }
         Some(ArgValue::String(_)) => Err(ToolError::invalid_arguments("`out` is empty")),
         Some(other) => Err(ToolError::invalid_arguments(format!(
             "`out` must be a string, got {}",
@@ -349,16 +645,24 @@ fn render(
         duration_ms as f64 / 1000.0
     );
     let mut child = launch_browser(&profile, &url)?;
-    let deadline = Instant::now()
-        + Duration::from_millis(60_000)
-        + Duration::from_millis(duration_ms.saturating_mul(10)).min(Duration::from_secs(840));
+    // A 1080p frame costs a canvas draw plus a PNG encode in software; the
+    // headless browser usually manages a frame a second or better. Budget
+    // from the frame count (one second per frame plus a minute), not from the
+    // scene's wall-clock length: a slow machine must not look like a hung
+    // page, and a 14-second scene at 30 fps is 413 frames.
+    let budget = Duration::from_secs(60)
+        + Duration::from_secs(u64::try_from(expected).unwrap_or(u64::MAX))
+            .min(Duration::from_secs(1740));
+    let deadline = Instant::now() + budget;
 
     let mut failure = None;
+    let mut last_frames = 0usize;
+    let mut last_progress = Instant::now();
     loop {
         if Instant::now() >= deadline {
             failure = Some(format!(
                 "the renderer timed out after {:.0}s",
-                (60_000 + duration_ms.saturating_mul(10)) as f64 / 1000.0
+                budget.as_secs_f64()
             ));
             break;
         }
@@ -378,13 +682,37 @@ fn render(
         if snapshot.done {
             break;
         }
+        if snapshot.frames > last_frames {
+            last_frames = snapshot.frames;
+            last_progress = Instant::now();
+        }
         drop(snapshot);
+        // A page that stops posting (an exception in its loop, a dead
+        // renderer) leaves the browser alive, so the deadline would be the
+        // only signal. Fail in a minute and a half with the frame it stopped
+        // on instead of waiting out the whole budget.
+        if last_progress.elapsed() >= STALL_WINDOW {
+            failure = Some(if last_frames == 0 {
+                format!(
+                    "no frame arrived within {:.0}s of the page loading; check the page for an error",
+                    STALL_WINDOW.as_secs_f64()
+                )
+            } else {
+                format!(
+                    "no frame arrived for {:.0}s after frame {}; the page stopped without reporting",
+                    STALL_WINDOW.as_secs_f64(),
+                    last_frames - 1
+                )
+            });
+            break;
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
 
     stop.store(true, Ordering::Relaxed);
     let _ = child.kill();
     let _ = child.wait();
+    let browser_log = browser_log_tail(&profile);
     let _ = std::fs::remove_dir_all(&profile);
 
     let frames = state
@@ -392,7 +720,15 @@ fn render(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .frames;
     if let Some(error) = failure {
-        return Err(format!("{error}; {frames} frame(s) were written"));
+        let log = if browser_log.is_empty() {
+            String::new()
+        } else {
+            format!("; {browser_log}")
+        };
+        return Err(format!(
+            "{error}; {frames} frame(s) were written to {}{log}",
+            out.display()
+        ));
     }
     if frames == 0 {
         return Err(
@@ -401,7 +737,8 @@ fn render(
     }
     if frames < expected {
         return Err(format!(
-            "the scene produced {frames} of {expected} frames; check the page for an error"
+            "the scene produced {frames} of {expected} frames in {}; check the page for an error",
+            out.display()
         ));
     }
     Ok(format!(
@@ -418,9 +755,20 @@ fn now_ms() -> u128 {
 }
 
 fn launch_browser(profile: &Path, url: &str) -> Result<Child, String> {
+    let _ = std::fs::create_dir_all(profile);
+    let log_path = profile.join("browser.log");
     let mut last = String::new();
     for candidate in browser_candidates() {
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|error| format!("cannot open the browser log: {error}"))?;
+        let stderr = log
+            .try_clone()
+            .map_err(|error| format!("cannot open the browser log: {error}"))?;
         let mut command = Command::new(&candidate);
+        crate::engine::hide_console(&mut command);
         command
             .arg("--headless=new")
             .arg("--disable-gpu")
@@ -431,8 +779,8 @@ fn launch_browser(profile: &Path, url: &str) -> Result<Child, String> {
             .arg("--window-size=1920,1080")
             .arg(url)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(stderr));
         match command.spawn() {
             Ok(child) => return Ok(child),
             Err(error) => last = format!("{}: {error}", candidate.display()),
@@ -441,6 +789,24 @@ fn launch_browser(profile: &Path, url: &str) -> Result<Child, String> {
     Err(format!(
         "cannot start a browser for rendering ({last}); install Edge or Chrome, or set KEELSON_EDGE"
     ))
+}
+
+/// The last few lines of the browser log, for a failure message. A renderer
+/// crash leaves no frame and no page error, so the browser's own words are
+/// the only clue.
+fn browser_log_tail(profile: &Path) -> String {
+    let text = std::fs::read_to_string(profile.join("browser.log")).unwrap_or_default();
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let count = trimmed.chars().count();
+    let tail: String = if count > 600 {
+        trimmed.chars().skip(count - 600).collect()
+    } else {
+        trimmed.to_owned()
+    };
+    format!("browser log: {tail}")
 }
 
 fn browser_candidates() -> Vec<PathBuf> {
@@ -570,6 +936,26 @@ fn handle(
         return Ok(());
     }
 
+    if method == "POST" && path == "/error" {
+        let message = query
+            .split('&')
+            .find_map(|pair| pair.strip_prefix("message="))
+            .map(percent_decode)
+            .unwrap_or_default();
+        respond(&stream, "200 OK", "text/plain", b"ok")?;
+        let mut shared = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if shared.error.is_none() {
+            shared.error = Some(if message.is_empty() {
+                "the page reported an error".to_owned()
+            } else {
+                message
+            });
+        }
+        return Ok(());
+    }
+
     if method == "POST" && path == "/frame" {
         if content_length == 0 || content_length > MAX_FRAME_BYTES {
             respond(&stream, "413 Payload Too Large", "text/plain", b"no")?;
@@ -582,13 +968,19 @@ fn handle(
             }
             return Err(format!("cannot read the frame: {error}"));
         }
-        let text = String::from_utf8_lossy(&body);
-        let encoded = text
-            .strip_prefix("data:image/png;base64,")
-            .ok_or_else(|| "a frame is not a PNG data URL".to_owned())?;
-        let png = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map_err(|error| format!("cannot decode a frame: {error}"))?;
+        // The page posts a PNG blob (the fast path). A data URL is still
+        // accepted so an older kit copy keeps rendering.
+        let png: Vec<u8> = if body.starts_with(b"\x89PNG\r\n\x1a\n") {
+            body
+        } else {
+            let text = String::from_utf8_lossy(&body);
+            let encoded = text
+                .strip_prefix("data:image/png;base64,")
+                .ok_or_else(|| "a frame is not a PNG".to_owned())?;
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|error| format!("cannot decode a frame: {error}"))?
+        };
         let index = query
             .split('&')
             .find_map(|pair| pair.strip_prefix("index="))
@@ -711,7 +1103,9 @@ fn probe(path: &Path) -> Result<String, String> {
         return Err(format!("{} does not exist", path.display()));
     }
     let program = std::env::var("KEELSON_FFPROBE").unwrap_or_else(|_| "ffprobe".to_owned());
-    let output = Command::new(&program)
+    let mut command = Command::new(&program);
+    crate::engine::hide_console(&mut command);
+    let output = command
         .args([
             "-v",
             "error",
@@ -870,6 +1264,113 @@ mod tests {
     }
 
     #[test]
+    fn a_film_page_follows_the_asset_type() {
+        assert_eq!(page_for(None).expect("the default"), "kit/scene.html");
+        assert_eq!(
+            page_for(Some("canvas")).expect("the flat page"),
+            "kit/scene.html"
+        );
+        assert_eq!(
+            page_for(Some("scene3d")).expect("the 3D page"),
+            "kit/scene3d.html"
+        );
+        assert!(page_for(Some("video")).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_film_without_a_timeline_is_refused() {
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let root = temp.path().join("project");
+        std::fs::create_dir_all(&root).expect("the project dir");
+        std::fs::write(
+            root.join("storyboard.json"),
+            r#"{"scenes":[{"id":"01","asset_type":"canvas"}]}"#,
+        )
+        .expect("a storyboard");
+
+        let context = ctx(temp.path());
+        let mut args = ToolArgs::new();
+        args.insert("root", ArgValue::String(root.display().to_string()));
+        let rendered = RenderFilmTool::new().call(args, &context).await;
+        assert!(!rendered.is_success());
+        assert!(
+            format!("{:?}", rendered.error()).contains("timeline"),
+            "{:?}",
+            rendered.error()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs Microsoft Edge"]
+    async fn a_mixed_film_renders_both_pages() {
+        let kit = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("kits")
+            .join("explainer");
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let root = temp.path().join("project");
+        copy_dir(&kit.join("kit"), &root.join("kit"));
+        std::fs::create_dir_all(root.join("scenes")).expect("the scenes dir");
+        std::fs::create_dir_all(root.join("out")).expect("the out dir");
+        std::fs::write(
+            root.join("scenes/01.js"),
+            r##"window.SCENE = {
+  id: "01",
+  draw(ctx) {
+    const D = window.DESIGN;
+    D.bg(ctx);
+    D.headline(ctx, ["A flat frame"], 112, 200, 64);
+  },
+};"##,
+        )
+        .expect("the 2D scene");
+        std::fs::copy(
+            kit.join("scenes/scene3d-template.js"),
+            root.join("scenes/02.js"),
+        )
+        .expect("the 3D template");
+        std::fs::write(
+            root.join("storyboard.json"),
+            r#"{
+                "format": { "fps": 30 },
+                "scenes": [
+                    { "id": "01", "asset_type": "canvas" },
+                    { "id": "02", "asset_type": "scene3d" }
+                ]
+            }"#,
+        )
+        .expect("a storyboard");
+        std::fs::write(
+            root.join("out/timeline.json"),
+            r#"{
+                "scenes": [
+                    { "id": "01", "start": 0.0, "duration": 0.3, "audio": 0.1 },
+                    { "id": "02", "start": 0.3, "duration": 0.3, "audio": 0.1 }
+                ],
+                "total": 0.6,
+                "lead": 0.35,
+                "tail": 0.45
+            }"#,
+        )
+        .expect("a timeline");
+
+        let context = ctx(temp.path());
+        let mut args = ToolArgs::new();
+        args.insert("root", ArgValue::String(root.display().to_string()));
+        let rendered = RenderFilmTool::new().call(args, &context).await;
+        assert!(rendered.is_success(), "{:?}", rendered.error());
+
+        for id in ["01", "02"] {
+            let frames: Vec<PathBuf> = std::fs::read_dir(root.join("out/frames").join(id))
+                .expect("the frame dir")
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("png"))
+                .collect();
+            assert_eq!(frames.len(), 9, "{id} should have nine frames");
+        }
+    }
+
+    #[test]
     fn a_static_request_cannot_leave_the_root() {
         let temp = tempfile::TempDir::new().expect("a temp dir");
         let root = temp.path().join("project");
@@ -914,6 +1415,40 @@ mod tests {
         }"#;
         let summary = summarize_probe(json).expect("a summary");
         assert!(summary.contains("audio: none"), "{summary}");
+    }
+
+    #[test]
+    fn a_frame_can_arrive_as_a_png_blob() {
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let root = temp.path().to_path_buf();
+        let out = temp.path().join("out");
+        std::fs::create_dir_all(&out).expect("the out dir");
+        let state = Arc::new(Mutex::new(SinkState::default()));
+        let listener = TcpListener::bind("127.0.0.1:0").expect("a listener");
+        let address = listener.local_addr().expect("an address");
+        let server_state = state.clone();
+        let server_root = root.clone();
+        let server_out = out.clone();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("a connection");
+            handle(stream, &server_root, &server_out, &server_state).expect("a frame");
+        });
+        let mut client = TcpStream::connect(address).expect("a client");
+        let png = b"\x89PNG\r\n\x1a\n\x00\x01\x02";
+        let request = format!(
+            "POST /frame?scene=01&index=0003 HTTP/1.1\r\nHost: local\r\nContent-Length: {}\r\n\r\n",
+            png.len()
+        );
+        client.write_all(request.as_bytes()).expect("headers");
+        client.write_all(png).expect("the body");
+        let mut reader = BufReader::new(&client);
+        let mut status = String::new();
+        reader.read_line(&mut status).expect("a status line");
+        server.join().expect("the handler");
+
+        assert!(status.contains("200"), "{status}");
+        assert_eq!(std::fs::read(out.join("0003.png")).unwrap(), png);
+        assert_eq!(state.lock().unwrap().frames, 1);
     }
 
     #[tokio::test]
@@ -1086,5 +1621,41 @@ mod tests {
         assert_eq!(frames.len(), 15, "half a second at 30 fps");
         let first = std::fs::read(&frames[0]).expect("a frame");
         assert!(first.len() > 1_000, "the frame is not blank");
+    }
+
+    #[test]
+    fn the_render_tools_declare_the_writes_they_request() {
+        // The dispatcher refuses a read-only tool that asks for write access
+        // before the permission gate can allow it, even in full auto.
+        assert_eq!(RenderSceneTool::new().schema().risk, RiskLevel::Mutating);
+        assert_eq!(RenderFilmTool::new().schema().risk, RiskLevel::Mutating);
+        // A 30 fps scene can hold the dispatcher for minutes; the tool raises
+        // its own ceiling above the session's default.
+        assert_eq!(
+            RenderSceneTool::new().timeout(),
+            Some(Duration::from_secs(40 * 60))
+        );
+        assert_eq!(
+            RenderFilmTool::new().timeout(),
+            Some(Duration::from_secs(40 * 60))
+        );
+    }
+
+    #[test]
+    fn a_relative_out_belongs_to_the_project() {
+        let root = Path::new("project");
+        let mut args = ToolArgs::new();
+        args.insert("scene", ArgValue::String("01".to_owned()));
+        args.insert("out", ArgValue::String("out/anchor/01".to_owned()));
+
+        assert_eq!(
+            frame_dir(root, &args).unwrap(),
+            root.join("out/anchor/01"),
+            "a relative out is under the project, not the app's cwd"
+        );
+
+        let absolute = std::env::temp_dir().join("frames");
+        args.insert("out", ArgValue::String(absolute.display().to_string()));
+        assert_eq!(frame_dir(root, &args).unwrap(), absolute);
     }
 }

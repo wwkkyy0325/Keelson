@@ -7,7 +7,8 @@ use std::sync::Arc;
 
 use keel_core::{CancelToken, Event, PermissionLevel};
 use keelson::engine::{
-    ContextPoint, Engine, ModelDelta, ModelOverride, OpenRequest, Store, TurnView,
+    seed_explainer_kit, ContextPoint, Engine, ModelDelta, ModelOverride, OpenRequest, Store,
+    TurnView,
 };
 use keelson::rig;
 use serde::Serialize;
@@ -25,6 +26,7 @@ pub const EV_TOOL_STARTED: &str = "keelson:tool-started";
 pub const EV_TOOL_FINISHED: &str = "keelson:tool-finished";
 pub const EV_BACKGROUND_STARTED: &str = "keelson:background-started";
 pub const EV_BACKGROUND_FINISHED: &str = "keelson:background-finished";
+pub const EV_MODEL_FINISHED: &str = "keelson:model-finished";
 pub const EV_TURN_VERIFYING: &str = "keelson:turn-verifying";
 pub const EV_TURN_CHANGES: &str = "keelson:turn-changes";
 pub const EV_TURN_FINISHED: &str = "keelson:turn-finished";
@@ -173,6 +175,16 @@ struct BackgroundFinishedEvent {
     exit_code: Option<i32>,
     duration_ms: u64,
     output_path: String,
+}
+
+/// One model call finished; the running turn's cost line adds this usage.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelFinishedEvent {
+    seq: u32,
+    input_tokens: u32,
+    output_tokens: u32,
+    cached_input_tokens: u32,
 }
 
 /// The answer is written and the turn is running its acceptance checks. The
@@ -991,6 +1003,10 @@ async fn open_inner(
         config::load_key(&config.provider_id, &config.key_provider)?
             .ok_or_else(|| "还没有保存密钥；请重新运行初始化".to_owned())?,
     );
+    // A saved DeepSeek key also serves the web tools when the chat model is a
+    // local server with no search endpoint of its own. Without one, the
+    // configured SearXNG URL is the fallback.
+    let search_key = config::load_key("deepseek", "deepseek").ok().flatten();
     let fallback = rig_name_for(&provider);
     let preferred = chosen_rig(&config, fallback);
 
@@ -1034,6 +1050,14 @@ async fn open_inner(
         .cloned()
         .ok_or_else(|| format!("找不到 rig `{wanted}`"))?;
     let store_path = sessions::session_path(&state_dir, &workspace, &session_id);
+    // An explainer project starts from the kit: without it the renderer and
+    // the data checks have nothing to run. Seeding writes only missing files,
+    // so reopening a project never touches the script or the scenes.
+    if rig.name == "explainer" {
+        if let Err(error) = seed_explainer_kit(&workspace) {
+            eprintln!("explainer kit was not seeded: {error}");
+        }
+    }
 
     let model = key.map(|api_key| ModelOverride {
         provider,
@@ -1056,6 +1080,7 @@ async fn open_inner(
         permission: config.permission.as_deref().and_then(permission_level),
         acceptance: true,
         search_url: config.search_url.clone(),
+        search_key,
     })
     .map_err(|error| error.to_string())?;
     // Dropped files are readable by the agent and cannot be written back to:
@@ -1278,6 +1303,17 @@ pub struct BackgroundTaskView {
 }
 
 #[tauri::command]
+pub fn stop_background(state: State<'_, SharedState>, id: String) -> Result<bool, String> {
+    let engine = state
+        .engine
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    Ok(engine.stop_background(&id))
+}
+
+#[tauri::command]
 pub fn background_tasks(state: State<'_, SharedState>) -> Result<Vec<BackgroundTaskView>, String> {
     let engine = state
         .engine
@@ -1438,13 +1474,10 @@ pub async fn send_message(
             tauri::async_runtime::spawn(async move {
                 while !live_done_flag.load(Ordering::Relaxed) {
                     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
-                    for record in live_events.snapshot() {
-                        let mut last = live_last.load(Ordering::Relaxed);
-                        if record.seq <= last {
-                            continue;
-                        }
-                        last = record.seq;
-                        live_last.store(last, Ordering::Relaxed);
+                    // Only the new tail: cloning the whole turn's event log
+                    // every 120 ms costs more as a tool-heavy turn grows.
+                    for record in live_events.since(live_last.load(Ordering::Relaxed)) {
+                        live_last.store(record.seq, Ordering::Relaxed);
                         match record.event {
                             Event::ToolStarted {
                                 call_id,
@@ -1514,6 +1547,17 @@ pub async fn send_message(
                                         exit_code,
                                         duration_ms,
                                         output_path,
+                                    },
+                                );
+                            }
+                            Event::ModelFinished { usage, .. } => {
+                                let _ = live_app.emit(
+                                    EV_MODEL_FINISHED,
+                                    ModelFinishedEvent {
+                                        seq,
+                                        input_tokens: usage.input_tokens,
+                                        output_tokens: usage.output_tokens,
+                                        cached_input_tokens: usage.cached_input_tokens,
                                     },
                                 );
                             }
@@ -1728,11 +1772,12 @@ pub fn respond_interaction(
 
 fn rig_dirs() -> Vec<PathBuf> {
     let mut dirs = rig::search_dirs();
-    if cfg!(debug_assertions) {
-        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rigs");
-        if dev.is_dir() && !dirs.iter().any(|dir| dir == &dev) {
-            dirs.insert(0, dev);
-        }
+    // A run from the source tree (debug or release) finds the repository's
+    // rigs next to the crate. A packaged install does not have that path, so
+    // it is skipped there and rigs come from `~/.keelson/rigs` instead.
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rigs");
+    if source.is_dir() && !dirs.iter().any(|dir| dir == &source) {
+        dirs.insert(0, source);
     }
     dirs
 }
@@ -1771,7 +1816,7 @@ fn normalized(path: &Path) -> PathBuf {
 mod tests {
     use std::path::Path;
 
-    use super::{collect_tree, copy_attachment, copy_folder, rig_for_session};
+    use super::{collect_tree, copy_attachment, copy_folder, rig_dirs, rig_for_session};
     use crate::sessions::SessionMeta;
 
     fn meta(id: &str, rig: &str) -> SessionMeta {
@@ -1893,6 +1938,15 @@ mod tests {
         .expect_err("over the file limit");
 
         assert!(error.contains("文件数"), "{error}");
+    }
+
+    #[test]
+    fn a_source_run_finds_the_repository_rigs() {
+        let dirs = rig_dirs();
+        assert!(
+            dirs.iter().any(|dir| dir.join("explainer.toml").is_file()),
+            "the repository rigs are on the search path: {dirs:?}"
+        );
     }
 
     #[tokio::test]

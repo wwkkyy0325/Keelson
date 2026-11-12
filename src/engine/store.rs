@@ -101,6 +101,10 @@ pub struct StoredTurn {
     /// Input, output and cached input tokens for the whole turn.
     #[serde(default)]
     pub usage: StoredUsage,
+    /// Model calls spent in this turn. Older documents recover it from their
+    /// `model_finished` events.
+    #[serde(default)]
+    pub model_calls: u32,
     /// Acceptance result when the host ran a checklist for this turn.
     #[serde(default)]
     pub verification_passed: Option<bool>,
@@ -208,6 +212,7 @@ mod tests {
                 error: None,
                 duration_ms: 3,
                 usage: StoredUsage::default(),
+                model_calls: 0,
                 verification_passed: None,
                 verification: None,
                 tools: Vec::new(),

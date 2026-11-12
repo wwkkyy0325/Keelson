@@ -52,45 +52,65 @@
   /// Background commands outlive a turn, so the view polls the engine while
   /// any is known. A result stays until the engine hands it to the model.
   let backgroundTimer: ReturnType<typeof setInterval> | null = null;
+  // The store replaces its value on every dispatch, so an effect reading
+  // `$session.x` directly re-runs on every change anywhere in the state.
+  // These derived values notify only when the value they name changes.
+  let backgroundEpoch = $derived($session.epoch);
+  let backgroundVisible = $derived($session.background.length > 0);
+
+  async function syncBackground(): Promise<void> {
+    const epoch = $session.epoch;
+    try {
+      const tasks = await backgroundTasks();
+      // A switch mid-request must not paint the previous session's rows.
+      if ($session.epoch !== epoch) return;
+      dispatch({
+        type: "background-synced",
+        tasks: tasks.map((task) => ({
+          id: task.id,
+          program: task.program,
+          ok: task.running ? null : task.exitCode === 0,
+          durationMs: task.durationMs,
+          outputPath: task.outputPath,
+        })),
+      });
+    } catch {
+      // A transient failure must not freeze the row: the next poll retries.
+    }
+  }
 
   function pollBackground(): void {
     if (backgroundTimer !== null) return;
-    const sync = async (): Promise<void> => {
-      try {
-        const tasks = await backgroundTasks();
-        const now = Date.now();
-        dispatch({
-          type: "background-synced",
-          tasks: tasks.map((task) => ({
-            id: task.id,
-            program: task.program,
-            startedAt: now - task.durationMs,
-            ok: task.running ? null : task.exitCode === 0,
-            durationMs: task.durationMs,
-            outputPath: task.outputPath,
-          })),
-        });
-        if (tasks.length === 0 && backgroundTimer !== null) {
-          clearInterval(backgroundTimer);
-          backgroundTimer = null;
-        }
-      } catch {
-        // A closed session stops the poll; the next live event starts it
-        // again for the session that owns the task.
-        if (backgroundTimer !== null) {
-          clearInterval(backgroundTimer);
-          backgroundTimer = null;
-        }
-      }
-    };
-    void sync();
-    backgroundTimer = setInterval(sync, 1000);
+    void syncBackground();
+    backgroundTimer = setInterval(() => void syncBackground(), 1000);
   }
 
+  // A background command outlives the view. On every session open, reconcile
+  // first: a task started before a switch or a reconnect has to reappear, and
+  // its start event will never be replayed.
   $effect(() => {
-    if ($session.background.length > 0) {
+    void backgroundEpoch;
+    untrack(() => {
+      void syncBackground();
+    });
+  });
+
+  $effect(() => {
+    if (backgroundVisible) {
       pollBackground();
+    } else if (backgroundTimer !== null) {
+      // A new session, or a drained task, clears the rows; the poll goes
+      // with them.
+      clearInterval(backgroundTimer);
+      backgroundTimer = null;
     }
+    return () => {
+      // The conversation closed: no more reads against a gone engine.
+      if (backgroundTimer !== null) {
+        clearInterval(backgroundTimer);
+        backgroundTimer = null;
+      }
+    };
   });
   let undoable = $derived(
     !$session.running && !undoDone && latestChanges.length > 0,

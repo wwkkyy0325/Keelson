@@ -39,6 +39,8 @@ export type Turn = {
   /// Summed over the turn's model calls; zeros for sessions written before
   /// the field existed.
   usage: TurnUsage;
+  /// Model calls spent in this turn; recovered from events for old sessions.
+  modelCalls: number;
   verificationPassed: boolean | null;
   verification: Verification | null;
   tools: ToolLine[];
@@ -199,6 +201,13 @@ export type LiveTool = {
 export type TurnStarted = { seq: number; input: string };
 export type TextDelta = { seq: number; text: string };
 export type ThinkingDelta = { seq: number; text: string };
+/// One finished model call; the running turn adds it to its live cost line.
+export type ModelFinished = {
+  seq: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+};
 export type ToolStartedEvent = {
   seq: number;
   callId: number;
@@ -230,11 +239,12 @@ export type BackgroundFinished = {
   outputPath: string;
 };
 
-/// One background command as the session shows it.
+/// One background command as the session shows it. `durationMs` is the
+/// engine's measured runtime, refreshed by the poll, and the only clock the
+/// row displays.
 export type LiveBackground = {
   id: string;
   program: string;
-  startedAt: number;
   ok: boolean | null;
   durationMs: number;
   outputPath: string | null;

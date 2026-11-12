@@ -73,3 +73,10 @@ extra credential for the provider this host currently uses.
   `https://api.deepseek.com/anthropic`, and appending `/v1/tools/...` to it
   produced a path the tools are not served from; `/v1` was already stripped
   and the compatibility path was not.
+
+## Amendment — 2026-11-11
+
+- A saved DeepSeek key is also the web-tools backend when the chat model is a
+  local server with no endpoint of its own. The host passes it as
+  `OpenRequest::search_key`; it wins over the SearXNG URL. The key stays in
+  memory and is never written to a rig or a session document.

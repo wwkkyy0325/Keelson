@@ -8,6 +8,7 @@ import type {
   FileChange,
   Interaction,
   ModelCatalog,
+  ModelFinished,
   SessionMeta,
   SessionStatus,
   SessionUpdated,
@@ -162,6 +163,12 @@ export function backgroundTasks(): Promise<BackgroundTaskView[]> {
   return invoke("background_tasks");
 }
 
+/// Kills a running background command. Its exit still reaches the model at
+/// the next safe point.
+export function stopBackground(id: string): Promise<boolean> {
+  return invoke("stop_background", { id });
+}
+
 export function loadTurns(
   before: number | null,
   limit = 30,
@@ -196,6 +203,11 @@ export async function listenToEvents(): Promise<UnlistenFn[]> {
     ),
   );
   unlisten.push(
+    await listen<ModelFinished>("keelson:model-finished", (event) =>
+      dispatch({ type: "model-finished", ...event.payload }),
+    ),
+  );
+  unlisten.push(
     await listen<ToolStartedEvent>("keelson:tool-started", (event) =>
       dispatch({ type: "tool-started", ...event.payload }),
     ),
@@ -211,7 +223,6 @@ export async function listenToEvents(): Promise<UnlistenFn[]> {
         type: "background-started",
         id: event.payload.id,
         program: event.payload.program,
-        startedAt: Date.now(),
       }),
     ),
   );
@@ -224,7 +235,6 @@ export async function listenToEvents(): Promise<UnlistenFn[]> {
         exitCode: event.payload.exitCode,
         durationMs: event.payload.durationMs,
         outputPath: event.payload.outputPath,
-        startedAt: Date.now() - event.payload.durationMs,
       }),
     ),
   );

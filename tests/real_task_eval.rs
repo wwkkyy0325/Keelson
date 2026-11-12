@@ -143,6 +143,7 @@ async fn run_the_task() {
         permission: None,
         acceptance: true,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

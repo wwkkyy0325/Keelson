@@ -97,3 +97,35 @@ film's claims and layout checked before anyone watches it.
       has no spike (mean 3.45, max 3.73 grey levels); the kit's live 3D test
       passes with the bloom page; QA passed at 12.00 s, 1080p, −18.04 LUFS;
       the film is 16 MB.
+
+## 10. Mixed films render from the storyboard — done
+
+- [x] `render_film(root)` reads `storyboard.json` and `out/timeline.json`,
+      validates scene ids, order, `asset_type` and durations, and renders every
+      scene in one call. `asset_type: scene3d` picks `kit/scene3d.html`;
+      `canvas` (the default) picks `kit/scene.html`. `render_scene` remains for
+      one scene while iterating.
+- [x] The explainer prompt and kit README state the editorial split: 2D
+      carries the model (concepts, numbers, text), 3D carries space (geometry,
+      fields, flow, camera); alternate at topic boundaries, keep one 3D space
+      per section, and keep 3D to about a third unless the topic is spatial.
+- [x] The storyboard is the single source of the register; the tool refuses an
+      unknown `asset_type`, a duplicate or malformed scene id, a missing
+      measured duration, and an unusable duration.
+- [x] The kit ships a bilingual glossary (`kits/explainer/GLOSSARY.md`).
+- Verify: 93 library tests, 3 rig-tool tests; the live
+      `a_mixed_film_renders_both_pages` renders a 2D and a 3D scene through one
+      call; the live 3D kit test still passes; clippy and fmt clean.
+
+## 11. Live mixed film — done
+
+- [x] `tests/explainer_film_eval.rs` sends a brief to the rig, permits up to
+      three continuation turns, and accepts only when the claim gate, the
+      sources, the 3D frames, the film and `qa.py --video` pass.
+- [x] First acceptance: 86.29 s, 7 scenes (one `scene3d`, 13.88 s), 13 claims,
+      8 sources all 200, 13 cues, -16.18 LUFS. The brief was an advocacy film
+      with the thesis labelled 本片观点 and no counter-argument section.
+- [x] Subtitle font: under WSL libass does not see the mounted Windows fonts;
+      `assemble.py` now passes `fontsdir` and stops if there is no CJK font.
+      The film was re-burned; the subtitles render.
+- Verify: the live film test passed; `qa.py --video` passes after the re-burn.

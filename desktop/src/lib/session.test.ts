@@ -12,6 +12,7 @@ function turn(seq: number, input = `in ${seq}`, answer = `out ${seq}`): Turn {
     error: null,
     durationMs: 1,
     usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+    modelCalls: 0,
     verificationPassed: null,
     verification: null,
     tools: [],
@@ -371,5 +372,79 @@ describe("session reducer", () => {
 
     expect(state.sessions.map((item) => item.id)).toEqual(["b", "a"]);
     expect(state.turns).toHaveLength(1);
+  });
+
+  it("accumulates model usage on the running turn", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 3,
+      input: "hi",
+    });
+    state = reduce(state, {
+      type: "model-finished",
+      seq: 3,
+      inputTokens: 100,
+      outputTokens: 10,
+      cachedInputTokens: 90,
+    });
+    state = reduce(state, {
+      type: "model-finished",
+      seq: 3,
+      inputTokens: 200,
+      outputTokens: 20,
+      cachedInputTokens: 190,
+    });
+
+    expect(state.running?.modelCalls).toBe(2);
+    expect(state.running?.usage).toEqual({
+      inputTokens: 300,
+      outputTokens: 30,
+      cachedInputTokens: 280,
+    });
+
+    const stale = reduce(state, {
+      type: "model-finished",
+      seq: 2,
+      inputTokens: 1,
+      outputTokens: 1,
+      cachedInputTokens: 0,
+    });
+    expect(stale.running?.usage.inputTokens).toBe(300);
+  });
+
+  it("takes a background row's runtime from the engine poll", () => {
+    let state = reduce(initialSession(), {
+      type: "background-started",
+      id: "bg-1",
+      program: "npm",
+    });
+    expect(state.background[0].durationMs).toBe(0);
+
+    state = reduce(state, {
+      type: "background-synced",
+      tasks: [
+        {
+          id: "bg-1",
+          program: "npm",
+          ok: null,
+          durationMs: 4000,
+          outputPath: "/out",
+        },
+      ],
+    });
+    state = reduce(state, {
+      type: "background-synced",
+      tasks: [
+        {
+          id: "bg-1",
+          program: "npm",
+          ok: null,
+          durationMs: 8000,
+          outputPath: "/out",
+        },
+      ],
+    });
+
+    expect(state.background[0].durationMs).toBe(8000);
   });
 });

@@ -111,7 +111,7 @@ impl Tool for GitDiffTool {
         if !is_repository(root).await {
             return ToolResult::success(ctx.call_id, "git_diff", "not a git repository".to_owned());
         }
-        let mut command = tokio::process::Command::new("git");
+        let mut command = quiet_git();
         command
             .arg("-c")
             .arg("color.ui=false")
@@ -174,8 +174,16 @@ impl Tool for GitDiffTool {
     }
 }
 
-async fn is_repository(root: &Path) -> bool {
+/// A GUI host has no console; git must not flash one for each probe.
+fn quiet_git() -> tokio::process::Command {
     let mut command = tokio::process::Command::new("git");
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    command
+}
+
+async fn is_repository(root: &Path) -> bool {
+    let mut command = quiet_git();
     command
         .arg("--no-optional-locks")
         .arg("-C")

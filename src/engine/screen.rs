@@ -76,7 +76,8 @@ impl Tool for ScreenCaptureTool {
                           (with an optional `monitor` index). Quote what the image shows; \
                           do not describe text you cannot see."
                 .to_owned(),
-            risk: RiskLevel::ReadOnly,
+            // Writes the PNG into the capture folder; the request is a write.
+            risk: RiskLevel::Mutating,
             params: vec![
                 ParamSpec {
                     name: "target".to_owned(),
@@ -526,6 +527,9 @@ mod tests {
         assert_eq!(requests[0].access, AccessKind::Write);
         assert_eq!(requests[0].path.as_deref(), Some(Path::new("/tmp/screens")));
         assert_eq!(requests[0].detail.as_deref(), Some("window Notepad"));
+        // A write request and a read-only declaration are refused by the
+        // dispatcher before the permission gate sees them.
+        assert_eq!(tool.schema().risk, RiskLevel::Mutating);
     }
 
     #[test]

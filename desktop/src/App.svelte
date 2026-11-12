@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { UnlistenFn } from "@tauri-apps/api/event";
-  import { listenToEvents, openSession, setupState } from "./lib/api";
+  import {
+    cancelTurn,
+    listenToEvents,
+    openSession,
+    setupState,
+  } from "./lib/api";
   import { dispatch, session } from "./lib/session-store";
   import { locale, t } from "./lib/i18n";
   import type { SetupState } from "./lib/protocol";
@@ -27,7 +32,7 @@
     problems: [],
   };
 
-  let phase = $state<"loading" | "wizard" | "app">("loading");
+  let phase = $state<"loading" | "wizard" | "app" | "failed">("loading");
   let setup = $state<SetupState | null>(null);
   let bootError = $state<string | null>(null);
   let showSettings = $state(false);
@@ -67,8 +72,11 @@
         if (state.onboarded && state.hasKey) {
           const failure = await enterApp();
           if (failure) {
+            // The setup wizard is for a first run. An onboarded app that
+            // cannot open its session (a turn survived a webview reload,
+            // say) gets a retry screen instead; the wizard would be a trap.
             bootError = failure;
-            phase = "wizard";
+            phase = "failed";
           }
         } else {
           phase = "wizard";
@@ -107,6 +115,35 @@
     return enterApp();
   }
 
+  /// A reload while a turn runs leaves the turn in the engine and the new
+  /// frontend without its cancel handle. Cancel it, then wait for the turn to
+  /// unwind before opening: the engine refuses a new session until then.
+  async function cancelAndRetry(): Promise<void> {
+    phase = "loading";
+    bootError = null;
+    await cancelTurn().catch(() => false);
+    let failure = "";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      failure = (await enterApp()) ?? "";
+      if (!failure || !failure.includes("还在运行")) break;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    if (failure) {
+      bootError = failure;
+      phase = "failed";
+    }
+  }
+
+  async function retryBoot(): Promise<void> {
+    phase = "loading";
+    bootError = null;
+    const failure = await enterApp();
+    if (failure) {
+      bootError = failure;
+      phase = "failed";
+    }
+  }
+
   async function reconnect(): Promise<string | null> {
     return enterApp(
       $session.workspace || undefined,
@@ -132,6 +169,18 @@
     initialError={bootError}
     onDone={onWizardDone}
   />
+{:else if phase === "failed"}
+  <div class="boot">
+    <div class="brand">Keelson</div>
+    <p class="muted">{$t("app.bootFailed")}</p>
+    <p class="boot-error" role="alert">{bootError}</p>
+    <div class="boot-actions">
+      <button class="primary" onclick={cancelAndRetry}>
+        {$t("app.cancelTurnRetry")}
+      </button>
+      <button onclick={retryBoot}>{$t("app.retry")}</button>
+    </div>
+  </div>
 {:else}
   <Chat
     onSettings={() => (showSettings = true)}

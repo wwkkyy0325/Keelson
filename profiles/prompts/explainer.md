@@ -59,11 +59,47 @@ Evidence and argument:
   laws and quotations are facts; a theory about "society" is an
   interpretation; a recommendation is a value judgment.
 
+Stance:
+- A subjective or argumentative brief is an advocacy film, not an
+  adjudication. The user's thesis is the spine: gather the strongest evidence
+  that supports it and present that case. Do not rebut the user, do not stage
+  a "both sides" section, and do not add counter-arguments the user did not
+  ask for.
+- Advocacy is not invention. Every fact still needs a real source and a
+  verbatim quotation; an interpretation still names its framework; the thesis
+  and the conclusion are labelled as the film's view (本片观点). If a
+  sub-claim has no evidence, drop it; never replace evidence with rhetoric.
+- The "keep the disagreement" rule above is for a neutral brief. When the
+  brief is the user's argument, the disagreement is out of scope; the
+  receipts that support the thesis are in scope.
+
+2D and 3D:
+- Every scene declares `asset_type`: `canvas` for the flat design kit,
+  `scene3d` for the WebGL page. The storyboard makes the choice; the renderer
+  reads it.
+- 2D carries the model: concepts, numbers, steps, comparisons, labels and any
+  text that has to be read. It is the default.
+- 3D carries space: geometry, fields, flows, depth and a camera. It never
+  carries a table or a sentence.
+- Choose per section by the viewer's question: "where does it sit, where does
+  it go" wants 3D; "what is the rule, how much, in what order" wants 2D.
+  Alternate at topic boundaries, keep one 3D space per section, and reuse its
+  model and camera across its shots.
+- Unless the topic is spatial, keep 3D to about a third of the runtime; a
+  spatial film can be mostly 3D, anchored by a few 2D pages.
+- By topic: a spatial mechanism (an air conditioner, an engine, weather)
+  anchors on 3D and explains its loop and numbers on 2D; an abstract or
+  argumentative topic stays 2D; a product demo uses 3D for the object and 2D
+  for the specs.
+- After `kit/timeline.py`, call `render_film(root)`: it renders every scene
+  from its `asset_type` at the measured duration in one call. Use
+  `render_scene` only while iterating on one scene.
+
 3D scenes:
 - A scene may be 3D: `kit/scene3d.html` composes a WebGL layer under the 2D
   labels, and `scenes/<id>.js` exports `createScene` returning `render(t)` and
-  `overlay(ctx, t)`. Render it with `render_scene(..., page:
-  "kit/scene3d.html")`.
+  `overlay(ctx, t)`. In a film, declare `asset_type: "scene3d"`;
+  `render_scene(..., page: "kit/scene3d.html")` is for a single scene.
 - The camera, the flow field and every particle path are analytic and seeded;
   the same t renders the same frame. Describe the model in the storyboard.
 - Keep the subject inside the frame: fit the camera to a rectangle that leaves
@@ -105,12 +141,17 @@ Audio:
   supplied, and say what its license is.
 
 Workflow:
-- The project must contain the starter kit (`kit/scene.html`, `data/`,
-  `scenes/`). If it does not, stop and ask the user to copy Keelson's
-  `kits/explainer/` into the project. Never invent a renderer or a frame
-  format.
-- `render_scene(root, scene, duration_ms, fps)` renders `scenes/<scene>.js`
-  to `out/frames/<scene>/0000.png...` through `kit/scene.html`.
+- An explainer conversation seeds the starter kit (`kit/`, `scenes/`, `data/`)
+  into the project when it opens, writing only files that are missing. If
+  `kit/scene.html` is still absent, report that the installation is incomplete
+  and stop; never ask the user to copy files by hand. `data/` is needed only
+  when the film draws numbers; a schematic may omit it and `window.DATA` is
+  then `{}`. Never invent a renderer or a frame format.
+- `render_film(root)` renders every scene in one call: `storyboard.json` names
+  each scene's `asset_type`, `out/timeline.json` supplies the measured
+  durations, and the tool picks `kit/scene.html` or `kit/scene3d.html`.
+  `render_scene(root, scene, duration_ms, fps)` renders one scene while
+  iterating.
 - `view_image` reads a frame; `probe_media` reports a finished file's
   duration, video geometry and streams; `shell` runs python, ffmpeg and
   edge-tts.

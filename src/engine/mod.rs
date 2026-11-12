@@ -6,10 +6,26 @@
 mod desktop;
 mod git;
 mod history;
+mod kit;
 mod screen;
 mod store;
 mod video;
 mod web;
+
+pub use kit::seed_explainer_kit;
+
+/// A GUI host has no console. A console child launched without this flag
+/// opens its own black window for the duration of the command.
+#[cfg(windows)]
+pub(crate) fn hide_console(command: &mut std::process::Command) -> &mut std::process::Command {
+    use std::os::windows::process::CommandExt;
+    command.creation_flags(0x0800_0000)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn hide_console(command: &mut std::process::Command) -> &mut std::process::Command {
+    command
+}
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -68,6 +84,10 @@ pub struct OpenRequest {
     /// A SearXNG base URL, used for web search when the model provider has no
     /// search endpoint of its own. A provider endpoint always wins.
     pub search_url: Option<String>,
+    /// A DeepSeek key for the provider's search and fetch tools, when the host
+    /// wants them even though the chat model is a local server. The key stays
+    /// in memory and never enters a prompt, a log or a stored document.
+    pub search_key: Option<String>,
 }
 
 /// One piece of model output streamed to the host. Thinking is separate from
@@ -116,6 +136,10 @@ pub struct TurnView {
     pub duration_ms: u64,
     #[serde(default)]
     pub usage: StoredUsage,
+    /// Model calls spent in this turn; 0 for documents written before the
+    /// field existed.
+    #[serde(default)]
+    pub model_calls: u32,
     pub verification_passed: Option<bool>,
     #[serde(default)]
     pub verification: Option<StoredVerification>,
@@ -133,6 +157,7 @@ impl From<&StoredTurn> for TurnView {
             error: turn.error.clone(),
             duration_ms: turn.duration_ms,
             usage: turn_usage(turn),
+            model_calls: turn_model_calls(turn),
             verification_passed: turn.verification_passed,
             verification: turn.verification.clone(),
             tools: turn.tools.clone(),
@@ -169,6 +194,21 @@ fn turn_usage(turn: &StoredTurn) -> StoredUsage {
             .saturating_add(field("cached_input_tokens"));
     }
     usage
+}
+
+/// Model calls in a turn. A new turn records the count; an older document
+/// counts its persisted `model_finished` events instead.
+fn turn_model_calls(turn: &StoredTurn) -> u32 {
+    if turn.model_calls > 0 {
+        return turn.model_calls;
+    }
+    u32::try_from(
+        turn.events
+            .iter()
+            .filter(|event| event.payload.get("model_finished").is_some())
+            .count(),
+    )
+    .unwrap_or(u32::MAX)
 }
 
 /// A keyset page of turns, oldest first. `next_before` is the cursor for the
@@ -415,6 +455,7 @@ impl Engine {
             permission,
             acceptance,
             search_url,
+            search_key,
         } = request;
 
         let rig_name = rig.name.clone();
@@ -505,19 +546,27 @@ impl Engine {
             LocalBackgroundTasks::new(outputs_dir.join("background")).with_events(events.clone()),
         );
         // A provider that serves search and fetch tools gets them on the same
-        // key as the chat API; otherwise a configured SearXNG URL is the
-        // search backend, and the local fetch is always available.
-        let web = web::WebBackend::resolve(
-            model
-                .as_ref()
-                .and_then(|over| over.base_url.as_deref())
-                .or(config.model_base_url.as_deref()),
-            model
-                .as_ref()
-                .map(|over| over.api_key.as_str())
-                .unwrap_or(""),
-            search_url.as_deref(),
-        );
+        // key as the chat API. A host-supplied search key covers the other
+        // case: a local chat model with a saved cloud key for the web tools.
+        // Otherwise a configured SearXNG URL is the search backend, and the
+        // local fetch is always available.
+        let web = match search_key.filter(|key| !key.trim().is_empty()) {
+            Some(key) => Some(web::WebBackend::Provider {
+                base: "https://api.deepseek.com".to_owned(),
+                key,
+            }),
+            None => web::WebBackend::resolve(
+                model
+                    .as_ref()
+                    .and_then(|over| over.base_url.as_deref())
+                    .or(config.model_base_url.as_deref()),
+                model
+                    .as_ref()
+                    .map(|over| over.api_key.as_str())
+                    .unwrap_or(""),
+                search_url.as_deref(),
+            ),
+        };
         let session = Arc::new(Mutex::new(session));
         // Screenshots live beside the project's outputs, outside the
         // workspace: the folder is the permission scope for a capture.
@@ -712,6 +761,7 @@ impl Engine {
                 output_tokens: outcome.usage.output_tokens,
                 cached_input_tokens: outcome.usage.cached_input_tokens,
             },
+            model_calls: outcome.model_calls,
             verification_passed: outcome.verification.as_ref().map(|report| report.passed()),
             verification: outcome.verification.as_ref().map(stored_verification),
             tools,
@@ -809,6 +859,12 @@ impl Engine {
     /// consumes a result at the next turn; this view never does.
     pub fn background_tasks(&self) -> Vec<BackgroundSnapshot> {
         self.background.snapshot()
+    }
+
+    /// Stops one background command. Its result still reaches the model at the
+    /// next safe point, so the command is not hidden from the turn.
+    pub fn stop_background(&self, id: &str) -> bool {
+        self.background.stop(id)
     }
 
     pub fn events(&self) -> &Arc<EventLog> {
@@ -1647,6 +1703,7 @@ fn tools(
     registry.register(Arc::new(screen::ScreenCaptureTool::new(screens)))?;
     registry.register(Arc::new(screen::ViewImageTool::new()))?;
     registry.register(Arc::new(video::RenderSceneTool::new()))?;
+    registry.register(Arc::new(video::RenderFilmTool::new()))?;
     registry.register(Arc::new(video::ProbeMediaTool::new()))?;
     registry.register(Arc::new(desktop::LaunchAppTool::new()))?;
     registry.register(Arc::new(desktop::WaitForWindowTool::new()))?;
@@ -1759,6 +1816,7 @@ mod tests {
             error: None,
             duration_ms: 2,
             usage: StoredUsage::default(),
+            model_calls: 0,
             verification_passed: None,
             verification: None,
             tools: Vec::new(),
@@ -1787,6 +1845,7 @@ mod tests {
                 cached_input_tokens: 60,
             }
         );
+        assert_eq!(view.model_calls, 1, "the event count is recovered");
     }
 
     #[test]
@@ -1817,6 +1876,7 @@ mod tests {
                 output_tokens: 1,
                 cached_input_tokens: 0,
             },
+            model_calls: 1,
             verification_passed: None,
             verification: None,
             tools: Vec::new(),
@@ -1911,6 +1971,7 @@ system = "prompt.md"
                 permission: None,
                 acceptance: true,
                 search_url: None,
+                search_key: None,
             })
             .expect("the engine opens")
         }
@@ -2123,6 +2184,7 @@ system = "prompt.md"
             permission: None,
             acceptance: true,
             search_url: None,
+            search_key: None,
         })
         .expect("the engine opens");
 
@@ -2258,6 +2320,7 @@ system = "prompt.md"
             permission: None,
             acceptance: true,
             search_url: None,
+            search_key: None,
         })
         .expect("the engine opens");
 
@@ -2297,6 +2360,7 @@ system = "prompt.md"
                 permission: None,
                 acceptance: false,
                 search_url: None,
+                search_key: None,
             })
             .expect("the engine opens");
             let visible = engine
@@ -2314,6 +2378,47 @@ system = "prompt.md"
                 "the local fetch is always visible when listed"
             );
         }
+    }
+
+    #[test]
+    fn a_search_key_serves_the_web_tools_for_a_local_model() {
+        let fixture = Fixture::new();
+        let profile = PROFILE.replace(
+            "visible = [\"echo\"]",
+            "visible = [\"echo\", \"web_search\", \"web_fetch\"]",
+        );
+        std::fs::write(fixture.dir.path().join("web-profile.toml"), profile).expect("a profile");
+        let mut rig = fixture.rig();
+        rig.profile = fixture.dir.path().join("web-profile.toml");
+        let engine = Engine::open(OpenRequest {
+            rig,
+            workspace: fixture.dir.path().join("workspace"),
+            state_dir: fixture.dir.path().join("state"),
+            store_path: fixture.dir.path().join("state/sessions/test.json"),
+            interactions: Arc::new(DeferAllInteractionPort),
+            deltas: None,
+            model: Some(ModelOverride {
+                provider: "openai-compatible".to_owned(),
+                model: "q2_0".to_owned(),
+                base_url: Some("http://192.168.3.132:18081/v1".to_owned()),
+                api_key: "local".to_owned(),
+                context_window: None,
+            }),
+            permission: None,
+            acceptance: false,
+            search_url: None,
+            search_key: Some("search-key".to_owned()),
+        })
+        .expect("the engine opens");
+
+        assert!(
+            engine
+                .config()
+                .visible_tool_names
+                .iter()
+                .any(|name| name == "web_search"),
+            "a saved search key registers web_search for a local model"
+        );
     }
 
     #[tokio::test]
@@ -3205,6 +3310,7 @@ system = "prompt.md"
             permission: None,
             acceptance: true,
             search_url: None,
+            search_key: None,
         })
         .expect("the engine opens");
 
@@ -3358,6 +3464,7 @@ system = "prompt.md"
             error: None,
             duration_ms: 2,
             usage: StoredUsage::default(),
+            model_calls: 0,
             verification_passed: None,
             verification: None,
             tools: Vec::new(),

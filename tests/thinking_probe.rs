@@ -72,6 +72,7 @@ async fn a_thinking_model_survives_a_tool_followup() {
         permission: None,
         acceptance: false,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

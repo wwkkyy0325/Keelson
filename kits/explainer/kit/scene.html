@@ -28,7 +28,12 @@
 
         // The scene draws numbers, never computes them: the model comes from
         // data/model.json, which data/build.py derived from data/spec.json.
-        window.DATA = await (await fetch("/data/model.json")).json();
+        // A schematic film makes no numeric claims and may omit it.
+        try {
+          window.DATA = await (await fetch("/data/model.json")).json();
+        } catch {
+          window.DATA = {};
+        }
         await new Promise((resolve, reject) => {
           const script = document.createElement("script");
           script.src = "/scenes/" + id + ".js";
@@ -41,18 +46,53 @@
         const canvas = document.getElementById("c");
         const ctx = canvas.getContext("2d");
         const count = Math.max(1, Math.round(duration * fps));
-        for (let i = 0; i < count; i++) {
-          const t = i / fps;
-          ctx.save();
-          window.SCENE.draw(ctx, t, duration);
-          ctx.restore();
-          const data = canvas.toDataURL("image/png");
-          await fetch("/frame?scene=" + id + "&index=" + String(i).padStart(4, "0"), {
-            method: "POST",
-            body: data,
-          });
+
+        // A POST is not retried by the browser when the loopback connection
+        // has been dropped; three attempts cover a transient reset.
+        async function post(url, body) {
+          let last = "";
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const response = await fetch(
+                url,
+                body === undefined ? { method: "POST" } : { method: "POST", body },
+              );
+              if (response.ok) return;
+              last = url + ": HTTP " + response.status;
+            } catch (error) {
+              last = url + ": " + (error && error.message ? error.message : error);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 40));
+          }
+          throw new Error(last);
         }
-        await fetch("/done", { method: "POST" });
+
+        try {
+          for (let i = 0; i < count; i++) {
+            const t = i / fps;
+            ctx.save();
+            window.SCENE.draw(ctx, t, duration);
+            ctx.restore();
+            // A blob skips the base64 detour: less CPU and less garbage per
+            // frame than toDataURL on a 1080p canvas.
+            const blob = await new Promise((resolve) =>
+              canvas.toBlob(resolve, "image/png"),
+            );
+            if (!blob) throw new Error("frame " + i + ": toBlob returned null");
+            await post(
+              "/frame?scene=" + id + "&index=" + String(i).padStart(4, "0"),
+              blob,
+            );
+          }
+          await post("/done");
+        } catch (error) {
+          // Without this, a rejected fetch or a draw error leaves the page
+          // idle and the renderer waiting for its whole deadline.
+          const message = String(error && error.message ? error.message : error);
+          await fetch("/error?message=" + encodeURIComponent(message), {
+            method: "POST",
+          }).catch(() => {});
+        }
       })();
     </script>
   </body>

@@ -108,6 +108,7 @@ async fn an_ambiguous_brief_makes_the_model_ask() {
         permission: None,
         acceptance: true,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

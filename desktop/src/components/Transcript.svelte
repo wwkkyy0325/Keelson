@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { loadTurns } from "../lib/api";
+  import { loadTurns, stopBackground } from "../lib/api";
   import { dispatch, session } from "../lib/session-store";
   import { t } from "../lib/i18n";
   import Turn from "./Turn.svelte";
@@ -44,21 +44,24 @@
     return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
   }
 
-  /// Background commands tick while they run; the row shows elapsed time
-  /// because the command's length is not known in advance.
-  let now = $state(Date.now());
-  $effect(() => {
-    const running = $session.background.some((task) => task.ok === null);
-    if (!running) return;
-    const timer = setInterval(() => (now = Date.now()), 1000);
-    return () => clearInterval(timer);
-  });
-
+  /// The engine measures the command's runtime; the poll refreshes it every
+  /// second. The row shows that number directly, so no local clock can drift
+  /// from it or starve against the poll.
   function elapsed(ms: number): string {
     const seconds = Math.max(0, Math.floor(ms / 1000));
     if (seconds < 60) return `${seconds} s`;
     const minutes = Math.floor(seconds / 60);
     return `${minutes} m ${String(seconds % 60).padStart(2, "0")} s`;
+  }
+
+  /// A long-running command (a dev server, a watcher) has no natural end; the
+  /// user can end it here. The engine still hands its result to the model.
+  async function stopTask(id: string): Promise<void> {
+    try {
+      await stopBackground(id);
+    } catch (cause) {
+      onError(String(cause));
+    }
   }
 
   function compactCount(count: number): string {
@@ -93,6 +96,18 @@
       answerTimer = null;
       answerSource = $session.running?.text ?? "";
     }, 80);
+  });
+
+  // The running card shows elapsed time and cost as they accumulate. The
+  // effect depends on a derived boolean, not on the store, so streamed deltas
+  // do not restart the ticker.
+  let runningTurn = $derived($session.running !== null);
+  let liveNow = $state(Date.now());
+  $effect(() => {
+    if (!runningTurn) return;
+    liveNow = Date.now();
+    const timer = setInterval(() => (liveNow = Date.now()), 1000);
+    return () => clearInterval(timer);
   });
 
   // Keep the last message in view unless the user scrolled up. The effect
@@ -226,6 +241,14 @@
   {/each}
 
   {#if $session.running}
+    {@const usage = $session.running.usage}
+    {@const cacheShare =
+      usage.inputTokens > 0
+        ? Math.min(
+            100,
+            Math.round((usage.cachedInputTokens / usage.inputTokens) * 100),
+          )
+        : 0}
     <article class="turn running">
       <div class="user">{$session.running.input}</div>
       {#if $session.running.thinking || $session.running.tools.length > 0 || $session.running.process.length > 0}
@@ -293,6 +316,29 @@
           {$t("turn.verifying", { count: $session.running.verifying })}
         </p>
       {/if}
+      <div class="turn-meta">
+        <span title={$t("turn.durationHint")}>
+          {elapsed(liveNow - $session.running.startedAt)}
+        </span>
+        {#if usage.inputTokens > 0 || usage.outputTokens > 0}
+          <span title={$t("turn.inputTokensHint")}>
+            ↑{compactCount(usage.inputTokens)}
+          </span>
+          <span title={$t("turn.outputTokensHint")}>
+            ↓{compactCount(usage.outputTokens)}
+          </span>
+        {/if}
+        {#if $session.running.modelCalls > 0}
+          <span title={$t("turn.callsHint")}>
+            {$t("turn.calls", { count: $session.running.modelCalls })}
+          </span>
+        {/if}
+        {#if usage.cachedInputTokens > 0 && usage.inputTokens > 0}
+          <span title={$t("turn.cacheHint")}>
+            {$t("turn.cacheShare", { percent: cacheShare })}
+          </span>
+        {/if}
+      </div>
     </article>
   {/if}
 
@@ -313,7 +359,17 @@
             <span class="tool-name">{task.id}</span>
             <span class="tool-args">{task.program}</span>
             {#if task.ok === null}
-              <span class="tool-time">{elapsed(now - task.startedAt)}</span>
+              <span class="tool-time">{elapsed(task.durationMs)}</span>
+              <button
+                class="tool-stop"
+                onclick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void stopTask(task.id);
+                }}
+              >
+                {$t("turn.backgroundStop")}
+              </button>
             {:else}
               <span class="tool-time">{took(task.durationMs, task.ok)}</span>
             {/if}

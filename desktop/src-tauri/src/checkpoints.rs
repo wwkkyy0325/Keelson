@@ -57,6 +57,56 @@ fn key(session_id: &str, seq: u32) -> String {
     format!("{session_id}:{seq}")
 }
 
+/// Generated artifacts are not part of a turn's source changes. A render can
+/// write thousands of frames into `out/`; checkpointing them makes every
+/// snapshot and diff slow and drowns the real edits.
+const GENERATED: &[&str] = &[
+    ".keel",
+    "out",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".next",
+    ".svelte-kit",
+];
+
+fn excludes() -> String {
+    let mut text = String::from("# Generated artifacts are not part of a turn's source changes.\n");
+    for name in GENERATED {
+        text.push_str(name);
+        text.push_str("/\n");
+    }
+    text
+}
+
+/// True for a path inside one of the generated top-level directories.
+fn is_generated(path: &str) -> bool {
+    let first = path.split(['/', '\\']).next().unwrap_or(path);
+    GENERATED.contains(&first)
+}
+
+fn filter_generated(changes: Vec<FileChange>) -> Vec<FileChange> {
+    changes
+        .into_iter()
+        .filter(|change| !is_generated(&change.path))
+        .collect()
+}
+
+/// A GUI host has no console; git must not flash one for each checkpoint.
+fn quiet_git() -> Command {
+    let mut command = Command::new("git");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command
+}
+
 /// Commits the current workspace and returns the commit id. The first call
 /// initializes the shadow repository.
 pub fn snapshot(workspace: &Path, state_dir: &Path) -> Result<String, String> {
@@ -137,6 +187,9 @@ pub fn undo(state_dir: &Path, workspace: &Path, session_id: &str, seq: u32) -> R
         .map(str::trim)
         .filter(|line| !line.is_empty())
     {
+        if is_generated(changed_path) {
+            continue;
+        }
         let in_before = run_git(
             &git_dir,
             workspace,
@@ -190,7 +243,7 @@ pub fn changes(
         return Ok(Vec::new());
     }
     if let Some(changes) = &entry.changes {
-        return Ok(changes.clone());
+        return Ok(filter_generated(changes.clone()));
     }
     let git_dir = repo_dir(state_dir, workspace).join(".git");
     diff_changes(&git_dir, workspace, &entry.before, &entry.after)
@@ -222,7 +275,7 @@ pub fn changes_for_session(
             continue;
         }
         let changes = match &entry.changes {
-            Some(changes) => changes.clone(),
+            Some(changes) => filter_generated(changes.clone()),
             None => {
                 diff_changes(&git_dir, workspace, &entry.before, &entry.after).unwrap_or_default()
             }
@@ -253,36 +306,39 @@ fn diff_changes(
         .filter_map(|line| line.split_once('\t'))
         .map(|(status, path)| (path.to_owned(), status.to_owned()))
         .collect();
-    Ok(numstat
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, '\t');
-            let added = parts.next()?;
-            let removed = parts.next()?;
-            let path = parts.next()?;
-            Some(FileChange {
-                path: path.to_owned(),
-                status: statuses
-                    .get(path)
-                    .cloned()
-                    .unwrap_or_else(|| "M".to_owned()),
-                // Binary files report `-`; they still count as changed.
-                added: added.parse().unwrap_or(0),
-                removed: removed.parse().unwrap_or(0),
+    Ok(filter_generated(
+        numstat
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.splitn(3, '\t');
+                let added = parts.next()?;
+                let removed = parts.next()?;
+                let path = parts.next()?;
+                Some(FileChange {
+                    path: path.to_owned(),
+                    status: statuses
+                        .get(path)
+                        .cloned()
+                        .unwrap_or_else(|| "M".to_owned()),
+                    // Binary files report `-`; they still count as changed.
+                    added: added.parse().unwrap_or(0),
+                    removed: removed.parse().unwrap_or(0),
+                })
             })
-        })
-        .collect())
+            .collect(),
+    ))
 }
 
 fn ensure_repo(workspace: &Path, state_dir: &Path) -> Result<PathBuf, String> {
     let repo = repo_dir(state_dir, workspace);
     let git_dir = repo.join(".git");
     if git_dir.is_dir() {
+        write_excludes(&git_dir, workspace)?;
         return Ok(git_dir);
     }
     std::fs::create_dir_all(&repo)
         .map_err(|error| format!("无法创建检查点目录 {}：{error}", repo.display()))?;
-    let output = Command::new("git")
+    let output = quiet_git()
         .arg("init")
         .arg("--quiet")
         .arg(&repo)
@@ -303,11 +359,41 @@ fn ensure_repo(workspace: &Path, state_dir: &Path) -> Result<PathBuf, String> {
     ] {
         run_git(&git_dir, workspace, &["config", name, value])?;
     }
+    write_excludes(&git_dir, workspace)?;
     Ok(git_dir)
 }
 
+/// Writes the shadow repo's exclude list, and drops newly excluded paths from
+/// the index once. The working tree is untouched.
+fn write_excludes(git_dir: &Path, workspace: &Path) -> Result<(), String> {
+    let info = git_dir.join("info");
+    std::fs::create_dir_all(&info).map_err(|error| format!("无法创建检查点规则目录：{error}"))?;
+    let path = info.join("exclude");
+    let text = excludes();
+    if std::fs::read_to_string(&path).unwrap_or_default() == text {
+        return Ok(());
+    }
+    std::fs::write(&path, text).map_err(|error| format!("无法写入检查点排除规则：{error}"))?;
+    for ignored in GENERATED {
+        run_git(
+            git_dir,
+            workspace,
+            &[
+                "rm",
+                "-r",
+                "--cached",
+                "--quiet",
+                "--ignore-unmatch",
+                "--",
+                ignored,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 fn run_git(git_dir: &Path, work_tree: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = quiet_git()
         .arg(format!("--git-dir={}", git_dir.display()))
         .arg(format!("--work-tree={}", work_tree.display()))
         .args(args)
@@ -388,6 +474,29 @@ mod tests {
         );
         assert!(!workspace.join("new.txt").exists());
         assert!(undo(&state_dir, &workspace, "s-1", 1).is_err());
+    }
+
+    #[test]
+    fn generated_directories_are_not_checkpointed() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        let state_dir = dir.path().join("state");
+        std::fs::create_dir_all(workspace.join("out/frames")).expect("workspace");
+        std::fs::write(workspace.join("out/frames/0000.png"), "one").expect("a frame");
+        std::fs::write(workspace.join("notes.txt"), "one\n").expect("notes");
+
+        let before = snapshot(&workspace, &state_dir).expect("the first snapshot");
+        std::fs::write(workspace.join("out/frames/0000.png"), "two").expect("the frame edit");
+        std::fs::write(workspace.join("notes.txt"), "two\n").expect("the edit");
+        let after = snapshot(&workspace, &state_dir).expect("the second snapshot");
+        record(&state_dir, &workspace, "s-1", 1, &before, &after).expect("record");
+
+        let stats = changes(&state_dir, &workspace, "s-1", 1).expect("the diff stats");
+        assert_eq!(stats.len(), 1, "{stats:?}");
+        assert_eq!(stats[0].path, "notes.txt");
     }
 
     #[test]

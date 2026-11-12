@@ -8,11 +8,18 @@ import type {
   SessionView,
   Turn,
   TurnPage,
+  TurnUsage,
 } from "./protocol";
 
 export type RunningTurn = {
   seq: number;
   input: string;
+  /// When the client saw the turn start; the live card counts from here.
+  startedAt: number;
+  /// Usage summed over the model calls that finished so far.
+  usage: TurnUsage;
+  /// Model calls finished so far.
+  modelCalls: number;
   /// Text from the model call in progress. When that call asks for a tool,
   /// its text was commentary, so it moves to `process` and the answer area
   /// only ever holds the call that actually finished the turn.
@@ -98,7 +105,7 @@ export type Action =
       error: string | null;
       output: string | null;
     }
-  | { type: "background-started"; id: string; program: string; startedAt: number }
+  | { type: "background-started"; id: string; program: string }
   | {
       type: "background-finished";
       id: string;
@@ -106,9 +113,15 @@ export type Action =
       exitCode: number | null;
       durationMs: number;
       outputPath: string;
-      startedAt: number;
     }
   | { type: "background-synced"; tasks: LiveBackground[] }
+  | {
+      type: "model-finished";
+      seq: number;
+      inputTokens: number;
+      outputTokens: number;
+      cachedInputTokens: number;
+    }
   | { type: "turn-verifying"; seq: number; checks: number }
   | { type: "turn-changes"; seq: number }
   | { type: "turn-changes-loaded"; seq: number; changes: FileChange[] }
@@ -166,6 +179,9 @@ export function reduce(state: SessionState, action: Action): SessionState {
         running: {
           seq: action.seq,
           input: action.input,
+          startedAt: Date.now(),
+          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+          modelCalls: 0,
           text: "",
           thinking: "",
           process: [],
@@ -193,6 +209,26 @@ export function reduce(state: SessionState, action: Action): SessionState {
         running: {
           ...state.running,
           thinking: state.running.thinking + action.text,
+        },
+      };
+
+    case "model-finished":
+      if (state.running?.seq !== action.seq) {
+        return state;
+      }
+      return {
+        ...state,
+        running: {
+          ...state.running,
+          modelCalls: state.running.modelCalls + 1,
+          usage: {
+            inputTokens:
+              state.running.usage.inputTokens + action.inputTokens,
+            outputTokens:
+              state.running.usage.outputTokens + action.outputTokens,
+            cachedInputTokens:
+              state.running.usage.cachedInputTokens + action.cachedInputTokens,
+          },
         },
       };
 
@@ -254,7 +290,6 @@ export function reduce(state: SessionState, action: Action): SessionState {
       const task: LiveBackground = {
         id: action.id,
         program: action.program,
-        startedAt: action.startedAt,
         ok: null,
         durationMs: 0,
         outputPath: null,
@@ -281,7 +316,6 @@ export function reduce(state: SessionState, action: Action): SessionState {
             {
               id: action.id,
               program: action.program,
-              startedAt: action.startedAt,
               ok,
               durationMs: action.durationMs,
               outputPath: action.outputPath,
@@ -291,6 +325,9 @@ export function reduce(state: SessionState, action: Action): SessionState {
     }
 
     case "background-synced":
+      // The engine's measured runtime is the row's only clock: the poll
+      // refreshes it every second and a local ticker would only drift from
+      // it or starve against it.
       return { ...state, background: action.tasks };
 
     case "turn-verifying":

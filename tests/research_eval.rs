@@ -85,6 +85,7 @@ fn open(workspace: &Path, state: &Path) -> Option<Engine> {
         permission: None,
         acceptance: true,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
     Some(engine)

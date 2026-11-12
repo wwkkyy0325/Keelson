@@ -5,6 +5,9 @@
 /desktop/dist
 /desktop/src-tauri/target
 /desktop/src-tauri/gen
+/desktop/src-tauri/out
+/desktop-dev.log
+/desktop-release.log
 
 __pycache__/
 *.pyc

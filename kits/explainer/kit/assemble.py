@@ -17,6 +17,26 @@ def run(args, cwd=None):
     subprocess.run(args, check=True, cwd=cwd)
 
 
+def font_option() -> str:
+    """Point libass at a CJK font.
+
+    A native Windows ffmpeg finds Microsoft YaHei through fontconfig. WSL
+    does not index the mounted Windows fonts, so the burn renders tofu boxes
+    unless the directory is named here.
+    """
+    windows = Path("/mnt/c/Windows/Fonts")
+    if windows.is_dir():
+        return f":fontsdir={windows}"
+    if Path("C:/Windows/Fonts").is_dir():
+        return ""
+    probe = subprocess.run(["fc-match", "Microsoft YaHei"], capture_output=True, text=True)
+    if probe.returncode != 0 or "DejaVu" in probe.stdout:
+        raise SystemExit(
+            "no CJK font for subtitles: install one, or mount C:/Windows/Fonts"
+        )
+    return ""
+
+
 def main():
     board = json.loads((ROOT / "storyboard.json").read_text(encoding="utf-8"))
     plan = json.loads((OUT / "timeline.json").read_text(encoding="utf-8"))
@@ -95,6 +115,13 @@ def main():
 
     # Burn the subtitles and normalize the mix in one pass. The style is part
     # of the kit: one font, one size, one bottom band.
+    subtitles = (
+        "subtitles=all.srt"
+        + font_option()
+        + ":force_style='FontName=Microsoft YaHei,FontSize=16,"
+        "PrimaryColour=&H00FFFFFF,OutlineColour=&H00191A1E,BorderStyle=1,"
+        "Outline=2,Shadow=0,MarginV=46'"
+    )
     run(
         [
             "ffmpeg",
@@ -105,9 +132,7 @@ def main():
             "-i",
             "video-nosub.mp4",
             "-vf",
-            "subtitles=all.srt:force_style='FontName=Microsoft YaHei,FontSize=16,"
-            "PrimaryColour=&H00FFFFFF,OutlineColour=&H00191A1E,BorderStyle=1,"
-            "Outline=2,Shadow=0,MarginV=46'",
+            subtitles,
             "-af",
             "loudnorm=I=-16:TP=-1.5:LRA=11",
             "-c:v",

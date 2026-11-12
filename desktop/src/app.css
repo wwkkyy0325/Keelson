@@ -109,6 +109,23 @@ pre {
   align-items: center;
   justify-content: center;
   gap: 0.6rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.boot-error {
+  max-width: 34rem;
+  margin: 0;
+  color: var(--error);
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.boot-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
 }
 
 .brand {
@@ -1440,6 +1457,10 @@ header .title {
   white-space: nowrap;
 }
 
+.change-more {
+  color: var(--muted);
+}
+
 .turn-actions {
   display: flex;
   align-items: center;
@@ -1667,6 +1688,25 @@ header .title {
   color: var(--muted);
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
+}
+
+.tool-stop {
+  flex: none;
+  margin-left: 0.15rem;
+  padding: 0.02rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.tool-stop:hover {
+  border-color: var(--muted);
+  color: var(--text);
 }
 
 .tool-detail {

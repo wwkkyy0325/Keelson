@@ -73,6 +73,7 @@ async fn a_large_messy_workspace_is_repaired() {
         permission: None,
         acceptance: true,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

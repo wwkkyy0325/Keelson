@@ -493,6 +493,7 @@ mod tests {
                     error: None,
                     duration_ms: 1,
                     usage: keelson::engine::StoredUsage::default(),
+                    model_calls: 0,
                     verification_passed: None,
                     verification: None,
                     tools: Vec::new(),

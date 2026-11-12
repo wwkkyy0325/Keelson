@@ -101,6 +101,7 @@ async fn the_model_reads_an_image_it_views() {
         permission: None,
         acceptance: true,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

@@ -70,6 +70,7 @@ async fn a_cross_file_rename_uses_apply_edits() {
         permission: None,
         acceptance: true,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

@@ -147,6 +147,7 @@ async fn a_topic_becomes_an_evidence_dossier_and_a_storyboard() {
         permission: None,
         acceptance: false,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 
@@ -315,6 +316,7 @@ async fn a_dead_source_is_replaced_or_removed() {
         permission: None,
         acceptance: false,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens");
 

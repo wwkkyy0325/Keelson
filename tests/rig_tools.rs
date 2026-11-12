@@ -71,6 +71,7 @@ fn open(rig_name: &str, profile: &str, workspace: &Path) -> Engine {
         permission: None,
         acceptance: true,
         search_url: None,
+        search_key: None,
     })
     .expect("the engine opens")
 }
@@ -143,6 +144,7 @@ fn the_explainer_rig_exposes_render_and_probe() {
         "web_fetch",
         "view_image",
         "render_scene",
+        "render_film",
         "probe_media",
     ] {
         assert!(
