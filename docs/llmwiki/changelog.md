@@ -2575,3 +2575,23 @@ The failed acceptance check triggered two reprompts, so the same final answer
 was streamed three times. A conversational turn had no tests of its own to
 run; the workspace scan turned a cleanup request into a seventeen-minute
 unrelated test run.
+
+## 2026-11-12 — a local model can declare its window; huge workspaces skip checkpoints
+
+- The manual endpoint form has a context-window field, and `SetupState`
+  carries it. A local server that reports 131072 tokens can be configured
+  without the profile's larger default.
+- Checkpoints are skipped when a workspace exceeds 50,000 files or its shadow
+  index exceeds 8 MB. Snapshot, history and undo return without running
+  `git add -A`; a broad `D:\dev` no longer blocks a turn before the model
+  call.
+- The coding prompt prefers `pwsh` (PowerShell 7) over `powershell` (5.1) on
+  Windows; the shell tool executes the program it is given and does not
+  choose a version.
+
+### Why
+
+A 128k local model was being sent the profile's one-million-token window, and
+a turn on a dev root spent minutes hashing unrelated directories before the
+first model call. Both are configuration and scope problems, not model
+problems.

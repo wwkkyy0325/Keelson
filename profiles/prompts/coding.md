@@ -42,6 +42,9 @@ Recommended:
   user asked for one.
 - Set `shell`'s `mutates` to true when the command writes to the workspace; a
   test-only command leaves it false.
+- On Windows, run scripts with `pwsh` (PowerShell 7), not `powershell`
+  (Windows PowerShell 5.1). Both are on PATH; 5.1 lacks modern syntax and
+  behaves differently. The shell tool does not choose between them.
 - Set `read_file`'s `line_numbers` to true when you need to refer to lines;
   the prefix is not part of the file and must not appear in edit text. The
   same goes for the `[file: ...]` header: replace only real file text, and

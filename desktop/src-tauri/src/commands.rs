@@ -45,6 +45,8 @@ pub struct SetupState {
     pub provider_name: String,
     pub base_url: String,
     pub model: String,
+    /// The selected model's context capacity, when the host knows it.
+    pub model_context: Option<u32>,
     pub locale: String,
     pub last_workspace: String,
     pub key_provider: String,
@@ -516,6 +518,7 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         provider_name: config.provider_name,
         base_url: config.base_url,
         model: config.model,
+        model_context: config.model_context,
         locale: config.locale,
         last_workspace: config.last_workspace,
         key_provider: config.key_provider,

@@ -29,6 +29,7 @@
     providerId: string;
     baseUrl: string;
     model: string;
+    context: number | null;
     searchUrl: string;
   };
 
@@ -47,6 +48,8 @@
   let providerKind = $state("openai-compatible");
   let baseUrl = $state("");
   let modelName = $state("");
+  /// The manual endpoint's context capacity; empty keeps the profile's.
+  let manualContext = $state("");
   let keyDraft = $state("");
   /// A SearXNG base URL for models whose provider has no search endpoint.
   let searchUrl = $state("");
@@ -95,6 +98,16 @@
   let hasKeyForSelection = $derived(
     !!setup?.keyProviders?.includes(activeProviderId),
   );
+
+  /// Empty means "use the profile's window"; a non-empty value must be a
+  /// positive integer.
+  function manualContextValue(): number | null {
+    const text = manualContext.trim();
+    if (!text) return null;
+    const value = Number(text);
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+
   let dirty = $derived(
     pendingApply ||
       (saved !== null &&
@@ -103,6 +116,7 @@
           activeProviderId !== saved.providerId ||
           activeBaseUrl !== saved.baseUrl ||
           activeModel !== saved.model ||
+          (manual && manualContextValue() !== saved.context) ||
           searchUrl.trim() !== saved.searchUrl)),
   );
 
@@ -137,6 +151,7 @@
         providerId: state.providerId,
         baseUrl: state.baseUrl,
         model: state.model,
+        context: state.modelContext ?? null,
         searchUrl: state.searchUrl ?? "",
       };
       searchUrl = state.searchUrl ?? "";
@@ -146,6 +161,7 @@
           : "openai-compatible";
       baseUrl = state.baseUrl;
       modelName = state.model;
+      manualContext = state.modelContext ? String(state.modelContext) : "";
       const value = await catalogTask;
       if (value) applySelection(value, state);
       // The cached list is on screen; revalidate behind it when it is stale.
@@ -254,6 +270,10 @@
       error = $t("wizard.error.model");
       return;
     }
+    if (manual && manualContext.trim() && manualContextValue() === null) {
+      error = $t("settings.contextError");
+      return;
+    }
     if (!hasKeyForSelection && !keyDraft.trim()) {
       error = setup?.hasKey
         ? $t("settings.keyOther")
@@ -277,7 +297,7 @@
         activeProviderName,
         activeBaseUrl,
         activeModel,
-        manual ? null : (selectedModel?.context ?? null),
+        manual ? manualContextValue() : (selectedModel?.context ?? null),
         searchUrl.trim(),
       );
       pendingApply = true;
@@ -292,6 +312,7 @@
         providerId: activeProviderId,
         baseUrl: activeBaseUrl,
         model: activeModel,
+        context: manual ? manualContextValue() : (selectedModel?.context ?? null),
         searchUrl: searchUrl.trim(),
       };
       pendingApply = false;
@@ -385,8 +406,17 @@
               <span>{$t("wizard.model.model")}</span>
               <input
                 bind:value={modelName}
-               
+
                 placeholder={$t("wizard.model.modelPlaceholder")}
+                spellcheck="false"
+              />
+            </label>
+            <label>
+              <span>{$t("wizard.model.context")}</span>
+              <input
+                bind:value={manualContext}
+                placeholder={$t("wizard.model.contextPlaceholder")}
+                inputmode="numeric"
                 spellcheck="false"
               />
             </label>

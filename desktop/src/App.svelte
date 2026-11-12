@@ -22,6 +22,7 @@
     providerName: "",
     baseUrl: "https://api.deepseek.com",
     model: "deepseek-flash",
+    modelContext: null,
     locale: "zh",
     lastWorkspace: "",
     keyProvider: "",

@@ -77,6 +77,7 @@ function setup(overrides: Partial<SetupState> = {}): SetupState {
     rigs: [],
     problems: [],
     ...overrides,
+    modelContext: overrides.modelContext ?? null,
   };
 }
 

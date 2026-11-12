@@ -42,6 +42,9 @@
   );
   let baseUrl = $state(untrack(() => initial.manual?.baseUrl ?? ""));
   let modelName = $state(untrack(() => initial.manual?.model ?? ""));
+  let manualContext = $state(
+    untrack(() => (initial.modelContext ? String(initial.modelContext) : "")),
+  );
   let error = $state<string | null>(untrack(() => initialError));
   let busy = $state(false);
 
@@ -192,6 +195,13 @@
       : $t("wizard.model.openai");
   }
 
+  function manualContextValue(): number | null {
+    const text = manualContext.trim();
+    if (!text) return null;
+    const value = Number(text);
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+
   async function nextFromConnect(): Promise<void> {
     if (!manual && !selectedModel) {
       error = $t("wizard.error.select");
@@ -199,6 +209,10 @@
     }
     if (manual && (!baseUrl.trim() || !modelName.trim())) {
       error = $t("wizard.error.model");
+      return;
+    }
+    if (manual && manualContext.trim() && manualContextValue() === null) {
+      error = $t("wizard.model.contextError");
       return;
     }
     if (!keyDraft.trim() && !hasKeyForSelection) {
@@ -220,7 +234,7 @@
         activeProviderName,
         activeBaseUrl,
         activeModel,
-        manual ? null : (selectedModel?.context ?? null),
+        manual ? manualContextValue() : (selectedModel?.context ?? null),
       );
       go(1);
     } catch (cause) {
@@ -343,6 +357,15 @@
               <input
                 bind:value={modelName}
                 placeholder={$t("wizard.model.modelPlaceholder")}
+                spellcheck="false"
+              />
+            </label>
+            <label>
+              <span>{$t("wizard.model.context")}</span>
+              <input
+                bind:value={manualContext}
+                placeholder={$t("wizard.model.contextPlaceholder")}
+                inputmode="numeric"
                 spellcheck="false"
               />
             </label>

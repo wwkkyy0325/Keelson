@@ -107,6 +107,75 @@ fn quiet_git() -> Command {
     command
 }
 
+/// A workspace this large is a dev root, not a project; a pre-turn `git add`
+/// would scan it for minutes. Checkpoints are skipped instead.
+const MAX_CHECKPOINT_FILES: usize = 50_000;
+/// A shadow index above this size also marks a pathological workspace. The
+/// metadata check is O(1), so an existing bad repo is refused immediately.
+const MAX_CHECKPOINT_INDEX_BYTES: u64 = 8 * 1024 * 1024;
+
+fn checkpoint_index_too_large(state_dir: &Path, workspace: &Path) -> bool {
+    std::fs::metadata(repo_dir(state_dir, workspace).join(".git/index"))
+        .map(|metadata| metadata.len() > MAX_CHECKPOINT_INDEX_BYTES)
+        .unwrap_or(false)
+}
+
+fn is_skipped_dir(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(
+            ".git"
+                | "node_modules"
+                | "target"
+                | "dist"
+                | "build"
+                | ".venv"
+                | "venv"
+                | "__pycache__"
+                | "site-packages"
+                | ".pytest_cache"
+                | ".mypy_cache"
+                | ".ruff_cache"
+                | ".cache"
+                | "__pypackages__"
+                | ".next"
+                | ".svelte-kit"
+                | "coverage"
+        )
+    )
+}
+
+fn exceeds_file_limit(workspace: &Path, limit: usize) -> bool {
+    let mut stack = vec![workspace.to_path_buf()];
+    let mut count = 0usize;
+    while let Some(directory) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                if !is_skipped_dir(&entry.path()) {
+                    stack.push(entry.path());
+                }
+            } else {
+                count = count.saturating_add(1);
+                if count > limit {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn checkpoints_disabled(state_dir: &Path, workspace: &Path) -> bool {
+    checkpoint_index_too_large(state_dir, workspace)
+        || exceeds_file_limit(workspace, MAX_CHECKPOINT_FILES)
+}
+
 /// Commits the current workspace and returns the commit id. The first call
 /// initializes the shadow repository.
 pub fn snapshot(workspace: &Path, state_dir: &Path) -> Result<String, String> {
@@ -117,6 +186,9 @@ pub fn snapshot(workspace: &Path, state_dir: &Path) -> Result<String, String> {
     let work = std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
     if state.starts_with(&work) {
         return Err("状态目录位于工作区内，无法建立检查点".to_owned());
+    }
+    if checkpoints_disabled(state_dir, workspace) {
+        return Err("工作区过大，已跳过本轮检查点".to_owned());
     }
     let git_dir = ensure_repo(workspace, state_dir)?;
     run_git(&git_dir, workspace, &["add", "-A"])?;
@@ -138,6 +210,9 @@ pub fn record(
     before: &str,
     after: &str,
 ) -> Result<(), String> {
+    if checkpoint_index_too_large(state_dir, workspace) {
+        return Ok(());
+    }
     let path = records_path(state_dir, workspace);
     let mut records = load_records(&path)?;
     // Capture the changed files with the pair: a history page then reads
@@ -159,6 +234,9 @@ pub fn record(
 /// Restores every path that differs between the turn's two commits. The
 /// record is marked undone only after the whole restore succeeded.
 pub fn undo(state_dir: &Path, workspace: &Path, session_id: &str, seq: u32) -> Result<(), String> {
+    if checkpoint_index_too_large(state_dir, workspace) {
+        return Err("工作区过大，检查点已停用".to_owned());
+    }
     let path = records_path(state_dir, workspace);
     let mut records = load_records(&path)?;
     let entry = records
@@ -235,6 +313,9 @@ pub fn changes(
     session_id: &str,
     seq: u32,
 ) -> Result<Vec<FileChange>, String> {
+    if checkpoint_index_too_large(state_dir, workspace) {
+        return Ok(Vec::new());
+    }
     let records = load_records(&records_path(state_dir, workspace))?;
     let Some(entry) = records.turns.get(&key(session_id, seq)) else {
         return Ok(Vec::new());
@@ -256,6 +337,9 @@ pub fn changes_for_session(
     workspace: &Path,
     session_id: &str,
 ) -> BTreeMap<u32, Vec<FileChange>> {
+    if checkpoint_index_too_large(state_dir, workspace) {
+        return BTreeMap::new();
+    }
     let Ok(records) = load_records(&records_path(state_dir, workspace)) else {
         return BTreeMap::new();
     };
@@ -441,6 +525,19 @@ mod tests {
             .output()
             .map(|output| output.status.success())
             .unwrap_or(false)
+    }
+
+    #[test]
+    fn a_huge_workspace_is_refused_before_git_runs() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        for index in 0..3 {
+            std::fs::write(dir.path().join(format!("{index}.txt")), "x").expect("a file");
+        }
+        assert!(!exceeds_file_limit(dir.path(), 3));
+        assert!(exceeds_file_limit(dir.path(), 2));
+
+        std::fs::create_dir_all(dir.path().join("node_modules/pkg")).expect("a package");
+        std::fs::write(dir.path().join("node_modules/pkg/index.js"), "x").expect("a file");
     }
 
     #[test]

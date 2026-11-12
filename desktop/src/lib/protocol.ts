@@ -132,6 +132,7 @@ export type SetupState = {
   providerName: string;
   baseUrl: string;
   model: string;
+  modelContext: number | null;
   locale: string;
   lastWorkspace: string;
   keyProvider: string;
