@@ -1370,6 +1370,61 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    #[ignore = "needs Microsoft Edge"]
+    async fn the_shipped_kit_renders_each_style() {
+        let kit = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("kits")
+            .join("explainer");
+        let temp = tempfile::TempDir::new().expect("a temp dir");
+        let scene = r##"window.SCENE = {
+  id: "01",
+  draw(ctx) {
+    const D = window.DESIGN;
+    D.bg(ctx);
+    D.kicker(ctx, "STYLE TEST");
+    D.headline(ctx, ["One idea"], 112, 220, 72);
+    D.body(ctx, "A body line.", 112, 360, 40, D.C.muted);
+    D.panel(ctx, 112, 450, 420, 160);
+    D.mascot(ctx, 1500, 420, 1);
+    D.mono(ctx, "42", 1500, 700, 64, D.C.accent);
+    ctx.fillStyle = D.alpha(D.C.ink, 0.2);
+    ctx.fillRect(112, 700, 200, 20);
+  },
+};"##;
+        for style in [
+            "paper-editorial",
+            "warm-documentary",
+            "dark-technical",
+            "bright-explainer",
+            "swiss-minimal",
+        ] {
+            let root = temp.path().join(style);
+            copy_dir(&kit.join("kit"), &root.join("kit"));
+            std::fs::create_dir_all(root.join("scenes")).expect("the scenes dir");
+            std::fs::copy(
+                kit.join("kit/styles").join(format!("{style}.js")),
+                root.join("kit/style.js"),
+            )
+            .expect("the style");
+            std::fs::write(root.join("scenes/01.js"), scene).expect("the scene");
+
+            let context = ctx(temp.path());
+            let mut args = ToolArgs::new();
+            args.insert("root", ArgValue::String(root.display().to_string()));
+            args.insert("scene", ArgValue::String("01".to_owned()));
+            args.insert("duration_ms", ArgValue::Integer(100));
+            args.insert("fps", ArgValue::Integer(10));
+            let rendered = RenderSceneTool::new().call(args, &context).await;
+            assert!(rendered.is_success(), "{style}: {:?}", rendered.error());
+            let frames = std::fs::read_dir(root.join("out/frames/01"))
+                .expect("the frames")
+                .flatten()
+                .count();
+            assert!(frames >= 1, "{style}");
+        }
+    }
+
     #[test]
     fn a_static_request_cannot_leave_the_root() {
         let temp = tempfile::TempDir::new().expect("a temp dir");

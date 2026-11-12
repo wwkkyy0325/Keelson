@@ -127,6 +127,22 @@ Material:
   `assets.md`. If a scene needs a photo the user has not provided, stop and
   ask; do not invent one.
 
+Visual style:
+- A series records one style in `series.json` (`style`); `new_episode`
+  copies that preset into `episodes/<episode>/kit/style.js`. Presets:
+  `paper-editorial`, `warm-documentary`, `dark-technical`, `bright-explainer`,
+  `swiss-minimal`. Do not mix presets within one film; change the series style
+  before the first episode, not scene by scene. To switch a series, edit
+  `style` in `series.json` before creating the next episode; already rendered
+  episodes keep their style.
+- Write scene code with tokens only: `D.C`, `D.alpha(color, opacity)`,
+  `D.fonts`, `D.panel`, `D.headline`, `D.mascot`. No hex/rgb literals, font
+  strings or radii in a scene; those are style decisions, not scene decisions.
+- The style anchor gate (step 3) shows one or two frames in the chosen style
+  before the storyboard is locked. The whole film must read as one system.
+- For a single-video project, copy `kit/styles/<name>.js` to `kit/style.js`
+  once and keep it; do not restyle individual scenes.
+
 Layout and motion:
 - 1920x1080 by default. Keep content above the subtitle band: a two-line cue
   reaches about 280 pixels up from the bottom (y = 800 on a 1080 frame), and

@@ -42,6 +42,23 @@ releases/001-slug/          film.mp4, subtitles, cover and publish.md
 `archive_episode(episode, status)` copies the finished cut to `releases/`,
 deletes `out/frames` and updates `series.json`. Do not copy the kit by hand.
 
+## Styles
+
+`kit/style.js` selects the look; `design.js` turns it into tokens and
+helpers. A series records one style in `series.json`, and `new_episode`
+copies the preset into the episode:
+
+- `paper-editorial` — warm paper, ink type, vermilion accent, dot grid, cat.
+- `warm-documentary` — muted film colour, grain, serif quotations, sun.
+- `dark-technical` — near-black blueprint, cyan/amber, monospace, node.
+- `bright-explainer` — white, saturated blocks, heavy sans, rounded cards.
+- `swiss-minimal` — white/black/red, strict grid, square panels.
+
+Scenes use only `D.C`, `D.alpha(color, opacity)`, `D.fonts`, `D.panel`,
+`D.headline` and `D.mascot`; a literal colour or font in a scene pins it to one
+palette. `copy kit/styles/<name>.js kit/style.js` is the only edit needed to
+switch a single-video project.
+
 ## Run it
 
 ```bash

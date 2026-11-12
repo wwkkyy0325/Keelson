@@ -12,7 +12,10 @@
 // Rules of the house:
 // - content stays above the subtitle band (y > 920 is subtitles);
 // - one headline, one secondary line, one picture;
-// - motion is a slide, a fade or a cut, eased with the kit's helpers.
+// - motion is a slide, a fade or a cut, eased with the kit's helpers;
+// - style comes from D.C/D.alpha/D.fonts/D.panel/D.mascot only. A hex, rgb or
+//   font literal in this file pins the scene to one palette and breaks the
+//   series style.
 window.SCENE = {
   id: "scene-id",
   draw(ctx, t, duration) {

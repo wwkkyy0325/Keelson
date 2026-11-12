@@ -2531,3 +2531,26 @@ One episode's `script.md`, `storyboard.json`, `scenes/` and `out/` at the
 project root cannot be reused for a second episode. A self-contained episode
 folder is movable, archivable and safe to prune; the index and release folder
 make a series readable without opening every episode.
+
+## 2026-11-12 — the explainer kit has five style presets
+
+- `kit/design.js` is now a style engine: it reads `window.STYLE` and exposes
+  tokens for colour, fonts, background motif, kicker, panel radius and mascot.
+  `D.alpha(color, opacity)` replaces literal `rgba` values in scenes.
+- Five presets live in `kit/styles/`: `paper-editorial` (the original look),
+  `warm-documentary`, `dark-technical`, `bright-explainer` and
+  `swiss-minimal`. `kit/style.js` is the active one.
+- `new_episode` reads `series.json`'s `style`, copies that preset into the
+  episode's `kit/style.js` and records it on the episode. A conflicting style
+  argument is refused; change `series.json` first to switch a series.
+- The prompt requires token-only scene code (no colour or font literals), a
+  style anchor before the storyboard is locked, and one style per film.
+- `the_shipped_kit_renders_each_style` renders a representative frame in every
+  preset; the mixed 2D/3D test still passes.
+
+### Why
+
+One fixed design system made every film look the same across unrelated
+series. A token pack per series keeps a film coherent while letting a series
+choose its own visual language; literal colours in scenes would silently pin
+them to the old palette.

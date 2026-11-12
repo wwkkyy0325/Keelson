@@ -20,6 +20,13 @@ use super::seed_explainer_kit;
 const SERIES_INDEX: &str = "series.json";
 const EPISODES: &str = "episodes";
 const RELEASES: &str = "releases";
+const STYLES: &[&str] = &[
+    "paper-editorial",
+    "warm-documentary",
+    "dark-technical",
+    "bright-explainer",
+    "swiss-minimal",
+];
 
 /// Creates the next episode folder, seeds the kit and records it in the index.
 pub struct NewEpisodeTool;
@@ -38,8 +45,11 @@ impl Tool for NewEpisodeTool {
             description: "Create the next episode of a series: a self-contained \
                           `episodes/NNN-slug/` folder with the starter kit, recorded in \
                           `series.json`. Pass a lowercase ASCII slug and the episode title. \
-                          Write the brief, script, storyboard and scenes inside that folder; \
-                          never create episode files at the series root."
+                          `style` is one of paper-editorial, warm-documentary, \
+                          dark-technical, bright-explainer or swiss-minimal; a series locks \
+                          one style, so set it on the first episode. Write the brief, script, \
+                          storyboard and scenes inside that folder; never create episode \
+                          files at the series root."
                 .to_owned(),
             risk: RiskLevel::Mutating,
             params: vec![
@@ -60,6 +70,11 @@ impl Tool for NewEpisodeTool {
                 },
                 ParamSpec {
                     name: "series_title".to_owned(),
+                    kind: ParamKind::String,
+                    required: false,
+                },
+                ParamSpec {
+                    name: "style".to_owned(),
                     kind: ParamKind::String,
                     required: false,
                 },
@@ -168,7 +183,7 @@ fn create_episode(root: &Path, args: &ToolArgs) -> Result<String, ToolError> {
             "`slug` must be lowercase ASCII letters, digits or hyphens, at most 64 characters",
         ));
     }
-    let title = args.require_str("title")?.trim();
+    let title = args.require_str("title")?.trim().to_owned();
     if title.is_empty() {
         return Err(ToolError::invalid_arguments("`title` must not be empty"));
     }
@@ -187,6 +202,36 @@ fn create_episode(root: &Path, args: &ToolArgs) -> Result<String, ToolError> {
         }
         None => next_number(root)?,
     };
+    let requested_style = match args.get("style") {
+        Some(ArgValue::String(text)) if !text.trim().is_empty() => Some(text.trim().to_owned()),
+        Some(ArgValue::String(_)) | None => None,
+        Some(_) => return Err(ToolError::invalid_arguments("`style` must be a style name")),
+    };
+    if let Some(style) = &requested_style {
+        if !STYLES.contains(&style.as_str()) {
+            return Err(ToolError::invalid_arguments(format!(
+                "`{style}` is not a style; use one of {}",
+                STYLES.join(", ")
+            )));
+        }
+    }
+
+    let mut series = load_series(root)?;
+    let series_style = series
+        .get("style")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let style = match (series_style.as_deref(), requested_style.as_deref()) {
+        (Some(existing), Some(requested)) if existing != requested => {
+            return Err(ToolError::invalid_arguments(format!(
+                "the series style is `{existing}`; change `style` in series.json to switch"
+            )))
+        }
+        (Some(existing), _) => existing.to_owned(),
+        (None, Some(requested)) => requested.to_owned(),
+        (None, None) => "paper-editorial".to_owned(),
+    };
+
     let name = format!("{number:03}-{slug}");
     let dir = root.join(EPISODES).join(&name);
     if dir.exists() {
@@ -199,8 +244,15 @@ fn create_episode(root: &Path, args: &ToolArgs) -> Result<String, ToolError> {
         .map_err(|error| ToolError::io(format!("cannot create {}: {error}", dir.display())))?;
     let seeded = seed_explainer_kit(&dir).map_err(|error| ToolError::io(error.to_string()))?;
     copy_shared_assets(root, &dir)?;
+    let preset = dir.join("kit/styles").join(format!("{style}.js"));
+    if !preset.is_file() {
+        return Err(ToolError::io(format!(
+            "the `{style}` style preset is missing from the seeded kit"
+        )));
+    }
+    std::fs::copy(&preset, dir.join("kit/style.js"))
+        .map_err(|error| ToolError::io(format!("cannot activate the `{style}` style: {error}")))?;
 
-    let mut series = load_series(root)?;
     let series_title = args
         .get("series_title")
         .and_then(|value| match value {
@@ -218,6 +270,9 @@ fn create_episode(root: &Path, args: &ToolArgs) -> Result<String, ToolError> {
         .as_object_mut()
         .ok_or_else(|| ToolError::io("series.json is not an object"))?;
     object.insert("title".to_owned(), Value::String(series_title));
+    object
+        .entry("style")
+        .or_insert_with(|| Value::String(style.clone()));
     object.insert("updatedAt".to_owned(), Value::String(today()));
     let episodes = object
         .entry("episodes")
@@ -230,6 +285,7 @@ fn create_episode(root: &Path, args: &ToolArgs) -> Result<String, ToolError> {
         "slug": slug,
         "title": title,
         "status": "idea",
+        "style": style,
         "dir": format!("{EPISODES}/{name}"),
         "release": Value::Null,
         "video": Value::Null,
@@ -237,7 +293,7 @@ fn create_episode(root: &Path, args: &ToolArgs) -> Result<String, ToolError> {
     }));
     save_series(root, &series)?;
     Ok(format!(
-        "created {EPISODES}/{name} and seeded {seeded} kit files; series.json updated"
+        "created {EPISODES}/{name} with the `{style}` style and {seeded} kit files; series.json updated"
     ))
 }
 
@@ -614,6 +670,7 @@ mod tests {
             ("slug", ArgValue::String("school-unit".to_owned())),
             ("title", ArgValue::String("学校单元".to_owned())),
             ("series_title", ArgValue::String("责任链条".to_owned())),
+            ("style", ArgValue::String("dark-technical".to_owned())),
         ]);
 
         let result = tool.call(args, &ctx(dir.path())).await;
@@ -622,11 +679,14 @@ mod tests {
         let episode = dir.path().join("episodes/001-school-unit");
         assert!(episode.join("kit/scene.html").is_file());
         assert!(episode.join("scenes/scene-template.js").is_file());
+        let active = std::fs::read_to_string(episode.join("kit/style.js")).expect("the style");
+        assert!(active.contains("\"dark-technical\""), "{active}");
         let series: Value = serde_json::from_str(
             &std::fs::read_to_string(dir.path().join(SERIES_INDEX)).expect("the index"),
         )
         .expect("the index parses");
         assert_eq!(series["title"], "责任链条");
+        assert_eq!(series["style"], "dark-technical");
         assert_eq!(series["episodes"][0]["dir"], "episodes/001-school-unit");
         assert_eq!(series["episodes"][0]["status"], "idea");
     }
