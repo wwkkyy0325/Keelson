@@ -1051,9 +1051,11 @@ async fn open_inner(
         .ok_or_else(|| format!("找不到 rig `{wanted}`"))?;
     let store_path = sessions::session_path(&state_dir, &workspace, &session_id);
     // An explainer project starts from the kit: without it the renderer and
-    // the data checks have nothing to run. Seeding writes only missing files,
-    // so reopening a project never touches the script or the scenes.
-    if rig.name == "explainer" {
+    // the data checks have nothing to run. A series keeps its kit per episode,
+    // created by `new_episode`, so the series root is not seeded.
+    let is_series =
+        workspace.join("series.json").is_file() || workspace.join("series.md").is_file();
+    if rig.name == "explainer" && !is_series {
         if let Err(error) = seed_explainer_kit(&workspace) {
             eprintln!("explainer kit was not seeded: {error}");
         }

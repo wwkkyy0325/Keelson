@@ -2509,3 +2509,25 @@ only event that described the waiting question.
 Captures are evidence for one decision, not a library. Keeping every image
 from every long session fills the state directory, and screen content is
 sensitive by nature.
+
+## 2026-11-12 — a series project has one folder per episode
+
+- `new_episode(slug, title)` creates `episodes/NNN-slug/`, seeds the starter
+  kit and appends the episode to `series.json`. The explainer prompt and rig
+  expose it, so an episode no longer starts by copying files.
+- `archive_episode(episode, status)` copies the cut, subtitles, cover and
+  contact sheet to `releases/<episode>/`, writes `meta.json`, deletes
+  `out/frames` and marks the episode in `series.json`.
+- The host skips seeding the kit at the root when `series.md` or
+  `series.json` exists; a series keeps its kit inside each episode.
+- The live project was migrated to the new layout: episode 1 is
+  `episodes/001-school-unit/`, its release is `releases/001-school-unit/`,
+  and 2.4 GB of frames, 186 MB of review images and four debug dumps were
+  removed.
+
+### Why
+
+One episode's `script.md`, `storyboard.json`, `scenes/` and `out/` at the
+project root cannot be reused for a second episode. A self-contained episode
+folder is movable, archivable and safe to prune; the index and release folder
+make a series readable without opening every episode.

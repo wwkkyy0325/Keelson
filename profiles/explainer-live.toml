@@ -16,7 +16,7 @@ budget_tokens = 64000
 max_budget_tokens = 262144
 
 [tools]
-visible = ["read_file", "write_file", "edit_file", "multi_edit", "list_trash", "restore_file", "list_dir", "glob", "code_search", "move_file", "delete_file", "shell", "todo", "search_history", "web_search", "web_fetch", "view_image", "render_scene", "render_film", "probe_media"]
+visible = ["read_file", "write_file", "edit_file", "multi_edit", "list_trash", "restore_file", "list_dir", "glob", "code_search", "move_file", "delete_file", "shell", "todo", "search_history", "web_search", "web_fetch", "view_image", "render_scene", "render_film", "probe_media", "new_episode", "archive_episode"]
 budget = 1000
 
 [verification]

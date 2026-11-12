@@ -25,6 +25,23 @@ scenes/*.js         one file per scene: draw(ctx, t), or createScene for 3D
 storyboard.example.json  the contract's shape; copy to storyboard.json
 ```
 
+## Series
+
+A one-video project uses this folder as its root. A series uses the root for
+the bible, the index and shared assets, and one self-contained copy of this
+kit per episode:
+
+```
+series.md / series.json     the show and its episode index
+assets/                     files shared by every episode
+episodes/001-slug/          kit/, scenes/, data/, out/ and the episode docs
+releases/001-slug/          film.mp4, subtitles, cover and publish.md
+```
+
+`new_episode(slug, title)` creates the episode folder and seeds this kit;
+`archive_episode(episode, status)` copies the finished cut to `releases/`,
+deletes `out/frames` and updates `series.json`. Do not copy the kit by hand.
+
 ## Run it
 
 ```bash

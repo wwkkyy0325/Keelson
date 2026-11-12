@@ -11,6 +11,8 @@ Stop at every gate. Do not render the film before the storyboard is approved.
 4. Contact sheet — one finished frame per scene, looked at with `view_image`.
 5. Preview — the first 30 seconds with voice and subtitles. Stop.
 6. Film — only after the user approves the preview.
+7. Archive — after the final cut passes QA: `archive_episode` copies the
+   release and prunes the frames.
 
 Duration is a result, never a target. Each scene lasts its measured narration
 plus a lead-in and a tail; `kit/timeline.py` derives both the timeline and the
@@ -140,13 +142,33 @@ Audio:
 - Target about -16 LUFS, peak below -1 dB. Music only from a file the user
   supplied, and say what its license is.
 
+Series:
+- A project with `series.md` or `series.json` is a series. The root holds the
+  bible, the index and shared `assets/`; each episode is a self-contained
+  folder under `episodes/NNN-slug/` with its own `kit/`, `scenes/`, `data/`
+  and `out/`.
+- Start an episode with `new_episode(slug, title)`. It creates the folder,
+  seeds the kit and appends the episode to `series.json`. Never create an
+  episode or copy the kit by hand.
+- Work inside the episode folder: pass it as `root` to `render_film` and
+  `render_scene`, and run `python kit/timeline.py`, `kit/assemble.py` and
+  `kit/qa.py` from it. Do not write episode files at the series root.
+- After the final cut passes QA, call `archive_episode(episode, status)`.
+  It copies the film, subtitles, cover and contact sheet to
+  `releases/<episode>/`, writes `meta.json`, deletes `out/frames`, and updates
+  `series.json`. Frames are regenerable; do not leave thousands in the tree.
+- Use `status: "published"` only when the user says it is published; otherwise
+  keep the default `rendered`. A single-video project keeps the root layout.
+
 Workflow:
-- An explainer conversation seeds the starter kit (`kit/`, `scenes/`, `data/`)
-  into the project when it opens, writing only files that are missing. If
-  `kit/scene.html` is still absent, report that the installation is incomplete
-  and stop; never ask the user to copy files by hand. `data/` is needed only
-  when the film draws numbers; a schematic may omit it and `window.DATA` is
-  then `{}`. Never invent a renderer or a frame format.
+- A single-video explainer conversation seeds the starter kit (`kit/`,
+  `scenes/`, `data/`) into the project when it opens, writing only files that
+  are missing. A series gets its kit per episode from `new_episode` and the
+  root is not seeded. If `kit/scene.html` is still absent, report that the
+  installation is incomplete and stop; never ask the user to copy files by
+  hand. `data/` is needed only when the film draws numbers; a schematic may
+  omit it and `window.DATA` is then `{}`. Never invent a renderer or a frame
+  format.
 - `render_film(root)` renders every scene in one call: `storyboard.json` names
   each scene's `asset_type`, `out/timeline.json` supplies the measured
   durations, and the tool picks `kit/scene.html` or `kit/scene3d.html`.

@@ -8,6 +8,7 @@ mod git;
 mod history;
 mod kit;
 mod screen;
+mod series;
 mod store;
 mod video;
 mod web;
@@ -1707,6 +1708,8 @@ fn tools(
     registry.register(Arc::new(video::RenderSceneTool::new()))?;
     registry.register(Arc::new(video::RenderFilmTool::new()))?;
     registry.register(Arc::new(video::ProbeMediaTool::new()))?;
+    registry.register(Arc::new(series::NewEpisodeTool::new()))?;
+    registry.register(Arc::new(series::ArchiveEpisodeTool::new()))?;
     registry.register(Arc::new(desktop::LaunchAppTool::new()))?;
     registry.register(Arc::new(desktop::WaitForWindowTool::new()))?;
     registry.register(Arc::new(desktop::ListControlsTool::new()))?;
