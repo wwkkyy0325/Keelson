@@ -37,7 +37,7 @@ use async_trait::async_trait;
 use keel_core::{
     AcceptanceItem, AccessKind, ArgValue, CancelToken, Event, EvidenceOutcome, InteractionPort,
     KernelError, ModelChunk, ModelError, ModelProvider, ModelRequest, ModelStream, Policy, Session,
-    TodoList, ToolArgs, ToolCallId, VerificationReport, VerifySpec,
+    TodoList, ToolArgs, ToolCallId, VerificationMode, VerificationReport, VerifySpec,
 };
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
@@ -80,7 +80,8 @@ pub struct OpenRequest {
     pub permission: Option<keel_core::PermissionLevel>,
     /// Run the workspace's own checks after a turn that changed files.
     /// A host that measures the conversation, not the project, can turn them
-    /// off; the desktop always keeps them on.
+    /// off; the desktop keeps them on, and the profile's
+    /// `[verification] mode = "none"` still opts out.
     pub acceptance: bool,
     /// A SearXNG base URL, used for web search when the model provider has no
     /// search endpoint of its own. A provider endpoint always wins.
@@ -660,7 +661,9 @@ impl Engine {
             driver = driver.with_summarizer(Arc::new(ProviderSummarizer::new(summarizer_model)));
         }
         // A turn that edited the workspace is checked by the project's own
-        // commands. A conversational turn skips them.
+        // commands. A conversational turn skips them, and a profile that says
+        // `[verification] mode = "none"` opts out even when the host asked.
+        let acceptance = acceptance && !matches!(config.verification, VerificationMode::None);
         if acceptance {
             let checks = workspace_checks(&workspace);
             if !checks.is_empty() {
@@ -1220,14 +1223,19 @@ fn parse_declared_checks(text: &str) -> Result<Vec<ProjectCheck>, String> {
 }
 
 /// Picks the checks for the deepest project that contains each changed path.
-/// A path outside every project, such as a shell-only change, runs them all.
-/// A declared check has no project and always runs.
+/// An empty change set runs nothing. A path outside every project selects
+/// only root-level projects; a nested project is checked when its own files
+/// change. A declared check has no project and runs when something changed.
 fn selected_checks(
     checks: &[ProjectCheck],
     workspace: &Path,
     paths: &[PathBuf],
 ) -> Vec<AcceptanceItem> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
     let mut selected: Vec<AcceptanceItem> = Vec::new();
+    let mut unmatched = false;
     for path in paths {
         let absolute = if path.is_absolute() {
             path.clone()
@@ -1253,7 +1261,23 @@ fn selected_checks(
                 matched.push(check);
             }
         }
+        if matched.is_empty() {
+            unmatched = true;
+        }
         for check in matched {
+            if !selected.contains(&check.item) {
+                selected.push(check.item.clone());
+            }
+        }
+    }
+    if unmatched {
+        // A root file is covered by the root project, not by every project
+        // under it. In a broad dev directory that used to run dozens of
+        // unrelated suites.
+        for check in checks
+            .iter()
+            .filter(|check| check.project.as_deref() == Some(Path::new("")))
+        {
             if !selected.contains(&check.item) {
                 selected.push(check.item.clone());
             }
@@ -1263,9 +1287,6 @@ fn selected_checks(
         if !selected.contains(&check.item) {
             selected.push(check.item.clone());
         }
-    }
-    if selected.is_empty() {
-        return checks.iter().map(|check| check.item.clone()).collect();
     }
     selected
 }
@@ -1613,6 +1634,15 @@ fn is_skipped_test_directory(path: &Path) -> bool {
                 | "venv"
                 | ".tox"
                 | "__pycache__"
+                | "site-packages"
+                | ".pytest_cache"
+                | ".mypy_cache"
+                | ".ruff_cache"
+                | ".cache"
+                | "__pypackages__"
+                | ".next"
+                | ".svelte-kit"
+                | "coverage"
         )
     )
 }
@@ -3173,8 +3203,28 @@ system = "prompt.md"
             selected_checks(&checks, dir.path(), &[PathBuf::from("frontend/src/app.ts")]);
         assert_eq!(check_programs(&frontend), ["npm"]);
 
+        // A root file belongs to the root project, not to every project under
+        // it. Running all nested suites for it turned a broad dev directory
+        // into a seventeen-minute verification.
         let root = selected_checks(&checks, dir.path(), &[PathBuf::from("README.md")]);
-        assert_eq!(check_programs(&root), ["cargo", "npm"]);
+        assert!(root.is_empty(), "{:?}", check_programs(&root));
+
+        let none = selected_checks(&checks, dir.path(), &[]);
+        assert!(none.is_empty(), "{:?}", check_programs(&none));
+    }
+
+    #[test]
+    fn site_packages_are_not_discovered_as_tests() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let packages = dir.path().join("anaconda3/Lib/site-packages");
+        std::fs::create_dir_all(&packages).expect("a site-packages directory");
+        std::fs::write(
+            packages.join("test_vendor.py"),
+            "def test_ok():\n    pass\n",
+        )
+        .expect("a vendored test");
+
+        assert!(workspace_checks(dir.path()).is_empty());
     }
 
     #[test]

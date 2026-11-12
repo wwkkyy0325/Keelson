@@ -2554,3 +2554,24 @@ One fixed design system made every film look the same across unrelated
 series. A token pack per series keeps a film coherent while letting a series
 choose its own visual language; literal colours in scenes would silently pin
 them to the old palette.
+
+## 2026-11-12 — acceptance stays inside the project
+
+- A profile's `[verification] mode = "none"` now disables workspace checks even
+  though the desktop asks for acceptance. `coding-live` is `none`, so a
+  cleanup or analysis turn no longer runs the workspace's test suites.
+- An empty change set runs no checks. A root-level change selects only the
+  root project, not every nested suite; on a broad `D:\dev` the old fallback
+  ran `tau2-bench`, `anaconda3` and `llama` tests for seventeen minutes.
+- Discovery skips `site-packages`, `.pytest_cache`, `.mypy_cache`,
+  `.ruff_cache`, `.cache`, `__pypackages__`, `.next`, `.svelte-kit` and
+  `coverage`.
+- The kernel verifier canonicalizes the root and the program before the
+  containment check, so a `.venv` interpreter with a `\?\` prefix is allowed.
+
+### Why
+
+The failed acceptance check triggered two reprompts, so the same final answer
+was streamed three times. A conversational turn had no tests of its own to
+run; the workspace scan turned a cleanup request into a seventeen-minute
+unrelated test run.
