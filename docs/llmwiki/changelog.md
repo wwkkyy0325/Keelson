@@ -2472,3 +2472,40 @@ The nine seconds of a render's output are cheap to regenerate and expensive
 to checkpoint. The host should show the script and the scenes a turn changed,
 not every frame it drew, and a GUI app should not open a console for the
 commands it runs.
+
+## 2026-11-12 — interaction cards can be dismissed
+
+- A clarify, choice or plan card now has a `跳过这个问题` action. The host
+  answers `Deferred`; the driver tells the model the item was deferred, keeps
+  the turn running and asks for it in the final report.
+- A pending interaction is removed when its turn stops waiting — cancel, the
+  broker's deadline, or a dropped engine — and the window receives a resolved
+  event. Before this the card outlived the turn and could not be closed.
+- A turn start, finish or failure clears a stale card, and a reloaded window
+  asks the backend for the pending interaction once and restores it.
+- Answers and dismissals update the card immediately instead of waiting for
+  the event round trip.
+
+### Why
+
+The turn is blocked on the answer, so a card without a dismiss path trapped
+the user between answering and cancelling the whole turn. A reload lost the
+only event that described the waiting question.
+
+## 2026-11-12 — screen captures are bounded
+
+- `screen_capture` keeps the newest twenty PNGs in one conversation and
+  prunes older ones after each capture. The tool refuses a capture above
+  6 MiB and scales the long side to 1568 px.
+- Opening a session removes captures older than seven days from every
+  conversation of the project; deleting a conversation still removes its
+  folder.
+- The folder is fixed by the host under the project state directory
+  (`projects/<workspace-hash>/screens/<session-id>/`); the model cannot choose
+  a path. Screenshots never enter the workspace or the checkpoint diff.
+
+### Why
+
+Captures are evidence for one decision, not a library. Keeping every image
+from every long session fills the state directory, and screen content is
+sensitive by nature.

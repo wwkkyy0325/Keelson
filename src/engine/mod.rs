@@ -570,6 +570,8 @@ impl Engine {
         let session = Arc::new(Mutex::new(session));
         // Screenshots live beside the project's outputs, outside the
         // workspace: the folder is the permission scope for a capture.
+        // Captures are transient; a week of them is enough for a recheck.
+        screen::prune_old_screens(&project_dir, Duration::from_secs(7 * 24 * 60 * 60));
         let screens = screen::screens_dir(&project_dir, &store_path);
         let registry = Arc::new(tools(
             &project_dir,

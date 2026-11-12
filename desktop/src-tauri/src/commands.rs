@@ -1770,6 +1770,18 @@ pub fn respond_interaction(
     state.inner().interactions.respond(&id, &option)
 }
 
+#[tauri::command]
+pub fn dismiss_interaction(state: State<'_, SharedState>, id: String) -> Result<(), String> {
+    state.inner().interactions.dismiss(&id)
+}
+
+#[tauri::command]
+pub fn pending_interaction(
+    state: State<'_, SharedState>,
+) -> Option<crate::state::InteractionRequested> {
+    state.inner().interactions.current()
+}
+
 fn rig_dirs() -> Vec<PathBuf> {
     let mut dirs = rig::search_dirs();
     // A run from the source tree (debug or release) finds the repository's

@@ -8,6 +8,7 @@
 //! `full_auto` never asks.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use keel_core::{
@@ -19,6 +20,10 @@ use keel_core::{
 const MAX_SIDE: u32 = 1568;
 /// A PNG above this size is refused instead of inflating the request.
 const MAX_IMAGE_BYTES: usize = 6 * 1024 * 1024;
+/// Newest captures kept in one conversation. Older ones are only useful to a
+/// `view_image` recheck; twenty is more than a turn can consult, and keeping
+/// every capture of a long session fills the state directory.
+const KEEP_SCREENS: usize = 20;
 
 /// Lists the windows the user can ask to capture.
 pub struct ListWindowsTool;
@@ -73,8 +78,9 @@ impl Tool for ScreenCaptureTool {
             description: "Capture a screenshot and attach it to the result. `target` is \
                           `window` (with `window` as an id from list_windows or a title \
                           fragment), `region` (with `region` as \"x,y,w,h\") or `screen` \
-                          (with an optional `monitor` index). Quote what the image shows; \
-                          do not describe text you cannot see."
+                          (with an optional `monitor` index). Captures are saved to a \
+                          per-conversation folder and only the newest twenty are kept. \
+                          Quote what the image shows; do not describe text you cannot see."
                 .to_owned(),
             // Writes the PNG into the capture folder; the request is a write.
             risk: RiskLevel::Mutating,
@@ -211,6 +217,7 @@ impl Tool for ScreenCaptureTool {
                 ToolError::io(format!("cannot write {}: {error}", path.display())),
             );
         }
+        prune_screens(&self.screens, KEEP_SCREENS);
         ToolResult::success(
             ctx.call_id,
             "screen_capture",
@@ -479,11 +486,80 @@ fn encode_png(image: image::RgbaImage) -> Result<(Vec<u8>, u32, u32), String> {
     Ok((cursor.into_inner(), width, height))
 }
 
+/// Keeps the newest `keep` captures in one conversation folder. Only files
+/// this tool names are touched; anything else in the folder is left alone.
+fn prune_screens(dir: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("screen-") && name.ends_with(".png"))
+        })
+        .collect();
+    files.sort();
+    let remove = files.len().saturating_sub(keep);
+    for path in files.into_iter().take(remove) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 fn now_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0)
+}
+
+/// Removes captures older than `max_age` from every conversation of one
+/// project. A closed conversation keeps at most its newest few; this sweep is
+/// the backstop for projects that are opened again months later.
+pub fn prune_old_screens(project_dir: &Path, max_age: Duration) {
+    let root = project_dir.join("screens");
+    let Ok(sessions) = std::fs::read_dir(&root) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for session in sessions.flatten() {
+        let dir = session.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let Ok(files) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let path = file.path();
+            let is_capture = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("screen-") && name.ends_with(".png"));
+            if !is_capture {
+                continue;
+            }
+            let old = file
+                .metadata()
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age > max_age);
+            if old {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        let empty = std::fs::read_dir(&dir)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false);
+        if empty {
+            let _ = std::fs::remove_dir(&dir);
+        }
+    }
 }
 
 /// Where one conversation keeps its screenshots. The folder is the permission
@@ -555,6 +631,52 @@ mod tests {
         let (png, width, height, label) = capture_screen(0).expect("the capture");
         assert!(png.starts_with(&[0x89, b'P', b'N', b'G']), "{label}");
         assert!(width > 0 && height > 0, "{label}");
+    }
+
+    #[test]
+    fn old_screenshots_are_pruned() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        for index in 0..5 {
+            std::fs::write(dir.path().join(format!("screen-{index:013}.png")), b"png")
+                .expect("a capture");
+        }
+        std::fs::write(dir.path().join("keep.txt"), b"not a capture").expect("another file");
+
+        prune_screens(dir.path(), 3);
+
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .expect("the folder")
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
+            .collect();
+        assert!(names.contains(&"keep.txt".to_owned()), "{names:?}");
+        for index in 0..2 {
+            assert!(
+                !names.contains(&format!("screen-{index:013}.png")),
+                "{names:?}"
+            );
+        }
+        for index in 2..5 {
+            assert!(
+                names.contains(&format!("screen-{index:013}.png")),
+                "{names:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_captures_are_removed_across_sessions() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let project = dir.path();
+        let session = project.join("screens/s-1");
+        std::fs::create_dir_all(&session).expect("the session folder");
+        std::fs::write(session.join("screen-0000000000001.png"), b"png").expect("a capture");
+        std::fs::write(session.join("keep.txt"), b"not a capture").expect("another file");
+
+        prune_old_screens(project, Duration::ZERO);
+
+        assert!(!session.join("screen-0000000000001.png").exists());
+        assert!(session.join("keep.txt").is_file());
     }
 
     #[test]

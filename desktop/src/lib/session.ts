@@ -188,6 +188,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
           tools: [],
           verifying: null,
         },
+        pendingInteraction: null,
         lastError: null,
       };
 
@@ -369,6 +370,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
         ]),
         running:
           state.running?.seq === action.turn.seq ? null : state.running,
+        pendingInteraction: null,
         lastError: null,
       };
 
@@ -377,6 +379,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
         ...state,
         running:
           state.running?.seq === action.seq ? null : state.running,
+        pendingInteraction: null,
         lastError: action.message,
       };
 

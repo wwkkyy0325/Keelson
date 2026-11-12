@@ -183,6 +183,17 @@ export function respondInteraction(
   return invoke("respond_interaction", { id, option });
 }
 
+/// Closes the card without answering; the turn continues with a deferred note.
+export function dismissInteraction(id: string): Promise<void> {
+  return invoke("dismiss_interaction", { id });
+}
+
+/// The interaction the backend is still waiting on, for a window that reloaded
+/// after the original event.
+export function pendingInteraction(): Promise<Interaction | null> {
+  return invoke("pending_interaction");
+}
+
 /// Subscribes the reducer to every backend event. Call before opening a
 /// session so no early stream is missed.
 export async function listenToEvents(): Promise<UnlistenFn[]> {

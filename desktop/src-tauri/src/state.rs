@@ -64,6 +64,7 @@ impl DesktopState {
 }
 
 struct Pending {
+    id: String,
     request: InteractionRequest,
     reply: oneshot::Sender<InteractionResponse>,
 }
@@ -90,7 +91,7 @@ pub struct InteractionRequested {
 /// the window answers by id.
 pub struct DesktopInteractions {
     app: AppHandle,
-    pending: Mutex<HashMap<String, Pending>>,
+    pending: Arc<Mutex<HashMap<String, Pending>>>,
     next_id: AtomicU64,
 }
 
@@ -98,24 +99,100 @@ impl DesktopInteractions {
     pub fn new(app: AppHandle) -> Self {
         Self {
             app,
-            pending: Mutex::new(HashMap::new()),
+            pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: AtomicU64::new(1),
         }
     }
 
+    /// Answers by option. A late answer for an interaction that was cancelled
+    /// or timed out is a no-op: the turn already moved on.
     pub fn respond(&self, id: &str, option: &str) -> Result<(), String> {
+        let Some(pending) = self.take(id) else {
+            return Ok(());
+        };
+        let response = response_for(&pending.request, option);
+        let _ = pending.reply.send(response);
+        Ok(())
+    }
+
+    /// Closes the card without an answer. The turn continues; the driver tells
+    /// the model the item was deferred and to list it in the final report.
+    pub fn dismiss(&self, id: &str) -> Result<(), String> {
+        let Some(pending) = self.take(id) else {
+            return Ok(());
+        };
+        let _ = pending.reply.send(InteractionResponse::Deferred);
+        Ok(())
+    }
+
+    /// The interaction the turn is waiting on, if any. A reloaded window asks
+    /// once on session open because it missed the original event.
+    pub fn current(&self) -> Option<InteractionRequested> {
+        let pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        pending
+            .values()
+            .next()
+            .map(|pending| requested_view(&pending.id, &pending.request))
+    }
+
+    fn take(&self, id: &str) -> Option<Pending> {
         let pending = self
             .pending
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(id)
-            .ok_or_else(|| format!("no pending interaction `{id}`"))?;
-        let response = response_for(&pending.request, option);
-        let _ = pending.reply.send(response);
-        let _ = self
-            .app
-            .emit(EV_INTERACTION_RESOLVED, serde_json::json!({ "id": id }));
-        Ok(())
+            .remove(id);
+        if pending.is_some() {
+            let _ = self
+                .app
+                .emit(EV_INTERACTION_RESOLVED, serde_json::json!({ "id": id }));
+        }
+        pending
+    }
+}
+
+/// Removes a pending interaction when its turn stops waiting: cancellation,
+/// the broker's deadline, or a dropped engine all drop the request future.
+/// Without this the card outlives the turn and the user can never close it.
+struct InteractionGuard {
+    pending: Arc<Mutex<HashMap<String, Pending>>>,
+    app: AppHandle,
+    id: String,
+}
+
+impl Drop for InteractionGuard {
+    fn drop(&mut self) {
+        let removed = self
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&self.id)
+            .is_some();
+        if removed {
+            let _ = self.app.emit(
+                EV_INTERACTION_RESOLVED,
+                serde_json::json!({ "id": self.id }),
+            );
+        }
+    }
+}
+
+fn requested_view(id: &str, request: &InteractionRequest) -> InteractionRequested {
+    InteractionRequested {
+        id: id.to_owned(),
+        kind: request.kind.as_str().to_owned(),
+        prompt: request.prompt.clone(),
+        options: request
+            .options
+            .iter()
+            .map(|option| InteractionOptionView {
+                id: option.id.clone(),
+                label: option.label.clone(),
+            })
+            .collect(),
+        recommended: request.recommended.clone(),
     }
 }
 
@@ -130,34 +207,27 @@ impl InteractionPort for DesktopInteractions {
             return InteractionResponse::Deferred;
         }
         let id = format!("i-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
-        let payload = InteractionRequested {
-            id: id.clone(),
-            kind: request.kind.as_str().to_owned(),
-            prompt: request.prompt.clone(),
-            options: request
-                .options
-                .iter()
-                .map(|option| InteractionOptionView {
-                    id: option.id.clone(),
-                    label: option.label.clone(),
-                })
-                .collect(),
-            recommended: request.recommended.clone(),
-        };
+        let payload = requested_view(&id, &request);
         let (reply, answer) = oneshot::channel();
         self.pending
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(id.clone(), Pending { request, reply });
+            .insert(
+                id.clone(),
+                Pending {
+                    id: id.clone(),
+                    request,
+                    reply,
+                },
+            );
+        let _guard = InteractionGuard {
+            pending: Arc::clone(&self.pending),
+            app: self.app.clone(),
+            id: id.clone(),
+        };
         let _ = self.app.emit(EV_INTERACTION_REQUESTED, payload);
         tokio::select! {
-            _ = cancel.cancelled() => {
-                self.pending
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .remove(&id);
-                InteractionResponse::Cancelled
-            }
+            _ = cancel.cancelled() => InteractionResponse::Cancelled,
             result = answer => result.unwrap_or(InteractionResponse::Deferred),
         }
     }

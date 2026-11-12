@@ -49,6 +49,8 @@ fn main() {
             commands::save_permission,
             commands::load_turns,
             commands::respond_interaction,
+            commands::dismiss_interaction,
+            commands::pending_interaction,
         ])
         .run(tauri::generate_context!())
         .expect("keelson desktop failed to start");

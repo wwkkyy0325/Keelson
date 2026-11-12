@@ -2038,6 +2038,16 @@ footer {
   color: var(--bg);
 }
 
+.permission-dismiss {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.permission-dismiss button {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 .banner {
   max-width: 860px;
   width: 100%;

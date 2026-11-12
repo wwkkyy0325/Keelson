@@ -226,6 +226,25 @@ describe("session reducer", () => {
     expect(state.pendingInteraction).toBeNull();
   });
 
+  it("clears a pending interaction when the turn ends", () => {
+    const interaction = {
+      id: "i-2",
+      kind: "clarify",
+      prompt: "Which one?",
+      options: [{ id: "one", label: "One" }],
+    };
+    let state = reduce(initialSession(), {
+      type: "interaction-requested",
+      interaction,
+    });
+    state = reduce(state, { type: "turn-finished", turn: turn(1) });
+    expect(state.pendingInteraction).toBeNull();
+
+    state = reduce(state, { type: "interaction-requested", interaction });
+    state = reduce(state, { type: "turn-failed", seq: 2, message: "gone" });
+    expect(state.pendingInteraction).toBeNull();
+  });
+
   it("does not resurrect a persisted turn from a late start", () => {
     let state = reduce(initialSession(), {
       type: "session-opened",

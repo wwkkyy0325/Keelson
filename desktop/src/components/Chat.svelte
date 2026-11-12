@@ -7,9 +7,11 @@
     branchSession,
     cancelTurn,
     deleteSession,
+    dismissInteraction,
     listSessions,
     newSession,
     openSession,
+    pendingInteraction,
     renameSession,
     reopenSession,
     respondInteraction,
@@ -157,6 +159,28 @@
       void loadStatus();
     });
   });
+
+  // A reload misses the interaction event while the turn is still waiting on
+  // the answer. Ask the backend once per open and restore the card.
+  $effect(() => {
+    void sessionEpoch;
+    const id = activeSessionId;
+    untrack(() => {
+      if (!id) return;
+      void restoreInteraction();
+    });
+  });
+
+  async function restoreInteraction(): Promise<void> {
+    try {
+      const pending = await pendingInteraction();
+      if (pending) {
+        dispatch({ type: "interaction-requested", interaction: pending });
+      }
+    } catch {
+      // The engine may be closing; the next open asks again.
+    }
+  }
 
   async function loadChanges(): Promise<void> {
     try {
@@ -354,6 +378,22 @@
     uiError = null;
     try {
       await respondInteraction(pending.id, option);
+      dispatch({ type: "interaction-resolved", id: pending.id });
+    } catch (error) {
+      uiError = errText(error);
+    } finally {
+      answering = null;
+    }
+  }
+
+  async function dismiss(): Promise<void> {
+    const pending = $session.pendingInteraction;
+    if (!pending || answering) return;
+    answering = "dismiss";
+    uiError = null;
+    try {
+      await dismissInteraction(pending.id);
+      dispatch({ type: "interaction-resolved", id: pending.id });
     } catch (error) {
       uiError = errText(error);
     } finally {
@@ -406,6 +446,7 @@
           interaction={$session.pendingInteraction}
           {answering}
           onAnswer={answer}
+          onDismiss={dismiss}
         />
       {/if}
 

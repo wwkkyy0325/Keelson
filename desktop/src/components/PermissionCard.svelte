@@ -6,10 +6,12 @@
     interaction,
     answering,
     onAnswer,
+    onDismiss,
   }: {
     interaction: Interaction;
     answering: string | null;
     onAnswer: (option: string) => void;
+    onDismiss: () => void;
   } = $props();
 </script>
 
@@ -38,4 +40,16 @@
       </button>
     {/each}
   </div>
+  {#if interaction.kind !== "permission_approval"}
+    <div class="permission-dismiss">
+      <button
+        class="ghost"
+        title={$t("interaction.dismissHint")}
+        onclick={onDismiss}
+        disabled={answering !== null}
+      >
+        {$t("interaction.dismiss")}
+      </button>
+    </div>
+  {/if}
 </div>
