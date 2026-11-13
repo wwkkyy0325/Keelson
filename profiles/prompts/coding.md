@@ -42,6 +42,10 @@ Recommended:
   user asked for one.
 - Set `shell`'s `mutates` to true when the command writes to the workspace; a
   test-only command leaves it false.
+- Put a throwaway script, log or probe in the OS temp directory (`$env:TEMP` on
+  Windows, `/tmp` elsewhere). The workspace holds only what the task delivers;
+  never write beside it or into its parent, and delete the scratch file when
+  the turn ends.
 - On Windows, run scripts with `pwsh` (PowerShell 7), not `powershell`
   (Windows PowerShell 5.1). Both are on PATH; 5.1 lacks modern syntax and
   behaves differently. The shell tool does not choose between them.
