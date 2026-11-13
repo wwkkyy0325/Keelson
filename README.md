@@ -35,6 +35,16 @@ Requirements: Node 20+, Rust, the Tauri prerequisites, and WebView2 on
 Windows. In a debug build the app also searches the repository's `rigs/`; a
 bundled build uses `$KEELSON_RIGS` or `~/.keelson/rigs`.
 
+The engine is not part of this repository. The kernel lives in
+[Keel](https://github.com/wwkkyy0325/keel) and `Cargo.toml` consumes it by
+path, so clone it next to this one before building:
+
+```bash
+git clone https://github.com/wwkkyy0325/Keelson.git
+git clone https://github.com/wwkkyy0325/keel.git
+cd Keelson && cargo build
+```
+
 The first launch is a three-page wizard: model + key, language, finish. The
 model list comes from [`models.dev`](https://models.dev), filtered to
 tool-capable, current models of the providers this host can drive. Each row
@@ -268,3 +278,26 @@ changes the result.
 
 Next: M5 (a second rig) and D3 (a floating window). See the milestones in
 `docs/llmwiki/design.md`.
+
+## License
+
+Apache License 2.0 — see `LICENSE` and `NOTICE`.
+
+You may use, modify, redistribute and sell this software, in source or in a
+build, including as part of a commercial product. The conditions that matter:
+
+- **Credit the source.** Keep the `NOTICE` file and the copyright notice, and
+  name the project and its repository wherever this work or a derivative is
+  distributed.
+- **Say what you changed.** Apache 2.0 asks a modified file to carry a
+  prominent notice stating that you changed it.
+- **No implied trademark.** The license grants no right to use the Keelson
+  name or logo other than to describe where the work came from.
+- **No warranty.** The software is provided as is; the authors are not liable
+  for damages.
+
+The kernel is a separate work under its own license:
+[Keel](https://github.com/wwkkyy0325/keel). Vendored files keep their own
+terms — `kits/explainer/kit/three.module.min.js` is Three.js, MIT, and its
+licence header is intact. Dependencies are governed by their manifests
+(`Cargo.toml`, `desktop/package.json`).

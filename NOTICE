@@ -1,0 +1,11 @@
+Keelson
+Copyright 2026 wwkkyy0325
+
+Licensed under the Apache License, Version 2.0 (the "License").
+You may not use this work except in compliance with the License.
+A copy of the License is in the LICENSE file.
+
+Source: https://github.com/wwkkyy0325/Keelson
+
+The agent kernel is Keel, a separate work with its own license:
+https://github.com/wwkkyy0325/keel
