@@ -2647,3 +2647,20 @@ With a DeepSeek key saved, every model — including the cloud model the user
 had just switched to — searched through that key. A model whose provider
 serves its own search should use it; the separately configured backend is
 what answers when that is absent or fails.
+
+## 2026-11-13 — `web_fetch` falls back to the local download
+
+- A provider fetch endpoint that fails — an unpaid key, an outage, a page it
+  cannot parse — no longer fails the tool. The page is downloaded and reduced
+  to text instead, and both errors are reported together when the download
+  fails too.
+- Volcengine Ark advertises no `web_fetch`: a request with that tool type is
+  rejected as an unknown tool, so an Ark model's fetch has no hosted backend
+  and the separately saved DeepSeek key is the only provider endpoint.
+
+### Why
+
+An out-of-credit DeepSeek key made every `web_fetch` fail with
+`Insufficient Balance`, even though the page was reachable from the host.
+Search already fell through to the next backend; fetch returned the first
+error instead.

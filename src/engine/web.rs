@@ -597,7 +597,8 @@ async fn searxng_search(
 }
 
 /// `web_fetch`: the provider's fetch endpoint when there is one (it returns
-/// Markdown), otherwise a local download reduced to text.
+/// Markdown), with a local download as the fallback — the page is still
+/// reachable when the provider's key is unpaid or its endpoint is down.
 pub struct WebFetchTool {
     backend: Option<WebBackend>,
     client: Client,
@@ -619,7 +620,8 @@ impl Tool for WebFetchTool {
             name: "web_fetch".to_owned(),
             description: "Fetch one web page as text. Use it after web_search or when the user \
                           gives a URL. The provider's fetch endpoint returns Markdown; without \
-                          one the page is downloaded and reduced to text."
+                          one, or when that endpoint fails, the page is downloaded and reduced \
+                          to text."
                 .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![ParamSpec {
@@ -652,7 +654,25 @@ impl Tool for WebFetchTool {
         let fetch = async {
             match &self.backend {
                 Some(WebBackend::Provider { base, key }) => {
-                    provider_fetch(&self.client, base, key, &url).await
+                    match provider_fetch(&self.client, base, key, &url).await {
+                        Ok(text) => Ok(text),
+                        // A provider that refuses the request — an unpaid key,
+                        // an outage, a page it cannot parse — does not make the
+                        // page unreachable. The download costs one request and
+                        // keeps the tool working; both failures are reported
+                        // together when it fails too.
+                        Err(provider_error) => {
+                            local_fetch(&self.client, &url)
+                                .await
+                                .map_err(|local_error| {
+                                    ToolError::io(format!(
+                                        "the provider fetch failed ({}); the local download \
+                                     failed too ({})",
+                                        provider_error.message, local_error.message
+                                    ))
+                                })
+                        }
+                    }
                 }
                 _ => local_fetch(&self.client, &url).await,
             }
@@ -1044,6 +1064,39 @@ fn collapse_blank_lines(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_failed_provider_fetch_still_tries_the_local_download() {
+        // A closed port answers the provider path immediately; the loopback
+        // URL is refused by the download's own host policy. Both messages must
+        // reach the caller, which is what proves the fallback ran.
+        let tool = WebFetchTool::new(Some(WebBackend::Provider {
+            base: "http://127.0.0.1:1".to_owned(),
+            key: "unpaid".to_owned(),
+        }));
+        let mut args = ToolArgs::new();
+        args.insert(
+            "url",
+            ArgValue::String("http://127.0.0.1:1/page".to_owned()),
+        );
+        let ctx = ToolCtx {
+            turn_id: keel_core::TurnId::new(1),
+            call_id: keel_core::ToolCallId::new(1),
+            workspace_root: std::env::temp_dir(),
+            cancel: keel_core::CancelToken::new(),
+        };
+
+        let result = tool.call(args, &ctx).await;
+
+        let keel_core::ToolOutcome::Failure { error } = result.outcome else {
+            panic!("both fetches fail");
+        };
+        assert!(
+            error.message.contains("the provider fetch failed"),
+            "{error:?}"
+        );
+        assert!(error.message.contains("loopback"), "{error:?}");
+    }
 
     #[test]
     fn urls_must_be_http_and_keyless() {

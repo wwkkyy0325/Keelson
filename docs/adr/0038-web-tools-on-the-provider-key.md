@@ -99,3 +99,7 @@ extra credential for the provider this host currently uses.
 - A backend the host cannot read (an unexpected response shape, an HTTP
   error) is not fatal: the next configured backend answers, which is what
   keeps the Ark path safe while its response shape is still being confirmed.
+- `web_fetch` follows the same principle: the provider fetch endpoint is
+  preferred, and a refusal (unpaid key, outage, an unparseable page) hands the
+  URL to the local download. Ark has no `web_fetch` tool, so an Ark model's
+  fetch has no hosted backend at all.
