@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import {
+    applyPreset,
     archiveSession,
     attachFiles,
     backgroundTasks,
@@ -16,6 +17,7 @@
     reopenSession,
     respondInteraction,
     savePermission,
+    savePreset,
     saveRig,
     sendMessage,
     sessionStatus,
@@ -32,12 +34,26 @@
   import Sidebar from "./Sidebar.svelte";
   import StatusBar from "./StatusBar.svelte";
   import Transcript from "./Transcript.svelte";
-  import type { RigOption, SessionStatus, Turn } from "../lib/protocol";
+  import type {
+    Preset,
+    RigOption,
+    SessionStatus,
+    Turn,
+  } from "../lib/protocol";
 
   let {
     onSettings,
     rigs = [],
-  }: { onSettings: () => void; rigs?: RigOption[] } = $props();
+    presets = [],
+    activePreset = null,
+    onPresetsChanged,
+  }: {
+    onSettings: () => void;
+    rigs?: RigOption[];
+    presets?: Preset[];
+    activePreset?: string | null;
+    onPresetsChanged: () => Promise<void>;
+  } = $props();
 
   let uiError = $state<string | null>(null);
   let answering = $state<string | null>(null);
@@ -207,6 +223,36 @@
     try {
       await savePermission(level);
       await loadStatus();
+    } catch (error) {
+      uiError = errText(error);
+    }
+  }
+
+  /// A preset switch writes the connection, then reopens the same
+  /// conversation: its history stays and the next turn uses the new model.
+  /// The rig part lands with the next conversation, because a conversation
+  /// with a turn keeps the rig it started with.
+  async function choosePreset(id: string): Promise<void> {
+    uiError = null;
+    try {
+      await applyPreset(id);
+      const sessionId = $session.sessionId;
+      if (sessionId) {
+        const view = await reopenSession($session.workspace || null, sessionId);
+        dispatch({ type: "session-opened", view });
+      }
+      await onPresetsChanged();
+    } catch (error) {
+      uiError = errText(error);
+    }
+  }
+
+  /// Saves the connection as it is now; an unnamed preset takes the model.
+  async function storePreset(name: string): Promise<void> {
+    uiError = null;
+    try {
+      await savePreset(name || status?.model || "预设");
+      await onPresetsChanged();
     } catch (error) {
       uiError = errText(error);
     }
@@ -468,9 +514,14 @@
         rigTitle={status ? $rigTitle(status.rig, status.rig) : ""}
         rigs={rigs}
         rigSelectable={emptyConversation}
+        {presets}
+        {activePreset}
         busy={$session.running !== null}
         onRigChange={chooseRig}
         onPermission={changePermission}
+        onPreset={choosePreset}
+        onSavePreset={storePreset}
+        onManagePresets={onSettings}
       />
     </footer>
   </div>

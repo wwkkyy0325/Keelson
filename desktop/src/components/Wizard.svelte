@@ -32,9 +32,7 @@
   let revealKey = $state(false);
   let hasKey = $state(untrack(() => initial.hasKey));
   let keyProvider = $state(untrack(() => initial.keyProvider));
-  let manual = $state(
-    untrack(() => initial.providerId === "custom" || !!initial.manual),
-  );
+  let manual = $state(untrack(() => initial.providerId === "custom"));
   let providerKind = $state(
     untrack(() =>
       initial.provider === "anthropic-compatible"
@@ -47,6 +45,8 @@
   let manualContext = $state(
     untrack(() => (initial.modelContext ? String(initial.modelContext) : "")),
   );
+  /// A manual endpoint may name its key slot; a catalog provider uses its id.
+  let keySlot = $state(untrack(() => initial.keySlot ?? ""));
   let error = $state<string | null>(untrack(() => initialError));
   let busy = $state(false);
 
@@ -104,11 +104,12 @@
       initial.model !== activeModel ||
       (initial.providerId !== "" && initial.providerId !== activeProviderId),
   );
+  let activeKeySlot = $derived(
+    manual ? keySlot.trim() || "custom" : activeProviderId,
+  );
   let hasKeyForSelection = $derived(
     hasKey &&
-      (keyProvider
-        ? keyProvider === activeProviderId
-        : !connectionChanged),
+      (keyProvider ? keyProvider === activeKeySlot : !connectionChanged),
   );
 
   onMount(() => {
@@ -174,6 +175,7 @@
         providerKind = remembered.provider;
         baseUrl = remembered.baseUrl;
         modelName = remembered.model;
+        manualContext = remembered.context ? String(remembered.context) : "";
       } else {
         // Nothing has been saved by hand yet: an empty form with examples is
         // clearer than another provider's address pre-filled.
@@ -226,10 +228,10 @@
     error = null;
     try {
       if (keyDraft.trim()) {
-        await saveKey(keyDraft.trim(), activeProviderId);
+        await saveKey(keyDraft.trim(), activeKeySlot);
         keyDraft = "";
         hasKey = true;
-        keyProvider = activeProviderId;
+        keyProvider = activeKeySlot;
       }
       await saveModel(
         activeProviderKind,
@@ -238,6 +240,7 @@
         activeBaseUrl,
         activeModel,
         manual ? manualContextValue() : (selectedModel?.context ?? null),
+        activeKeySlot,
       );
       go(1);
     } catch (cause) {
@@ -369,6 +372,14 @@
                 bind:value={manualContext}
                 placeholder={$t("wizard.model.contextPlaceholder")}
                 inputmode="numeric"
+                spellcheck="false"
+              />
+            </label>
+            <label>
+              <span>{$t("settings.keySlot")}</span>
+              <input
+                bind:value={keySlot}
+                placeholder="custom"
                 spellcheck="false"
               />
             </label>

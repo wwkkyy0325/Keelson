@@ -294,17 +294,20 @@ and CJK bigrams, up to eight hits with bounded excerpts and tool names
 
 ## Web access
 
-Two host tools cover the web. `web_search` calls the model provider's own
-search endpoint (DeepSeek serves `{base}/v1/tools/search` on the chat key) and
-is registered only when the configured provider has one, or when the settings
-carry a SearXNG base URL (`{url}/search?format=json`, no key); a profile may
-list it for every provider and the engine drops it from the visible set when
-neither exists. `web_fetch` always exists: it uses the provider's fetch
-endpoint when available and otherwise downloads the URL locally, with
-loopback/private-host checks, a 30 s timeout, a 2 MiB cap and a 60k-character
-output cap. Both are read-only, ask for no confirmation, hold the API key in
-memory only, and exist for a rig only when its `tools.visible` names them
-(ADR 0038).
+Two host tools cover the web. `web_search` tries an ordered list of backends
+and stops at the first that answers: the connected model's own provider
+(DeepSeek's `{base}/v1/tools/search`, or Volcengine Ark's hosted `web_search`
+tool on its Responses API), then a saved DeepSeek key passed by the host as
+`OpenRequest::search_key`, then a SearXNG base URL from the settings
+(`{url}/search?format=json`, no key). A backend that errors or returns
+nothing hands over to the next; the tool is registered only when the list is
+non-empty, and a profile may list it for every provider because the engine
+drops it from the visible set otherwise. `web_fetch` always exists: it uses
+a provider fetch endpoint when the list has one and otherwise downloads the
+URL locally, with loopback/private-host checks, a 30 s timeout, a 2 MiB cap
+and a 60k-character output cap. Both are read-only, ask for no confirmation,
+hold the API key in memory only, and exist for a rig only when its
+`tools.visible` names them (ADR 0038).
 
 ## Screen access
 

@@ -46,6 +46,7 @@ export function saveModel(
   baseUrl: string,
   model: string,
   context: number | null,
+  keySlot: string | null = null,
   searchUrl: string | null = null,
 ): Promise<void> {
   return invoke("save_model", {
@@ -55,8 +56,21 @@ export function saveModel(
     baseUrl,
     model,
     context,
+    keySlot,
     searchUrl,
   });
+}
+
+export function savePreset(name: string): Promise<void> {
+  return invoke("save_preset", { name });
+}
+
+export function applyPreset(id: string): Promise<void> {
+  return invoke("apply_preset", { id });
+}
+
+export function deletePreset(id: string): Promise<void> {
+  return invoke("delete_preset", { id });
 }
 
 export function saveLocale(locale: string): Promise<void> {

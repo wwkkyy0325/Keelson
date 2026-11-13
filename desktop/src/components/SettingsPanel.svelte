@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import {
+    applyPreset,
+    deletePreset,
     modelCatalog,
     saveKey,
     saveLocale,
     saveModel,
+    savePreset,
     setupState,
   } from "../lib/api";
   import { defaultSelection, findSelection, type ModelRow } from "../lib/catalog";
@@ -50,8 +53,13 @@
   let modelName = $state("");
   /// The manual endpoint's context capacity; empty keeps the profile's.
   let manualContext = $state("");
+  /// Which keychain slot a manual endpoint reads. Two self-hosted services
+  /// can keep different keys; a catalog provider always uses its own id.
+  let keySlot = $state("");
+  /// The name typed for "save this connection as a preset".
+  let presetName = $state("");
   let keyDraft = $state("");
-  /// A SearXNG base URL for models whose provider has no search endpoint.
+  /// A SearXNG base URL, the last web-search backend after the model's own.
   let searchUrl = $state("");
   let revealKey = $state(false);
   let busy = $state(false);
@@ -95,9 +103,14 @@
     manual ? baseUrl : (selectedProvider?.baseUrl ?? ""),
   );
   let activeModel = $derived(manual ? modelName : selectedModelId);
-  let hasKeyForSelection = $derived(
-    !!setup?.keyProviders?.includes(activeProviderId),
+  let activeKeySlot = $derived(
+    manual ? keySlot.trim() || "custom" : activeProviderId,
   );
+  let hasKeyForSelection = $derived(
+    !!setup?.keyProviders?.includes(activeKeySlot),
+  );
+  let presets = $derived(setup?.presets ?? []);
+  let activePreset = $derived(setup?.activePreset ?? null);
 
   /// Empty means "use the profile's window"; a non-empty value must be a
   /// positive integer.
@@ -147,8 +160,10 @@
       );
       setup = state;
       // A custom endpoint is not in the catalog; keep the manual form open
-      // instead of silently showing the catalog's default provider.
-      manual = state.providerId === "custom" || !!state.manual;
+      // instead of silently showing the catalog's default provider. A saved
+      // manual endpoint alone is not enough: the current connection may have
+      // moved to a catalog provider since.
+      manual = state.providerId === "custom";
       saved = {
         kind: state.provider,
         providerId: state.providerId,
@@ -165,6 +180,7 @@
       baseUrl = state.baseUrl;
       modelName = state.model;
       manualContext = state.modelContext ? String(state.modelContext) : "";
+      keySlot = state.keySlot || state.providerId;
       const value = await catalogTask;
       if (value) applySelection(value, state);
       // The cached list is on screen; revalidate behind it when it is stale.
@@ -237,6 +253,7 @@
         providerKind = remembered.provider;
         baseUrl = remembered.baseUrl;
         modelName = remembered.model;
+        manualContext = remembered.context ? String(remembered.context) : "";
       } else {
         // Nothing has been saved by hand yet: an empty form with examples is
         // clearer than another provider's address pre-filled.
@@ -288,10 +305,13 @@
     phase = "saving";
     try {
       if (keyDraft.trim()) {
-        await saveKey(keyDraft.trim(), activeProviderId);
+        await saveKey(keyDraft.trim(), activeKeySlot);
         if (setup) {
           setup.hasKey = true;
-          setup.keyProvider = activeProviderId;
+          setup.keyProvider = activeKeySlot;
+          if (!setup.keyProviders.includes(activeKeySlot)) {
+            setup.keyProviders = [...setup.keyProviders, activeKeySlot];
+          }
         }
         keyDraft = "";
       }
@@ -302,6 +322,7 @@
         activeBaseUrl,
         activeModel,
         manual ? manualContextValue() : (selectedModel?.context ?? null),
+        activeKeySlot,
         searchUrl.trim(),
       );
       pendingApply = true;
@@ -320,6 +341,61 @@
         searchUrl: searchUrl.trim(),
       };
       pendingApply = false;
+      onClose();
+    } catch (cause) {
+      error = $t("wizard.error.save", { message: errText(cause) });
+    } finally {
+      busy = false;
+      phase = "idle";
+    }
+  }
+
+  /// The preset list lives in the config, so it is re-read after every
+  /// change instead of being mirrored here.
+  async function refreshPresets(): Promise<void> {
+    const state = await setupState();
+    if (!setup) return;
+    setup.presets = state.presets;
+    setup.activePreset = state.activePreset;
+  }
+
+  async function createPreset(): Promise<void> {
+    error = null;
+    if (!presetName.trim()) {
+      error = $t("settings.presetName");
+      return;
+    }
+    try {
+      await savePreset(presetName.trim());
+      presetName = "";
+      await refreshPresets();
+    } catch (cause) {
+      error = $t("wizard.error.save", { message: errText(cause) });
+    }
+  }
+
+  async function removePreset(id: string): Promise<void> {
+    error = null;
+    try {
+      await deletePreset(id);
+      await refreshPresets();
+    } catch (cause) {
+      error = $t("wizard.error.save", { message: errText(cause) });
+    }
+  }
+
+  /// Switching from the settings page closes it, the same way Save does.
+  async function usePreset(id: string): Promise<void> {
+    error = null;
+    busy = true;
+    phase = "reconnecting";
+    try {
+      await applyPreset(id);
+      const reconnectError = await onReconnect();
+      if (reconnectError) {
+        error = reconnectError;
+        return;
+      }
       onClose();
     } catch (cause) {
       error = $t("wizard.error.save", { message: errText(cause) });
@@ -425,6 +501,14 @@
               />
             </label>
             <label>
+              <span>{$t("settings.keySlot")}</span>
+              <input
+                bind:value={keySlot}
+                placeholder="custom"
+                spellcheck="false"
+              />
+            </label>
+            <label>
               <span>{$t("settings.search")}</span>
               <input
                 bind:value={searchUrl}
@@ -471,6 +555,51 @@
         {#if manual}
           <p class="hint">{$t("settings.keyLocalHint")}</p>
         {/if}
+      </section>
+
+      <section>
+        <h3>{$t("settings.presets")}</h3>
+        <p class="muted">{$t("settings.presetsHint")}</p>
+        {#if presets.length === 0}
+          <p class="hint">{$t("settings.presetsEmpty")}</p>
+        {:else}
+          <ul class="preset-list">
+            {#each presets as preset (preset.id)}
+              <li class="preset-row">
+                <button
+                  class="preset-main"
+                  class:active={preset.id === activePreset}
+                  onclick={() => usePreset(preset.id)}
+                  disabled={busy}
+                >
+                  <strong>{preset.name}</strong>
+                  <span>
+                    {preset.rig} · {preset.providerName || preset.provider}
+                    {preset.model}
+                  </span>
+                </button>
+                <button
+                  class="link"
+                  onclick={() => removePreset(preset.id)}
+                  disabled={busy}
+                >
+                  {$t("settings.presetDelete")}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <div class="preset-create">
+          <input
+            bind:value={presetName}
+            placeholder={$t("settings.presetName")}
+            spellcheck="false"
+          />
+          <button class="ghost" onclick={createPreset} disabled={busy}>
+            {$t("settings.presetSave")}
+          </button>
+        </div>
+        <p class="hint">{$t("settings.presetSaveHint")}</p>
       </section>
 
       <section>

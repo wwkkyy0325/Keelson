@@ -52,7 +52,12 @@ pub struct SetupState {
     pub key_provider: String,
     pub key_providers: Vec<String>,
     pub manual: Option<config::ManualEndpoint>,
-    /// A SearXNG base URL used when the provider has no search endpoint.
+    /// The keychain slot the current connection reads.
+    pub key_slot: String,
+    /// Named setups and the one the current connection came from.
+    pub presets: Vec<config::Preset>,
+    pub active_preset: Option<String>,
+    /// A SearXNG base URL, the last web-search backend after the model's own.
     pub search_url: Option<String>,
     /// The rig that will run, and every rig the host found.
     pub rig: String,
@@ -496,7 +501,8 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
     let discovery = rig::discover(&rig_dirs());
-    let has_key = config::load_key(&config.provider_id, &config.key_provider)
+    let key_slot = active_key_slot(&config);
+    let has_key = config::load_key(&key_slot, &key_slot)
         .ok()
         .flatten()
         .is_some();
@@ -524,6 +530,9 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         key_provider: config.key_provider,
         key_providers: config.key_providers,
         manual: config.manual,
+        key_slot,
+        presets: config.presets,
+        active_preset: config.active_preset,
         search_url: config.search_url,
         rig,
         rigs,
@@ -577,6 +586,7 @@ pub fn save_model(
     base_url: String,
     model: String,
     context: Option<u32>,
+    key_slot: Option<String>,
     search_url: Option<String>,
 ) -> Result<(), String> {
     if !matches!(
@@ -601,6 +611,15 @@ pub fn save_model(
     config.base_url = base_url.trim().to_owned();
     config.model = model.trim().to_owned();
     config.model_context = context.filter(|value| *value > 0);
+    // An empty slot means "use the provider id", which is what every catalog
+    // provider does; a manual endpoint may name its own slot so two
+    // self-hosted services keep their keys apart.
+    config.key_slot = key_slot
+        .map(|slot| slot.trim().to_owned())
+        .filter(|slot| !slot.is_empty());
+    // Editing the connection by hand detaches it from the preset it came
+    // from; the menu must stop marking that preset as active.
+    config.active_preset = None;
     // `Some("")` clears the setting; `None` leaves it as it was, so a caller
     // that does not own the field (the wizard) cannot erase it.
     if let Some(url) = search_url.map(|url| url.trim().to_owned()) {
@@ -620,6 +639,7 @@ pub fn save_model(
             provider: config.provider.clone(),
             base_url: config.base_url.clone(),
             model: config.model.clone(),
+            context: config.model_context,
         });
     }
     config::save_config(&config)
@@ -1002,13 +1022,14 @@ async fn open_inner(
     }
 
     let provider = config.provider.clone();
+    let key_slot = active_key_slot(&config);
     let key = Some(
-        config::load_key(&config.provider_id, &config.key_provider)?
+        config::load_key(&key_slot, &key_slot)?
             .ok_or_else(|| "还没有保存密钥；请重新运行初始化".to_owned())?,
     );
-    // A saved DeepSeek key also serves the web tools when the chat model is a
-    // local server with no search endpoint of its own. Without one, the
-    // configured SearXNG URL is the fallback.
+    // The connected model's own provider search runs first. A saved DeepSeek
+    // key is the fallback when that search does not exist or fails; without
+    // one, the configured SearXNG URL is the last resort.
     let search_key = config::load_key("deepseek", "deepseek").ok().flatten();
     let fallback = rig_name_for(&provider);
     let preferred = chosen_rig(&config, fallback);
@@ -1239,8 +1260,138 @@ pub fn save_rig(state: State<'_, SharedState>, name: String) -> Result<(), Strin
     config::save_config(&config)
 }
 
+/// A preset id is opaque and stable; the name is what the user edits.
+fn new_preset_id() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("p{now}")
+}
+
+/// Saves the current connection as a preset, replacing one with the same
+/// name. Keys are not copied: the preset records the slot it reads, so two
+/// presets can share one key and one key can serve several models.
+#[tauri::command]
+pub fn save_preset(state: State<'_, SharedState>, name: String) -> Result<(), String> {
+    let name = name.trim().to_owned();
+    if name.is_empty() {
+        return Err("预设名不能为空".to_owned());
+    }
+    let mut config = state
+        .config
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let rig = chosen_rig(&config, rig_name_for(&config.provider));
+    let existing = config.presets.iter().position(|preset| preset.name == name);
+    let id = existing
+        .map(|index| config.presets[index].id.clone())
+        .unwrap_or_else(new_preset_id);
+    let preset = config::Preset {
+        id: id.clone(),
+        name,
+        rig,
+        provider: config.provider.clone(),
+        provider_id: config.provider_id.clone(),
+        provider_name: config.provider_name.clone(),
+        base_url: config.base_url.clone(),
+        model: config.model.clone(),
+        model_context: config.model_context,
+        key_slot: config.key_slot.clone(),
+        permission: config.permission.clone(),
+        search_url: config.search_url.clone(),
+    };
+    match existing {
+        Some(index) => config.presets[index] = preset,
+        None => config.presets.push(preset),
+    }
+    config.active_preset = Some(id);
+    config::save_config(&config)
+}
+
+/// Switches the connection to a preset. The rig part lands with the next
+/// conversation; a conversation that already has turns keeps its rig.
+#[tauri::command]
+pub fn apply_preset(state: State<'_, SharedState>, id: String) -> Result<(), String> {
+    let mut config = state
+        .config
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let preset = config
+        .presets
+        .iter()
+        .find(|preset| preset.id == id)
+        .cloned()
+        .ok_or_else(|| "找不到这个预设".to_owned())?;
+    if !preset.rig.trim().is_empty() {
+        let discovery = rig::discover(&rig_dirs());
+        if !discovery.rigs.iter().any(|rig| rig.name == preset.rig) {
+            return Err(format!(
+                "预设 `{}` 使用的 rig `{}` 不存在",
+                preset.name, preset.rig
+            ));
+        }
+    }
+    let slot = preset
+        .key_slot
+        .clone()
+        .map(|slot| slot.trim().to_owned())
+        .filter(|slot| !slot.is_empty())
+        .unwrap_or_else(|| preset.provider_id.clone());
+    if config::load_key(&slot, &slot)?.is_none() {
+        return Err(format!("预设 `{}` 的密钥还没有保存", preset.name));
+    }
+    copy_preset(&mut config, &preset, slot);
+    config::save_config(&config)
+}
+
+/// Copies a preset's connection into the config. The caller has already
+/// validated the rig and the key; this part is pure and tested.
+fn copy_preset(config: &mut config::DesktopConfig, preset: &config::Preset, slot: String) {
+    config.provider = preset.provider.clone();
+    config.provider_id = preset.provider_id.clone();
+    config.provider_name = preset.provider_name.clone();
+    config.base_url = preset.base_url.clone();
+    config.model = preset.model.clone();
+    config.model_context = preset.model_context;
+    config.key_slot = Some(slot);
+    config.permission = preset.permission.clone();
+    config.search_url = preset.search_url.clone();
+    // An empty rig means "whatever is configured"; a preset saved before the
+    // rig existed must not blank it.
+    if !preset.rig.trim().is_empty() {
+        config.rig = preset.rig.clone();
+    }
+    config.active_preset = Some(preset.id.clone());
+}
+
+#[tauri::command]
+pub fn delete_preset(state: State<'_, SharedState>, id: String) -> Result<(), String> {
+    let mut config = state
+        .config
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    config.presets.retain(|preset| preset.id != id);
+    if config.active_preset.as_deref() == Some(id.as_str()) {
+        config.active_preset = None;
+    }
+    config::save_config(&config)
+}
+
 fn rig_name_for(_provider: &str) -> &'static str {
     "coding-live"
+}
+
+/// The keychain slot the current connection reads. Catalog providers use
+/// their id; a manual endpoint may name its own slot so two self-hosted
+/// services do not overwrite each other's key.
+fn active_key_slot(config: &config::DesktopConfig) -> String {
+    config
+        .key_slot
+        .clone()
+        .map(|slot| slot.trim().to_owned())
+        .filter(|slot| !slot.is_empty())
+        .unwrap_or_else(|| config.provider_id.clone())
 }
 
 fn permission_level(level: &str) -> Option<PermissionLevel> {
@@ -1833,7 +1984,10 @@ fn normalized(path: &Path) -> PathBuf {
 mod tests {
     use std::path::Path;
 
-    use super::{collect_tree, copy_attachment, copy_folder, rig_dirs, rig_for_session};
+    use super::{
+        collect_tree, copy_attachment, copy_folder, copy_preset, rig_dirs, rig_for_session,
+    };
+    use crate::config::{DesktopConfig, Preset};
     use crate::sessions::SessionMeta;
 
     fn meta(id: &str, rig: &str) -> SessionMeta {
@@ -1964,6 +2118,55 @@ mod tests {
             dirs.iter().any(|dir| dir.join("explainer.toml").is_file()),
             "the repository rigs are on the search path: {dirs:?}"
         );
+    }
+
+    fn preset(rig: &str) -> Preset {
+        Preset {
+            id: "p1".to_owned(),
+            name: "火山".to_owned(),
+            rig: rig.to_owned(),
+            provider: "openai-compatible".to_owned(),
+            provider_id: "custom".to_owned(),
+            provider_name: "Volcengine".to_owned(),
+            base_url: "https://ark.example/api/v3".to_owned(),
+            model: "doubao-pro".to_owned(),
+            model_context: Some(131_072),
+            key_slot: Some("volcengine".to_owned()),
+            permission: Some("workspace_auto".to_owned()),
+            search_url: None,
+        }
+    }
+
+    #[test]
+    fn applying_a_preset_replaces_the_whole_connection() {
+        let mut config = DesktopConfig {
+            model: "old-model".to_owned(),
+            rig: "coding-live".to_owned(),
+            ..DesktopConfig::default()
+        };
+
+        copy_preset(&mut config, &preset("office-live"), "volcengine".to_owned());
+
+        assert_eq!(config.model, "doubao-pro");
+        assert_eq!(config.base_url, "https://ark.example/api/v3");
+        assert_eq!(config.model_context, Some(131_072));
+        assert_eq!(config.key_slot.as_deref(), Some("volcengine"));
+        assert_eq!(config.permission.as_deref(), Some("workspace_auto"));
+        assert_eq!(config.rig, "office-live");
+        assert_eq!(config.active_preset.as_deref(), Some("p1"));
+    }
+
+    #[test]
+    fn a_preset_without_a_rig_keeps_the_current_one() {
+        let mut config = DesktopConfig {
+            rig: "coding-live".to_owned(),
+            ..DesktopConfig::default()
+        };
+
+        copy_preset(&mut config, &preset(""), "custom".to_owned());
+
+        assert_eq!(config.rig, "coding-live");
+        assert_eq!(config.active_preset.as_deref(), Some("p1"));
     }
 
     #[tokio::test]

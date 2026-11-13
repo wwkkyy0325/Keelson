@@ -9,5 +9,8 @@
 /desktop-dev.log
 /desktop-release.log
 
+# Evaluation artifacts (workspaces kept for reproduction, not tracked)
+/evals/data/
+
 __pycache__/
 *.pyc

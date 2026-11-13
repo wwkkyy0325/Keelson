@@ -2598,3 +2598,52 @@ problems.
 - The settings panel opens a custom endpoint on the manual tab instead of
   falling back to the catalog's default provider; the saved local endpoint is
   now visible when the panel reopens.
+
+## 2026-11-13 — presets, key slots, tool-call ergonomics
+
+- Presets: `desktop.json` stores named setups (`presets`, `activePreset`) and
+  a key slot per connection. `save_preset`, `apply_preset` and `delete_preset`;
+  the status-bar chip switches, Settings manages and deletes. A preset records
+  the slot, never the key, so one key can serve several models and two
+  self-hosted services keep separate keys.
+- The manual form and the wizard gained a key-slot field; switching to a
+  catalog provider always uses the provider id as its slot.
+- Kernel changes are in the Keel repository: a scalar supplied for a list
+  argument is widened to a one-element list, a leading `/` is
+  workspace-relative on Windows, `read_file` names a directory, and the
+  malformed-arguments message shows an escaped Windows path.
+- `coding.md` explains `timeout_ms` and says not to re-run a slow command to
+  check on it. The acceptance test skip list treats every dot-directory as
+  generated output.
+
+### Why
+
+Half of the observed tool failures were one argument shape the schema can
+repair before it costs a model round trip. Presets remove the three-place
+switch between a local model, the cloud and an explainer setup.
+
+## 2026-11-13 — web search follows the connected model; a local key is a fallback
+
+- `WebBackend::chain` replaces `WebBackend::resolve` and returns an ordered
+  list: the connected model's own provider first, then a saved DeepSeek key,
+  then the configured SearXNG URL. `web_search` tries them in turn and a
+  backend that errors or answers nothing hands over to the next.
+- A connected Volcengine Ark model (`ark.*.volces.com`) searches through the
+  provider's hosted `web_search` tool on its Responses API, on the model's own
+  key. The answer's `url_citation` annotations and search-call `sources`
+  become the result list; without citations the answer itself is the one
+  result.
+- A saved DeepSeek key is dropped from the chain when the connected DeepSeek
+  model already searches on that same origin and key: a failed request is not
+  repeated.
+- `web_fetch` keeps using a provider fetch endpoint when the chain has one and
+  otherwise downloads locally.
+- The settings hint and the `search_key`/`search_url` comments state the new
+  order.
+
+### Why
+
+With a DeepSeek key saved, every model — including the cloud model the user
+had just switched to — searched through that key. A model whose provider
+serves its own search should use it; the separately configured backend is
+what answers when that is absent or fails.

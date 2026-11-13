@@ -80,3 +80,22 @@ extra credential for the provider this host currently uses.
   local server with no endpoint of its own. The host passes it as
   `OpenRequest::search_key`; it wins over the SearXNG URL. The key stays in
   memory and is never written to a rig or a session document.
+
+## Amendment — 2026-11-13
+
+- The connected model's own provider is tried first, on its own key. A saved
+  DeepSeek key and then the SearXNG URL are fallbacks, in that order: a
+  backend that errors or answers with no results hands the query to the next
+  one. `search_key` no longer wins outright. A saved key is dropped when the
+  connected model already searches through the same service on that key, so
+  a DeepSeek session makes one attempt, not two.
+- Volcengine Ark models advertise a hosted `web_search` tool
+  (`features.tools.web_search` on `/api/v3/models`). The host calls it on the
+  model's Responses API (`{origin}/api/v3/responses`) with
+  `tools: [{ "type": "web_search", "max_keyword": 3 }]` and reads the answer's
+  `url_citation` annotations and search-call `sources` as the result list.
+  This is one model call per search, so it costs more than a plain search
+  endpoint; that is the price of using the provider the user chose.
+- A backend the host cannot read (an unexpected response shape, an HTTP
+  error) is not fatal: the next configured backend answers, which is what
+  keeps the Ark path safe while its response shape is still being confirmed.

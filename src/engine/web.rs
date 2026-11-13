@@ -1,10 +1,13 @@
-//! Web tools: the model provider's search and fetch endpoints when the host
-//! offers them, otherwise a plain HTTP fetch reduced to text.
+//! Web tools: the connected model's own provider first, a separately
+//! configured backend only when that fails, and a plain HTTP fetch reduced
+//! to text as the last resort.
 //!
-//! DeepSeek serves both at `{base}/v1/tools/{search,fetch}` on the same key
-//! as the chat API, so a DeepSeek session needs no extra configuration. Any
-//! other provider gets only the local fetch, which needs no key.
+//! DeepSeek serves search and fetch at `{base}/v1/tools/{search,fetch}` on
+//! the chat key. Volcengine Ark serves a hosted `web_search` tool on its
+//! Responses API, on the model's key. Any other provider gets only the local
+//! fetch, which needs no key.
 
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -19,6 +22,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// The provider fetches the page on its side, so a slow origin is out of our
 /// control; the bound is wider than a direct download's.
 const PROVIDER_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
+/// A hosted search is one model call with its own reasoning; it gets a wider
+/// bound than a plain endpoint query.
+const HOSTED_SEARCH_TIMEOUT: Duration = Duration::from_secs(90);
+/// How many search terms the hosted tool may expand a query into.
+const HOSTED_MAX_KEYWORD: i64 = 3;
 /// The most of a page the local fetch keeps.
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 /// Characters kept from a fetched page.
@@ -28,62 +36,141 @@ const MAX_SEARCH_CHARS: usize = 8_000;
 const MAX_SUMMARY_CHARS: usize = 800;
 const MAX_RESULTS: i64 = 20;
 const DEFAULT_RESULTS: i64 = 8;
+/// The provider whose plain search endpoint a saved key can reach.
+const DEEPSEEK_BASE: &str = "https://api.deepseek.com";
 
-/// Where web tools get their data. The provider endpoint wins; a configured
-/// SearXNG URL is the fallback for a model whose provider has none.
+/// Where web tools get their data, in the order they are tried: the
+/// connected model's own provider first, a separately configured backend
+/// only when that fails.
 #[derive(Clone)]
 pub enum WebBackend {
-    /// The provider's own search and fetch endpoints (DeepSeek).
+    /// A hosted search tool on the provider's Responses API, run on the
+    /// model's own key (Volcengine Ark serves `web_search` this way).
+    Hosted {
+        endpoint: String,
+        model: String,
+        key: String,
+    },
+    /// The provider's plain search and fetch endpoints (DeepSeek).
     Provider { base: String, key: String },
     /// A self-hosted SearXNG instance. It searches; fetch stays local.
     Searxng { url: String },
 }
 
 impl WebBackend {
-    pub fn resolve(
+    /// The search backends in the order they are tried. Empty means the
+    /// model has no web search at all.
+    pub fn chain(
         base_url: Option<&str>,
+        model: &str,
         api_key: &str,
+        search_key: Option<&str>,
         search_url: Option<&str>,
-    ) -> Option<Self> {
-        if let Some((base, key)) = provider_endpoint(base_url, api_key) {
-            return Some(Self::Provider { base, key });
+    ) -> Vec<Self> {
+        let mut backends = Vec::new();
+        if let Some(backend) = connected(base_url, model, api_key) {
+            backends.push(backend);
         }
-        let url = search_url?.trim();
-        if url.is_empty() {
-            return None;
+        if let Some(key) = search_key.map(str::trim).filter(|key| !key.is_empty()) {
+            // The same service on the same key would repeat the request that
+            // just failed, so it is not tried twice.
+            if !already_searches_on(&backends, key) {
+                backends.push(Self::Provider {
+                    base: DEEPSEEK_BASE.to_owned(),
+                    key: key.to_owned(),
+                });
+            }
         }
-        let parsed = Url::parse(url).ok()?;
-        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-            return None;
+        if let Some(url) = searxng_url(search_url) {
+            backends.push(Self::Searxng { url });
         }
-        Some(Self::Searxng {
-            url: url.trim_end_matches('/').to_owned(),
-        })
+        backends
+    }
+
+    /// Only a provider endpoint serves fetch; a hosted search and SearXNG
+    /// search do not.
+    pub fn serves_fetch(&self) -> bool {
+        matches!(self, Self::Provider { .. })
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Hosted { model, .. } => format!("the model's own search ({model})"),
+            Self::Provider { .. } => "the provider search endpoint".to_owned(),
+            Self::Searxng { .. } => "the configured search service".to_owned(),
+        }
     }
 }
 
-/// DeepSeek serves both tools on the chat key; every other base URL is not a
-/// provider search endpoint.
-fn provider_endpoint(base_url: Option<&str>, api_key: &str) -> Option<(String, String)> {
-    let base = base_url?.trim();
-    if base.is_empty() || api_key.trim().is_empty() {
+/// The connected model's own search facility, when its provider has one.
+fn connected(base_url: Option<&str>, model: &str, api_key: &str) -> Option<WebBackend> {
+    let base = base_url?.trim().trim_end_matches('/');
+    let key = api_key.trim();
+    if base.is_empty() || key.is_empty() {
         return None;
     }
     let url = Url::parse(base).ok()?;
     let host = url.host_str()?.to_ascii_lowercase();
-    if host != "api.deepseek.com" && host != "api.deepseek.cn" {
+    if is_ark_host(&host) {
+        let model = model.trim();
+        if model.is_empty() {
+            return None;
+        }
+        // The Responses API keeps its versioned path whatever the chat base
+        // is, the same way DeepSeek's tools live at the API root.
+        return Some(WebBackend::Hosted {
+            endpoint: format!("{}/api/v3/responses", url.origin().ascii_serialization()),
+            model: model.to_owned(),
+            key: key.to_owned(),
+        });
+    }
+    if host == "api.deepseek.com" || host == "api.deepseek.cn" {
+        return Some(WebBackend::Provider {
+            base: base.to_owned(),
+            key: key.to_owned(),
+        });
+    }
+    None
+}
+
+/// A saved key is skipped when the connected model already searches through
+/// the same service on the same key.
+fn already_searches_on(backends: &[WebBackend], key: &str) -> bool {
+    backends.iter().any(|backend| match backend {
+        WebBackend::Provider { base, key: known } => {
+            tool_origin(base) == DEEPSEEK_BASE && known.as_str() == key
+        }
+        _ => false,
+    })
+}
+
+/// Volcengine Ark serves a hosted `web_search` tool on its Responses API.
+fn is_ark_host(host: &str) -> bool {
+    host.starts_with("ark.") && host.ends_with(".volces.com")
+}
+
+fn searxng_url(search_url: Option<&str>) -> Option<String> {
+    let url = search_url?.trim();
+    if url.is_empty() {
         return None;
     }
-    Some((base.trim_end_matches('/').to_owned(), api_key.to_owned()))
+    let parsed = Url::parse(url).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return None;
+    }
+    Some(url.trim_end_matches('/').to_owned())
 }
 
 fn provider_tools_url(base: &str, leaf: &str) -> String {
-    // The chat base may carry a compatibility path (`/anthropic`, `/v1`);
-    // Search and Fetch are served from the API root.
-    let root = Url::parse(base)
+    format!("{}/v1/tools/{leaf}", tool_origin(base))
+}
+
+/// The chat base may carry a compatibility path (`/anthropic`, `/v1`); the
+/// provider's tools and search are served from the API root.
+fn tool_origin(base: &str) -> String {
+    Url::parse(base)
         .map(|url| url.origin().ascii_serialization())
-        .unwrap_or_else(|_| base.trim_end_matches('/').to_owned());
-    format!("{root}/v1/tools/{leaf}")
+        .unwrap_or_else(|_| base.trim_end_matches('/').to_owned())
 }
 
 fn searxng_search_url(url: &str, query: &str) -> Option<Url> {
@@ -119,17 +206,17 @@ fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
     message
 }
 
-/// `web_search`: the provider's search engine, with the query operators it
-/// documents. Results are titles, URLs and summaries; `web_fetch` reads one.
+/// `web_search`: the connected model's own search first, then the configured
+/// backends. Results are titles, URLs and summaries; `web_fetch` reads one.
 pub struct WebSearchTool {
-    backend: WebBackend,
+    backends: Vec<WebBackend>,
     client: Client,
 }
 
 impl WebSearchTool {
-    pub fn new(backend: WebBackend) -> Self {
+    pub fn new(backends: Vec<WebBackend>) -> Self {
         Self {
-            backend,
+            backends,
             client: client(),
         }
     }
@@ -140,10 +227,11 @@ impl Tool for WebSearchTool {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
             name: "web_search".to_owned(),
-            description: "Search the web through the model provider's search API. Returns up \
-                          to `count` results with a title, URL and summary. The query may use \
-                          `site:`, `-site:`, `\"exact phrase\"`, `-term`, `lang:`, `after:` and \
-                          `before:`. Use web_fetch to read a result in full."
+            description: "Search the web. The connected model's provider is tried first, then \
+                          the configured search service. Returns up to `count` results with a \
+                          title, URL and summary; a provider endpoint also understands `site:`, \
+                          `-site:`, `\"exact phrase\"`, `lang:`, `after:` and `before:`. Use \
+                          web_fetch to read a result in full."
                 .to_owned(),
             risk: RiskLevel::ReadOnly,
             params: vec![
@@ -216,14 +304,206 @@ impl Tool for WebSearchTool {
 }
 
 impl WebSearchTool {
+    /// Each backend is tried in turn; the first one that answers with
+    /// results wins. An empty answer moves on, so a provider whose response
+    /// shape the host cannot read still leaves the configured search to
+    /// answer; only when every backend fails is the call an error.
     async fn search(&self, query: &str, count: i64) -> Result<Vec<serde_json::Value>, ToolError> {
-        match &self.backend {
-            WebBackend::Provider { base, key } => {
-                provider_search(&self.client, base, key, query, count).await
+        let mut answered = false;
+        let mut failures = Vec::new();
+        for backend in &self.backends {
+            match search_with(&self.client, backend, query, count).await {
+                Ok(results) if results.is_empty() => answered = true,
+                Ok(results) => return Ok(results),
+                Err(error) => failures.push(format!("{}: {}", backend.label(), error.message)),
             }
-            WebBackend::Searxng { url } => searxng_search(&self.client, url, query, count).await,
+        }
+        if answered {
+            return Ok(Vec::new());
+        }
+        Err(ToolError::io(format!(
+            "every search backend failed ({})",
+            failures.join("; ")
+        )))
+    }
+}
+
+async fn search_with(
+    client: &Client,
+    backend: &WebBackend,
+    query: &str,
+    count: i64,
+) -> Result<Vec<serde_json::Value>, ToolError> {
+    match backend {
+        WebBackend::Hosted {
+            endpoint,
+            model,
+            key,
+        } => hosted_search(client, endpoint, model, key, query).await,
+        WebBackend::Provider { base, key } => {
+            provider_search(client, base, key, query, count).await
+        }
+        WebBackend::Searxng { url } => searxng_search(client, url, query, count).await,
+    }
+}
+
+/// Runs the provider's own web search tool. The answer's citations are the
+/// results; when the provider returns no citations the answer itself is the
+/// one result, so the model still reads what the search found.
+async fn hosted_search(
+    client: &Client,
+    endpoint: &str,
+    model: &str,
+    key: &str,
+    query: &str,
+) -> Result<Vec<serde_json::Value>, ToolError> {
+    let body = serde_json::json!({
+        "model": model,
+        "tools": [{ "type": "web_search", "max_keyword": HOSTED_MAX_KEYWORD }],
+        "input": [{
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": format!(
+                    "Search the web for: {query}\nAnswer briefly and cite the sources you used."
+                ),
+            }],
+        }],
+    });
+    let response = client
+        .post(endpoint)
+        .bearer_auth(key)
+        .json(&body)
+        .timeout(HOSTED_SEARCH_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| {
+            ToolError::io(format!("search request failed: {}", error_chain(&error)))
+        })?;
+    let status = response.status();
+    let value: serde_json::Value = response.json().await.map_err(|error| {
+        ToolError::new(
+            ErrorCode::InvalidResponse,
+            format!("search returned a non-JSON body: {}", error_chain(&error)),
+            true,
+        )
+    })?;
+    if !status.is_success() {
+        let message =
+            error_message(&value).unwrap_or_else(|| format!("search returned HTTP {status}"));
+        let code = if status.as_u16() == 400 {
+            ErrorCode::InvalidArguments
+        } else {
+            ErrorCode::Io
+        };
+        return Err(ToolError::new(code, message, code == ErrorCode::Io));
+    }
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+    collect_sources(&value, &mut results, &mut seen);
+    if results.is_empty() {
+        let answer = response_text(&value);
+        if !answer.trim().is_empty() {
+            results.push(serde_json::json!({
+                "title": "web search answer",
+                "url": "",
+                "summary": clip(&answer, MAX_SUMMARY_CHARS),
+            }));
         }
     }
+    Ok(results)
+}
+
+/// Citations reach the host as `url_citation` annotations on the answer or
+/// as `sources` on a search call; both shapes are read.
+fn collect_sources(
+    value: &serde_json::Value,
+    out: &mut Vec<serde_json::Value>,
+    seen: &mut HashSet<String>,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if map.get("type").and_then(|kind| kind.as_str()) == Some("url_citation") {
+                push_source(
+                    map.get("url").and_then(|url| url.as_str()),
+                    map.get("title").and_then(|title| title.as_str()),
+                    out,
+                    seen,
+                );
+            }
+            if let Some(sources) = map.get("sources").and_then(|sources| sources.as_array()) {
+                for source in sources {
+                    match source {
+                        serde_json::Value::Object(source) => push_source(
+                            source.get("url").and_then(|url| url.as_str()),
+                            source.get("title").and_then(|title| title.as_str()),
+                            out,
+                            seen,
+                        ),
+                        serde_json::Value::String(url) => {
+                            push_source(Some(url.as_str()), None, out, seen)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for child in map.values() {
+                collect_sources(child, out, seen);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_sources(item, out, seen);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_source(
+    url: Option<&str>,
+    title: Option<&str>,
+    out: &mut Vec<serde_json::Value>,
+    seen: &mut HashSet<String>,
+) {
+    let Some(url) = url else { return };
+    let url = url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return;
+    }
+    if !seen.insert(url.to_owned()) {
+        return;
+    }
+    let title = title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(url);
+    out.push(serde_json::json!({ "title": title, "url": url, "summary": "" }));
+}
+
+fn response_text(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    let Some(output) = value.get("output").and_then(|output| output.as_array()) else {
+        return out;
+    };
+    for item in output {
+        let Some(contents) = item.get("content").and_then(|content| content.as_array()) else {
+            continue;
+        };
+        for content in contents {
+            if content.get("type").and_then(|kind| kind.as_str()) != Some("output_text") {
+                continue;
+            }
+            let Some(text) = content.get("text").and_then(|text| text.as_str()) else {
+                continue;
+            };
+            if !out.is_empty() {
+                out.push_str("\n\n");
+            }
+            out.push_str(text);
+        }
+    }
+    out
 }
 
 async fn provider_search(
@@ -561,7 +841,10 @@ fn render_results(results: &[serde_json::Value]) -> String {
             }
         };
         let date = field(result, "date");
-        out.push_str(&format!("{}. {title}\n   {url}\n", index + 1));
+        out.push_str(&format!("{}. {title}\n", index + 1));
+        if !url.is_empty() {
+            out.push_str(&format!("   {url}\n"));
+        }
         if !summary.is_empty() {
             out.push_str("   ");
             out.push_str(&clip(&summary, MAX_SUMMARY_CHARS));
@@ -857,11 +1140,38 @@ mod tests {
     }
 
     #[test]
-    fn the_provider_endpoint_wins_over_a_configured_search_url() {
+    fn the_connected_model_comes_before_the_configured_backends() {
+        // An Ark model searches through its provider's hosted tool; the saved
+        // DeepSeek key and the SearXNG URL only answer when that fails.
+        let chain = WebBackend::chain(
+            Some("https://ark.cn-beijing.volces.com/api/v3"),
+            "deepseek-v4-1-flash-261017",
+            "ark-key",
+            Some("deepseek-key"),
+            Some("http://192.168.3.132:8080"),
+        );
+        assert_eq!(chain.len(), 3, "hosted, then key, then SearXNG");
         assert!(matches!(
-            WebBackend::resolve(Some("https://api.deepseek.com"), "key", None),
-            Some(WebBackend::Provider { .. })
+            &chain[0],
+            WebBackend::Hosted { endpoint, model, .. }
+                if endpoint == "https://ark.cn-beijing.volces.com/api/v3/responses"
+                    && model == "deepseek-v4-1-flash-261017"
         ));
+        assert!(matches!(&chain[1], WebBackend::Provider { .. }));
+        assert!(matches!(&chain[2], WebBackend::Searxng { .. }));
+    }
+
+    #[test]
+    fn a_deepseek_key_is_not_tried_twice() {
+        let chain = WebBackend::chain(
+            Some("https://api.deepseek.com/anthropic"),
+            "deepseek-flash",
+            "shared-key",
+            Some("shared-key"),
+            None,
+        );
+        assert_eq!(chain.len(), 1, "one service, one key: one attempt");
+        assert!(matches!(&chain[0], WebBackend::Provider { .. }));
         assert_eq!(
             provider_tools_url("https://api.deepseek.com/v1", "search"),
             "https://api.deepseek.com/v1/tools/search"
@@ -876,26 +1186,98 @@ mod tests {
             provider_tools_url("https://api.deepseek.com/anthropic/v1", "fetch"),
             "https://api.deepseek.com/v1/tools/fetch"
         );
+    }
+
+    #[test]
+    fn a_local_model_still_falls_back_to_the_configured_search() {
+        let chain = WebBackend::chain(
+            Some("http://192.168.3.132:18081/v1"),
+            "qwen3.8-flash-next-iq3_s",
+            "local",
+            Some("deepseek-key"),
+            Some("http://192.168.3.132:8080/"),
+        );
+        assert_eq!(chain.len(), 2, "key, then SearXNG");
+        assert!(matches!(&chain[0], WebBackend::Provider { .. }));
         assert!(matches!(
-            WebBackend::resolve(
-                Some("http://192.168.3.132:18081/v1"),
-                "key",
-                Some("http://192.168.3.132:8080")
-            ),
-            Some(WebBackend::Searxng { .. })
+            &chain[1],
+            WebBackend::Searxng { url } if url == "http://192.168.3.132:8080"
         ));
-        assert!(matches!(
-            WebBackend::resolve(
-                Some("https://api.deepseek.com"),
-                "",
-                Some("http://192.168.3.132:8080")
-            ),
-            Some(WebBackend::Searxng { .. })
-        ));
-        assert!(WebBackend::resolve(Some("http://192.168.3.132:18081/v1"), "key", None).is_none());
-        assert!(WebBackend::resolve(None, "", Some("nonsense")).is_none());
+        assert!(WebBackend::chain(
+            Some("http://192.168.3.132:18081/v1"),
+            "qwen3.8-flash-next-iq3_s",
+            "local",
+            None,
+            None
+        )
+        .is_empty());
+        assert!(WebBackend::chain(None, "", "", None, Some("nonsense")).is_empty());
         let endpoint = searxng_search_url("http://192.168.3.132:8080", "rust async").unwrap();
         assert_eq!(endpoint.path(), "/search");
         assert!(endpoint.query().unwrap_or("").contains("format=json"));
+    }
+
+    #[test]
+    fn a_hosted_answer_yields_its_citations() {
+        let value = serde_json::json!({
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "type": "search",
+                        "query": "rust async",
+                        "sources": [
+                            {"type": "url", "url": "https://doc.rust-lang.org/book", "title": "The Book"}
+                        ]
+                    }
+                },
+                {
+                    "type": "message",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "Rust has async blocks.",
+                        "annotations": [{
+                            "type": "url_citation",
+                            "url": "https://doc.rust-lang.org/book",
+                            "title": "The Book"
+                        }]
+                    }]
+                }
+            ]
+        });
+        let mut results = Vec::new();
+        let mut seen = HashSet::new();
+        collect_sources(&value, &mut results, &mut seen);
+        // The same source on the search call and the citation is one result.
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert_eq!(results[0]["url"], "https://doc.rust-lang.org/book");
+        assert_eq!(results[0]["title"], "The Book");
+        assert_eq!(response_text(&value), "Rust has async blocks.");
+    }
+
+    #[test]
+    fn a_hosted_answer_without_citations_still_reaches_the_model() {
+        let value = serde_json::json!({
+            "output": [{
+                "type": "message",
+                "content": [{"type": "output_text", "text": "No sources were cited."}]
+            }]
+        });
+        let mut results = Vec::new();
+        let mut seen = HashSet::new();
+        collect_sources(&value, &mut results, &mut seen);
+        assert!(results.is_empty());
+        assert_eq!(response_text(&value), "No sources were cited.");
+    }
+
+    #[test]
+    fn an_answer_result_renders_without_an_empty_url_line() {
+        let results = vec![serde_json::json!({
+            "title": "web search answer",
+            "url": "",
+            "summary": "Rust has async blocks."
+        })];
+        let text = render_results(&results);
+        assert_eq!(text, "1. web search answer\n   Rust has async blocks.\n");
     }
 }

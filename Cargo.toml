@@ -33,8 +33,10 @@ serde_json = "1"
 base64 = "0.22"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 toml = "0.8"
-uiautomation = "0.25.1"
 xcap = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+uiautomation = "0.25.1"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

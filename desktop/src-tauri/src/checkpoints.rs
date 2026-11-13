@@ -98,6 +98,8 @@ fn filter_generated(changes: Vec<FileChange>) -> Vec<FileChange> {
 
 /// A GUI host has no console; git must not flash one for each checkpoint.
 fn quiet_git() -> Command {
+    // Only the Windows flag needs the binding to be mutable.
+    #[allow(unused_mut)]
     let mut command = Command::new("git");
     #[cfg(windows)]
     {

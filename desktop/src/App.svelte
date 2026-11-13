@@ -28,6 +28,9 @@
     keyProvider: "",
     keyProviders: [],
     manual: null,
+    keySlot: "",
+    presets: [],
+    activePreset: null,
     rig: "",
     rigs: [],
     problems: [],
@@ -152,6 +155,17 @@
     );
   }
 
+  /// The status bar's preset list is read from the config after a save,
+  /// apply or delete; a failed refresh keeps the last list instead of
+  /// replacing it with an error.
+  async function refreshSetup(): Promise<void> {
+    try {
+      setup = await setupState();
+    } catch {
+      // The next boot retries.
+    }
+  }
+
   function errText(error: unknown): string {
     if (typeof error === "string") return error;
     if (error instanceof Error) return error.message;
@@ -186,11 +200,19 @@
   <Chat
     onSettings={() => (showSettings = true)}
     rigs={setup?.rigs ?? []}
+    presets={setup?.presets ?? []}
+    activePreset={setup?.activePreset ?? null}
+    onPresetsChanged={refreshSetup}
   />
   {#if showSettings}
     <SettingsPanel
       workspace={$session.workspace}
-      onClose={() => (showSettings = false)}
+      onClose={() => {
+        showSettings = false;
+        // Saving a connection detaches it from its preset; the status bar's
+        // mark must follow.
+        void refreshSetup();
+      }}
       onReconnect={reconnect}
     />
   {/if}

@@ -130,18 +130,24 @@ impl Tool for LaunchAppTool {
     }
 }
 
-/// Lists the UI Automation controls inside a window.
+/// Lists the UI Automation controls inside a window. The Automation API is
+/// Windows-only, so the tool exists only there.
+#[cfg(windows)]
 pub struct ListControlsTool;
 
+#[cfg(windows)]
 impl ListControlsTool {
     pub fn new() -> Self {
         Self
     }
 }
 
+#[cfg(windows)]
 const MAX_CONTROLS: usize = 200;
+#[cfg(windows)]
 const MAX_CONTROL_DEPTH: usize = 6;
 
+#[cfg(windows)]
 #[async_trait]
 impl Tool for ListControlsTool {
     fn schema(&self) -> ToolSchema {
@@ -184,6 +190,7 @@ impl Tool for ListControlsTool {
     }
 }
 
+#[cfg(windows)]
 fn list_controls(title: &str) -> Result<String, String> {
     use uiautomation::types::ControlType;
     use uiautomation::{UIAutomation, UIElement, UITreeWalker};
@@ -402,6 +409,7 @@ mod tests {
         assert!(resolve_program(temp.path(), "missing-app-xyz").is_none());
     }
 
+    #[cfg(windows)]
     #[test]
     #[ignore = "needs an interactive desktop session"]
     fn the_control_tree_of_a_window_is_listed() {

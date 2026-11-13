@@ -137,12 +137,39 @@ export type SetupState = {
   lastWorkspace: string;
   keyProvider: string;
   keyProviders: string[];
-  manual?: { provider: string; baseUrl: string; model: string } | null;
-  /// A SearXNG base URL for models whose provider has no search endpoint.
+  manual?: {
+    provider: string;
+    baseUrl: string;
+    model: string;
+    context?: number | null;
+  } | null;
+  /// The keychain slot the current connection reads.
+  keySlot: string;
+  /// Named setups and the one the current connection came from.
+  presets: Preset[];
+  activePreset: string | null;
+  /// A SearXNG base URL, the last web-search backend after the model's own.
   searchUrl?: string | null;
   rig: string;
   rigs: RigOption[];
   problems: string[];
+};
+
+/// A named setup. It records the key slot, never the key itself, so several
+/// presets may share one key and one key may serve several models.
+export type Preset = {
+  id: string;
+  name: string;
+  rig: string;
+  provider: string;
+  providerId: string;
+  providerName: string;
+  baseUrl: string;
+  model: string;
+  modelContext: number | null;
+  keySlot: string | null;
+  permission: string | null;
+  searchUrl: string | null;
 };
 
 export type CatalogModel = {

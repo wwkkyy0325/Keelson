@@ -28,6 +28,36 @@ pub struct ManualEndpoint {
     pub provider: String,
     pub base_url: String,
     pub model: String,
+    /// The window saved with the endpoint; configs from before it existed
+    /// have none and fall back to the profile's.
+    #[serde(default)]
+    pub context: Option<u32>,
+}
+
+/// One named setup: a connection, the key slot it uses, the rig and the
+/// permission level. Keys stay in the keychain; a preset only names the slot,
+/// so several presets can share one key (two models on the same provider) and
+/// one slot can serve many presets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preset {
+    pub id: String,
+    pub name: String,
+    pub rig: String,
+    pub provider: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    pub base_url: String,
+    pub model: String,
+    #[serde(default)]
+    pub model_context: Option<u32>,
+    /// The keychain slot; empty means `provider_id`.
+    #[serde(default)]
+    pub key_slot: Option<String>,
+    #[serde(default)]
+    pub permission: Option<String>,
+    #[serde(default)]
+    pub search_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,14 +83,24 @@ pub struct DesktopConfig {
     pub key_providers: Vec<String>,
     /// The last manual endpoint, if one was ever saved.
     pub manual: Option<ManualEndpoint>,
+    /// The keychain slot for the current connection. `None` means the
+    /// provider id, which is what catalog providers use.
+    #[serde(default)]
+    pub key_slot: Option<String>,
+    /// Named setups the status bar can switch between.
+    #[serde(default)]
+    pub presets: Vec<Preset>,
+    /// The preset the current connection came from, for the menu mark.
+    #[serde(default)]
+    pub active_preset: Option<String>,
     /// The rig file to run. Empty means "whichever rig the provider implies",
     /// which is what an install from before the picker gets.
     pub rig: String,
     /// A host permission override (`workspace_auto` or `full_auto`). `None`
     /// keeps the rig profile's level.
     pub permission: Option<String>,
-    /// A SearXNG base URL for web search when the model provider has no
-    /// search endpoint of its own. Not a secret.
+    /// A SearXNG base URL, the last web-search backend after the connected
+    /// model's own search. Not a secret.
     pub search_url: Option<String>,
 }
 
@@ -80,6 +120,9 @@ impl Default for DesktopConfig {
             key_provider: String::new(),
             key_providers: Vec::new(),
             manual: None,
+            key_slot: None,
+            presets: Vec::new(),
+            active_preset: None,
             rig: String::new(),
             permission: None,
             search_url: None,
@@ -275,6 +318,60 @@ mod tests {
         seed_key_providers(&mut config);
 
         assert_eq!(config.key_providers, ["custom", "deepseek"]);
+    }
+
+    #[test]
+    fn a_manual_endpoint_without_a_window_still_loads() {
+        let config: DesktopConfig = serde_json::from_str(
+            r#"{"manual":{"provider":"openai-compatible",
+                "baseUrl":"http://192.168.3.132:18081/v1",
+                "model":"qwen3.8-flash-next-iq3_s"}}"#,
+        )
+        .unwrap();
+
+        let manual = config.manual.unwrap();
+
+        assert_eq!(manual.base_url, "http://192.168.3.132:18081/v1");
+        assert_eq!(manual.context, None);
+    }
+
+    #[test]
+    fn a_manual_endpoint_keeps_its_window() {
+        let config: DesktopConfig = serde_json::from_str(
+            r#"{"manual":{"provider":"openai-compatible","baseUrl":"http://host/v1",
+                "model":"local","context":131072}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.manual.unwrap().context, Some(131_072));
+    }
+
+    #[test]
+    fn a_preset_records_the_key_slot_not_the_key() {
+        let config: DesktopConfig = serde_json::from_str(
+            r#"{"presets":[{"id":"p1","name":"DS flash","rig":"coding-live",
+                "provider":"openai-compatible","providerId":"deepseek",
+                "providerName":"DeepSeek","baseUrl":"https://api.deepseek.com",
+                "model":"deepseek-flash","modelContext":1048576,
+                "keySlot":"deepseek","permission":"full_auto","searchUrl":null}]}"#,
+        )
+        .unwrap();
+
+        let preset = &config.presets[0];
+
+        assert_eq!(preset.key_slot.as_deref(), Some("deepseek"));
+        assert_eq!(preset.model_context, Some(1_048_576));
+        assert!(preset.search_url.is_none());
+    }
+
+    #[test]
+    fn a_config_without_presets_still_loads() {
+        let config: DesktopConfig =
+            serde_json::from_str(r#"{"providerId":"deepseek","model":"deepseek-flash"}"#).unwrap();
+
+        assert!(config.presets.is_empty());
+        assert!(config.active_preset.is_none());
+        assert!(config.key_slot.is_none());
     }
 
     #[test]

@@ -1,28 +1,56 @@
 <script lang="ts">
   import { rigLabel, t } from "../lib/i18n";
-  import type { RigOption, SessionStatus } from "../lib/protocol";
+  import type { Preset, RigOption, SessionStatus } from "../lib/protocol";
 
   let {
     status,
     rigTitle,
     rigs = [],
     rigSelectable = false,
+    presets = [],
+    activePreset = null,
     busy = false,
     onRigChange,
     onPermission,
+    onPreset,
+    onSavePreset,
+    onManagePresets,
   }: {
     status: SessionStatus | null;
     rigTitle: string;
     rigs?: RigOption[];
     rigSelectable?: boolean;
+    presets?: Preset[];
+    activePreset?: string | null;
     busy?: boolean;
     onRigChange: (name: string) => Promise<void>;
     onPermission: (level: string) => Promise<void>;
+    onPreset: (id: string) => Promise<void>;
+    onSavePreset: (name: string) => Promise<void>;
+    onManagePresets: () => void;
   } = $props();
 
   let permissionOpen = $state(false);
   let contextOpen = $state(false);
   let rigOpen = $state(false);
+  let presetOpen = $state(false);
+  let presetName = $state("");
+
+  let activePresetName = $derived(
+    presets.find((preset) => preset.id === activePreset)?.name ?? "",
+  );
+
+  async function pickPreset(id: string): Promise<void> {
+    presetOpen = false;
+    await onPreset(id);
+  }
+
+  async function savePreset(): Promise<void> {
+    const name = presetName.trim();
+    presetName = "";
+    presetOpen = false;
+    await onSavePreset(name);
+  }
 
   /// The localized title of the running rig, or its file name if the list is
   /// stale.
@@ -82,6 +110,62 @@
 {#if status}
   <div class="status-bar">
     <div class="status-left">
+      <div class="status-menu">
+        <button
+          class="status-item"
+          onclick={() => (presetOpen = !presetOpen)}
+          disabled={busy}
+          aria-haspopup="menu"
+          aria-expanded={presetOpen}
+          title={$t("status.preset")}
+        >
+          {activePresetName || $t("status.preset")}
+          <span class="caret">▾</span>
+        </button>
+        {#if presetOpen}
+          <button
+            class="status-backdrop"
+            aria-label={$t("app.dismiss")}
+            onclick={() => (presetOpen = false)}
+          ></button>
+          <div class="status-popover" role="menu">
+            {#each presets as preset (preset.id)}
+              <button
+                role="menuitem"
+                class:active={preset.id === activePreset}
+                onclick={() => pickPreset(preset.id)}
+              >
+                <strong>{preset.name}</strong>
+                <span>
+                  {preset.rig} · {preset.providerName || preset.provider}
+                  {preset.model}
+                </span>
+              </button>
+            {/each}
+            {#if presets.length > 0}<div class="preset-sep"></div>{/if}
+            <div class="preset-save">
+              <input
+                bind:value={presetName}
+                placeholder={$t("status.presetName")}
+                spellcheck="false"
+              />
+              <button class="ghost" onclick={savePreset}>
+                {$t("status.presetSave")}
+              </button>
+            </div>
+            <button
+              class="status-row"
+              onclick={() => {
+                presetOpen = false;
+                onManagePresets();
+              }}
+            >
+              {$t("status.presetManage")}
+            </button>
+          </div>
+        {/if}
+      </div>
+
       <div class="status-menu">
         <button
           class="status-item"

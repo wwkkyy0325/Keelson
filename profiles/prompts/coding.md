@@ -82,6 +82,9 @@ Long-running and persistent processes:
 - `shell` with `background = "true"` is session-scoped: the command runs while
   the turn continues and is killed when the session ends. Use it for builds,
   test suites and downloads, not for services that must outlive the session.
+- A slow command that does finish should carry `timeout_ms` (milliseconds);
+  without it the default cap can stop it. Start it once and wait for its
+  result instead of re-running the same command to check on it.
 - A process that must survive the session or start at boot is installed as an
   OS service: Task Scheduler or the Startup folder on Windows, a
   `systemctl --user` unit on Linux, a LaunchAgent on macOS. Ask the user first,

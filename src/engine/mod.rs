@@ -83,12 +83,13 @@ pub struct OpenRequest {
     /// off; the desktop keeps them on, and the profile's
     /// `[verification] mode = "none"` still opts out.
     pub acceptance: bool,
-    /// A SearXNG base URL, used for web search when the model provider has no
-    /// search endpoint of its own. A provider endpoint always wins.
+    /// A SearXNG base URL, the last web-search backend: the connected model's
+    /// own provider search is tried first, then the host's search key.
     pub search_url: Option<String>,
-    /// A DeepSeek key for the provider's search and fetch tools, when the host
-    /// wants them even though the chat model is a local server. The key stays
-    /// in memory and never enters a prompt, a log or a stored document.
+    /// A DeepSeek key for the provider's search and fetch tools, used when
+    /// the connected model has no search of its own or that search fails. The
+    /// key stays in memory and never enters a prompt, a log or a stored
+    /// document.
     pub search_key: Option<String>,
 }
 
@@ -547,49 +548,55 @@ impl Engine {
         let background = Arc::new(
             LocalBackgroundTasks::new(outputs_dir.join("background")).with_events(events.clone()),
         );
-        // A provider that serves search and fetch tools gets them on the same
-        // key as the chat API. A host-supplied search key covers the other
-        // case: a local chat model with a saved cloud key for the web tools.
-        // Otherwise a configured SearXNG URL is the search backend, and the
-        // local fetch is always available.
-        let web = match search_key.filter(|key| !key.trim().is_empty()) {
-            Some(key) => Some(web::WebBackend::Provider {
-                base: "https://api.deepseek.com".to_owned(),
-                key,
-            }),
-            None => web::WebBackend::resolve(
-                model
-                    .as_ref()
-                    .and_then(|over| over.base_url.as_deref())
-                    .or(config.model_base_url.as_deref()),
-                model
-                    .as_ref()
-                    .map(|over| over.api_key.as_str())
-                    .unwrap_or(""),
-                search_url.as_deref(),
-            ),
-        };
+        // The connected model's own provider searches first, on its own key.
+        // A host-supplied search key and a configured SearXNG URL are the
+        // fallbacks, in that order. The local fetch is always available.
+        let web = web::WebBackend::chain(
+            model
+                .as_ref()
+                .and_then(|over| over.base_url.as_deref())
+                .or(config.model_base_url.as_deref()),
+            model
+                .as_ref()
+                .map(|over| over.model.as_str())
+                .unwrap_or(config.model_route.model.as_str()),
+            model
+                .as_ref()
+                .map(|over| over.api_key.as_str())
+                .unwrap_or(""),
+            search_key.as_deref(),
+            search_url.as_deref(),
+        );
         let session = Arc::new(Mutex::new(session));
         // Screenshots live beside the project's outputs, outside the
         // workspace: the folder is the permission scope for a capture.
         // Captures are transient; a week of them is enough for a recheck.
         screen::prune_old_screens(&project_dir, Duration::from_secs(7 * 24 * 60 * 60));
         let screens = screen::screens_dir(&project_dir, &store_path);
+        let has_search = !web.is_empty();
         let registry = Arc::new(tools(
             &project_dir,
             &config,
             todos.clone(),
             background.clone(),
             session.clone(),
-            web.clone(),
+            web,
             screens,
         )?);
-        if web.is_none() {
-            // A profile may list web_search; without a provider endpoint the
-            // tool is not registered and must not fail validation.
+        if !has_search {
+            // A profile may list web_search; without any backend the tool is
+            // not registered and must not fail validation.
             config
                 .visible_tool_names
                 .retain(|name| name != "web_search");
+        }
+        #[cfg(not(windows))]
+        {
+            // list_controls reads the Windows UI Automation tree; a profile
+            // that lists it must still validate on the other platforms.
+            config
+                .visible_tool_names
+                .retain(|name| name != "list_controls");
         }
         let context = ContextBuilder::new(vec![
             Arc::new(SystemStage::new()),
@@ -1622,28 +1629,25 @@ fn mentions_pytest(text: &str) -> bool {
 }
 
 fn is_skipped_test_directory(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    // Tool and framework caches are hidden directories; none of them holds
+    // the project's own tests.
+    if name.starts_with('.') {
+        return true;
+    }
     matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some(
-            ".git"
-                | "target"
-                | "node_modules"
-                | "dist"
-                | "build"
-                | ".venv"
-                | "venv"
-                | ".tox"
-                | "__pycache__"
-                | "site-packages"
-                | ".pytest_cache"
-                | ".mypy_cache"
-                | ".ruff_cache"
-                | ".cache"
-                | "__pypackages__"
-                | ".next"
-                | ".svelte-kit"
-                | "coverage"
-        )
+        name,
+        "target"
+            | "node_modules"
+            | "dist"
+            | "build"
+            | "venv"
+            | "site-packages"
+            | "__pycache__"
+            | "__pypackages__"
+            | "coverage"
     )
 }
 
@@ -1691,7 +1695,7 @@ fn tools(
     todos: Arc<Mutex<TodoList>>,
     background: Arc<dyn BackgroundTasks>,
     session: Arc<Mutex<StoredSession>>,
-    web: Option<web::WebBackend>,
+    web: Vec<web::WebBackend>,
     screens: PathBuf,
 ) -> Result<ToolRegistry, KernelError> {
     let trash = Arc::new(LocalTrashStore::at(project_dir.join("trash")));
@@ -1728,9 +1732,12 @@ fn tools(
     registry.register(Arc::new(RestoreFileTool::new(trash)))?;
     registry.register(Arc::new(TodoTool::new(todos)))?;
     registry.register(Arc::new(history::SearchHistoryTool::new(session)))?;
-    registry.register(Arc::new(web::WebFetchTool::new(web.clone())))?;
-    if let Some(backend) = web {
-        registry.register(Arc::new(web::WebSearchTool::new(backend)))?;
+    // Fetch uses the provider endpoint when there is one; every other
+    // backend falls back to the local download.
+    let fetch_backend = web.iter().find(|backend| backend.serves_fetch()).cloned();
+    registry.register(Arc::new(web::WebFetchTool::new(fetch_backend)))?;
+    if !web.is_empty() {
+        registry.register(Arc::new(web::WebSearchTool::new(web)))?;
     }
     registry.register(Arc::new(screen::ListWindowsTool::new()))?;
     registry.register(Arc::new(screen::ScreenCaptureTool::new(screens)))?;
@@ -1742,6 +1749,7 @@ fn tools(
     registry.register(Arc::new(series::ArchiveEpisodeTool::new()))?;
     registry.register(Arc::new(desktop::LaunchAppTool::new()))?;
     registry.register(Arc::new(desktop::WaitForWindowTool::new()))?;
+    #[cfg(windows)]
     registry.register(Arc::new(desktop::ListControlsTool::new()))?;
     Ok(registry)
 }
@@ -2525,7 +2533,7 @@ system = "prompt.md"
             todos,
             background,
             session,
-            None,
+            Vec::new(),
             fixture.dir.path().join("screens"),
         )
         .expect("the registry builds");

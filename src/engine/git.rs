@@ -176,6 +176,8 @@ impl Tool for GitDiffTool {
 
 /// A GUI host has no console; git must not flash one for each probe.
 fn quiet_git() -> tokio::process::Command {
+    // Only the Windows flag needs the binding to be mutable.
+    #[allow(unused_mut)]
     let mut command = tokio::process::Command::new("git");
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
