@@ -7,6 +7,9 @@ model = "deepseek-flash"
 base_url = "https://api.deepseek.com/anthropic"
 api_key_env = "ANTHROPIC_AUTH_TOKEN"
 thinking_budget = 0
+# Two films on the same subject must not open the same way. The explainer runs
+# hot on purpose; code rigs leave the provider default alone.
+temperature = 1.0
 max_output_tokens = 32768
 context_window = 1048576
 
