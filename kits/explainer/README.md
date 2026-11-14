@@ -7,6 +7,7 @@ Keelson.
 
 ```
 kit/design.js       palette, type scale, motion helpers, the mascot
+kit/motifs.js       the moving picture: waves, hills, crowd, stroke, particles, camera
 kit/scene.html      the 2D frame harness: draws t, posts one PNG per frame
 kit/scene3d.html    the 3D harness: WebGL layer composited under 2D labels
 kit/three.module.min.js  Three.js r160 (MIT), vendored for offline renders

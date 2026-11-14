@@ -2664,3 +2664,19 @@ An out-of-credit DeepSeek key made every `web_fetch` fail with
 `Insufficient Balance`, even though the page was reachable from the host.
 Search already fell through to the next backend; fetch returned the first
 error instead.
+
+## 2026-11-14 — the explainer kit draws a picture, not a slide
+
+- `kit/motifs.js` adds the moving picture layer: `waves` (layered water with
+  crest lines), `hills` (parallax ground), `walker`/`crowd` (animated human
+  silhouettes), `stroke` (a line revealed by arc length), `particles` and
+  `camera`. Every helper is seeded and a pure function of `t`.
+- `kit/scene.html` and `kit/scene3d.html` load it after `design.js`.
+- The scene template and the explainer prompt now build every scene from a
+  motif; a text-only frame is a slide and does not ship.
+
+### Why
+
+Scenes were composed from `panel`, `headline` and `pill` alone, so every film
+came out as the same slide deck regardless of subject. The kit had no way to
+draw water, ground or people — the picture had to come from somewhere.

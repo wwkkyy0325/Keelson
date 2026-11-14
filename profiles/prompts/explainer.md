@@ -143,6 +143,24 @@ Visual style:
 - For a single-video project, copy `kit/styles/<name>.js` to `kit/style.js`
   once and keep it; do not restyle individual scenes.
 
+The picture:
+- A scene is a picture with labels on it, not a slide with a picture on top.
+  Build every scene from the motif layer in `kit/motifs.js`: `waves` (layered
+  water), `hills` (ground), `crowd` and `walker` (people), `stroke` (a line
+  drawn on), `particles` (air) and `camera` (push in, pan). Compose at least
+  one of them into every scene, and let it move for the whole shot.
+- Depth is speed, scale and opacity: a back layer is slower, smaller and
+  paler. Stack three to six layers before reaching for a new colour.
+- A text-only frame is a slide and does not ship. Panels carry a number, a
+  term or a quotation; the picture carries the idea. If a scene has nothing
+  to show, it is two scenes or none.
+- Motion is continuous inside a shot: the motif advances with `t` while the
+  labels arrive and stay. Do not animate only the text.
+- The camera moves at most once per shot and never fights the motif; a push
+  in on a field, not a pan across labels.
+- Every motif is seeded and a pure function of `t`; the same frame must draw
+  the same pixels on a re-render.
+
 Layout and motion:
 - 1920x1080 by default. Keep content above the subtitle band: a two-line cue
   reaches about 280 pixels up from the bottom (y = 800 on a 1080 frame), and
