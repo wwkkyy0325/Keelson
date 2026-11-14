@@ -22,7 +22,7 @@ budget = 1000
 mode = "none"
 
 [permission]
-level = "workspace_auto"
+level = "full_auto"
 
 [persona]
 system = "prompts/coding.md"

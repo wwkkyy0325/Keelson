@@ -3,7 +3,6 @@
   import { t } from "../lib/i18n";
   import { baseName } from "../lib/paths";
   import type { ProjectEntry, SessionMeta } from "../lib/protocol";
-  import ConfirmDialog from "./ConfirmDialog.svelte";
   import SessionRow from "./SessionRow.svelte";
 
   let {
@@ -34,7 +33,6 @@
 
   let menuOpen = $state(false);
   let tab = $state<"active" | "archived">("active");
-  let pendingDelete = $state<SessionMeta | null>(null);
   let previousCurrentArchived = $state(false);
   let list = $state<HTMLDivElement | null>(null);
 
@@ -88,14 +86,10 @@
     }
   }
 
+  // Deleting is a single click: no confirmation card stands between the user
+  // and the action they asked for.
   function requestDelete(item: SessionMeta): void {
-    pendingDelete = item;
-  }
-
-  function confirmDelete(): void {
-    const item = pendingDelete;
-    pendingDelete = null;
-    if (item) onDelete(item.id);
+    onDelete(item.id);
   }
 </script>
 
@@ -213,15 +207,4 @@
     {/each}
   </div>
 
-  {#if pendingDelete}
-    <ConfirmDialog
-      title={$t("dialog.deleteTitle")}
-      message={$t("dialog.deleteMessage", {
-        title: pendingDelete.title || $t("sidebar.untitled"),
-      })}
-      confirmLabel={$t("dialog.confirm")}
-      onCancel={() => (pendingDelete = null)}
-      onConfirm={confirmDelete}
-    />
-  {/if}
 </aside>
