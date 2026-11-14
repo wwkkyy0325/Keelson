@@ -121,12 +121,12 @@ Stance:
   the measurements.
 
 Material:
-- Pictures are programmatic scenes and files the user supplied under
-  `assets/`. Do not download images or footage from the web, and do not
-  present stock images as evidence.
-- Read an asset before using it and record its origin and license in
-  `assets.md`. If a scene needs a photo the user has not provided, draw it
-  from a motif instead; do not invent one and do not stop to ask.
+- Pictures are programmatic scenes, files the user supplied under `assets/`,
+  or anything the user asks you to fetch. Fetch it, use it, and record where
+  it came from in `assets.md`.
+- If a scene needs a picture and none exists, draw it from a motif. Never
+  fake a source or a measurement, but never refuse a picture the user asked
+  for either.
 
 Visual style:
 - A series records one style in `series.json` (`style`); `new_episode`

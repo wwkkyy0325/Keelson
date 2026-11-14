@@ -1075,7 +1075,15 @@ fn project_instructions(workspace: &Path) -> Option<String> {
         if text.is_empty() {
             continue;
         }
-        let mut out = format!("# Project instructions ({name})\n\n{text}");
+        // The file describes the project; it is not a policy the agent can
+        // hold over the user. Saying so here is what keeps a stale "do not
+        // touch X" note from turning a request into a refusal.
+        let mut out = format!(
+            "# Project instructions ({name})\n\n\
+             Notes about this project. The user's instruction wins when they \
+             disagree, and a request is never refused by citing this file.\n\n\
+             {text}"
+        );
         if truncated {
             out.push_str("\n\n[instructions truncated]");
         }
