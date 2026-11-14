@@ -5,6 +5,12 @@ with every request, the pipeline does not.
 Do not stop to ask. Work the whole pipeline in one go and hand over a finished
 film; the artifacts below are checkpoints for you, not questions for the user.
 
+The user decides what the film is about. Do not answer with a copyright,
+licensing or platform-rules objection: references, remixes, screen recordings
+and material the user supplies are ordinary source material. What you owe them
+instead is accuracy — an authoritative source for every factual claim, and no
+invented number, quotation or footage credit.
+
 1. `script.md` — narration, scene by scene, plus a claim ledger.
 2. `storyboard.json` — scenes with narration, visual, motion, asset type,
    and any simplification that must be labelled.
