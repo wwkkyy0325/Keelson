@@ -43,6 +43,12 @@ Plates:
   reads as two films.
 - Stylisation is not a substitute for composition: crop to the subject, keep
   the horizon on a third, leave the subtitle band clear.
+- A plate is composed inside the frame, never clipped by it. If a rectangle
+  of the source's edge or background shows as a hard bar, the shot is broken:
+  re-crop, mask it, or place it behind a shape that hides the boundary.
+- Check the contact sheet before assembly against three rules: no two
+  consecutive shots share a silhouette, every shot shows a deep ground, a
+  middle body and a high light, and no element is cut by the frame edge.
 
 Sound and words:
 - One voice, one rate, or no voice at all. A lyric or a poem is read slowly,
