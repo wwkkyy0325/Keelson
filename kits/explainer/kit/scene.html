@@ -21,6 +21,7 @@
     <script src="/kit/style.js"></script>
     <script src="/kit/design.js"></script>
     <script src="/kit/motifs.js"></script>
+    <script src="/kit/stylize.js"></script>
     <script>
       (async function () {
         const params = new URLSearchParams(location.search);
@@ -43,6 +44,7 @@
           script.onerror = reject;
           document.head.appendChild(script);
         });
+        if (window.SCENE.prepare) await window.SCENE.prepare();
         await document.fonts.ready;
 
         const canvas = document.getElementById("c");

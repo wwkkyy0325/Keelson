@@ -32,11 +32,32 @@ The picture:
 - Draw-on (`stroke`), reveal by mask and camera push are the vocabulary. No
   spin, no bounce, no random particles appearing mid-shot.
 
+Plates:
+- A face, an animal, a city, a nebula: procedural shapes will not carry them.
+  Use a plate — a photograph, a still the user supplied, or an image you fetch
+  into `assets/` and credit in `assets.md`.
+- Restyle it once in `SCENE.prepare()` with `kit/stylize.js`: `oil` for a
+  painted look, `sketch` for line art, `duotone` to fold it into the film's
+  two inks. Then move the camera over the cached canvas with `drawPlate`.
+- One plate treatment per film. A painted shot next to a clean photograph
+  reads as two films.
+- Stylisation is not a substitute for composition: crop to the subject, keep
+  the horizon on a third, leave the subtitle band clear.
+
 Sound and words:
 - One voice, one rate, or no voice at all. A lyric or a poem is read slowly,
   with the line on screen and space around it.
 - Music only from a file the user supplied or one they name; say what it is.
 - Subtitles carry what is said, nothing else. Never subtitle a visual.
+- Rhythm is shared. If there is music, get its tempo and let the cuts land on
+  the beat: a scene change on a downbeat, a reveal on the bar, a hold across
+  the phrase. Write the tempo in the storyboard and derive scene lengths from
+  it where the narration leaves room.
+- Image, line and sound peak together. A line that lands on a still frame, or
+  a beat that passes with nothing changing, is the seam an audience feels.
+- A sung line is subtitled as sung, timed from the audio, not re-typed as
+  prose. If the narration and the music fight, the music wins the cut and the
+  narration is re-measured to fit.
 
 Facts:
 - When the film makes a claim about the world — a date, a number, a name, a

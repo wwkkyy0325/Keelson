@@ -21,6 +21,7 @@
     <script src="/kit/style.js"></script>
     <script src="/kit/design.js"></script>
     <script src="/kit/motifs.js"></script>
+    <script src="/kit/stylize.js"></script>
     <script type="module">
       import * as THREE from "/kit/three.module.min.js";
 
@@ -55,6 +56,7 @@
         fps,
         duration,
       });
+      if (window.SCENE && window.SCENE.prepare) await window.SCENE.prepare();
       await document.fonts.ready;
 
       // A soft bloom over the 3D layer only. The layer is squared before the
