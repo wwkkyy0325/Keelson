@@ -1,0 +1,12 @@
+# The film rig: art films, concept pieces, promos and lyric films, as well as
+# explainers. The kit and the renderer are the same as the explainer's; the
+# profile's persona is what makes it a filmmaker instead of a lecturer.
+#
+# Run it from the directory the film should live in:
+#
+#   keelson run film --session-id film
+
+name = "film"
+title = "Film (creative)"
+description = "Make an art film, a concept piece or a promo from a brief."
+profile = "../profiles/film-live.toml"
