@@ -124,9 +124,9 @@ fn the_office_rig_exposes_document_tools() {
 }
 
 #[test]
-fn the_explainer_rig_exposes_render_and_probe() {
+fn the_figure_rig_exposes_render_and_probe() {
     let temp = tempfile::TempDir::new().expect("a temp dir");
-    let engine = open("explainer", "profiles/explainer-live.toml", temp.path());
+    let engine = open("figure", "profiles/figure-live.toml", temp.path());
     let tools = &engine.config().visible_tool_names;
 
     for needed in [
@@ -149,18 +149,18 @@ fn the_explainer_rig_exposes_render_and_probe() {
     ] {
         assert!(
             tools.iter().any(|tool| tool == needed),
-            "explainer is missing `{needed}`: {tools:?}"
+            "figure is missing `{needed}`: {tools:?}"
         );
     }
     for elsewhere in ["screen_capture", "launch_app", "git_diff", "apply_edits"] {
         assert!(
             !tools.iter().any(|tool| tool == elsewhere),
-            "`{elsewhere}` does not belong to the explainer rig: {tools:?}"
+            "`{elsewhere}` does not belong to the figure rig: {tools:?}"
         );
     }
     assert!(
-        engine.config().system_prompt.contains("storyboard"),
-        "the explainer persona did not load its contract"
+        engine.config().system_prompt.contains("cut-out"),
+        "the figure persona did not load its contract"
     );
 }
 

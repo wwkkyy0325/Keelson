@@ -2115,7 +2115,7 @@ mod tests {
     fn a_source_run_finds_the_repository_rigs() {
         let dirs = rig_dirs();
         assert!(
-            dirs.iter().any(|dir| dir.join("explainer.toml").is_file()),
+            dirs.iter().any(|dir| dir.join("figure.toml").is_file()),
             "the repository rigs are on the search path: {dirs:?}"
         );
     }

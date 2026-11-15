@@ -1,0 +1,15 @@
+# The figure rig: a cut-out film.
+#
+# The renderer is the explainer kit's. What makes this rig different is the
+# contract in its persona: a scene is assembled from components, every point
+# that moves is a bone, and secondary motion is carried by springs. A shot
+# built this way can be edited part by part instead of redrawn.
+#
+# Run it from the directory the film should live in:
+#
+#   keelson run figure --session-id figure
+
+name = "figure"
+title = "Figure (cut-out)"
+description = "Build a film from separately drawn parts bound to bones and springs."
+profile = "../profiles/figure-live.toml"

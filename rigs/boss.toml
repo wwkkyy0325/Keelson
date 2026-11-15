@@ -1,0 +1,16 @@
+# The lead rig: work a hiring board, qualify the companies that match, and
+# open a short conversation with each.
+#
+# The contract is in the persona: the city and role filter, a fit score before
+# any message, one opener per lead, a hard turn cap, a daily quota, and a stop
+# on any verification screen. It never logs in for the user and never works
+# around a challenge.
+#
+# Run it from the directory the leads should live in:
+#
+#   keelson run boss --session-id boss
+
+name = "boss"
+title = "Lead desk"
+description = "Qualify local hiring posts and open a capped conversation with each."
+profile = "../profiles/boss-live.toml"
