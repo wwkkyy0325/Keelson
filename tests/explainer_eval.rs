@@ -120,9 +120,9 @@ async fn a_topic_becomes_an_evidence_dossier_and_a_storyboard() {
         name: "explainer".to_owned(),
         title: "Explainer".to_owned(),
         description: String::new(),
-        profile: repo.join("profiles/explainer-live.toml"),
+        profile: repo.join("archive/rigs-v1/explainer-live.toml"),
         extra_roots: Vec::new(),
-        path: repo.join("rigs/explainer.toml"),
+        path: repo.join("archive/rigs-v1/explainer.toml"),
     };
     // An optional override pins a different model. Since kernel 0.2.15 the
     // rig's own `deepseek-flash` also survives a thinking-mode tool follow-up,
@@ -292,9 +292,9 @@ async fn a_dead_source_is_replaced_or_removed() {
         name: "explainer".to_owned(),
         title: "Explainer".to_owned(),
         description: String::new(),
-        profile: repo.join("profiles/explainer-live.toml"),
+        profile: repo.join("archive/rigs-v1/explainer-live.toml"),
         extra_roots: Vec::new(),
-        path: repo.join("rigs/explainer.toml"),
+        path: repo.join("archive/rigs-v1/explainer.toml"),
     };
     let model = std::env::var("KEELSON_EVAL_MODEL")
         .ok()

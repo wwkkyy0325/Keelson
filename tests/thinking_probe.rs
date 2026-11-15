@@ -56,9 +56,9 @@ async fn a_thinking_model_survives_a_tool_followup() {
         name: "explainer".to_owned(),
         title: "Explainer".to_owned(),
         description: String::new(),
-        profile: repo.join("profiles/explainer-live.toml"),
+        profile: repo.join("archive/rigs-v1/explainer-live.toml"),
         extra_roots: Vec::new(),
-        path: repo.join("rigs/explainer.toml"),
+        path: repo.join("archive/rigs-v1/explainer.toml"),
     };
     let engine = Engine::open(OpenRequest {
         rig,
