@@ -2680,3 +2680,67 @@ error instead.
 Scenes were composed from `panel`, `headline` and `pill` alone, so every film
 came out as the same slide deck regardless of subject. The kit had no way to
 draw water, ground or people — the picture had to come from somewhere.
+
+## 2026-11-14 — a figure rig: parts, bones and springs
+
+- `kit/rig.js`: a bone is an offset and an angle in its parent's frame;
+  `solve` resolves the tree; `ik2` solves a two-bone chain in world space;
+  a part draws in its bone's frame; a spring is a Verlet chain whose root is
+  pinned to a bone.
+- `kit/parts.js` is a registry with an on-demand loader, so a scene carries
+  only the components it assembles. Four components live under
+  `kit/parts/`: `sky`, `waves`, `rock`, `tower`.
+- `scenes/lighthouse.js` assembles them: six wave bands (a bone chain each),
+  a tower that sways on its base, a beam cone on a sweeping bone, a pennant
+  on a spring. Rendered stills at two times show the beam moving and the
+  bands stacking.
+- `rigs/figure.toml`, `profiles/figure-live.toml` and
+  `profiles/prompts/figure.md` make the contract a rig: every moving point a
+  bone, more bones rather than fewer, secondary motion on springs, one file
+  per component.
+- The eval tests that still open the retired explainer rig now point at
+  `archive/rigs-v1/`; `tests/rig_tools.rs` checks the figure rig instead.
+
+### Why
+
+Every shot was drawn as one path, so nothing could move independently and a
+change meant a redraw. Splitting a scene into components with bones and
+springs is what makes a frame editable part by part.
+
+## 2026-11-14 — a face is traced, not drawn
+
+- Removed the painted stand-in portrait. It was a face built from
+  primitives, and it read as one: the rig must not invent a complex subject.
+- `kit/trace.js`: `silhouette` (background-distance mask with a majority
+  clean), `outline` (Sobel ink), `neck` (narrowest row between chin and
+  chest) and `pieces` (head above the cut, body below, silhouette baked in).
+- `kit/stylize-gl.js`: the oil pass on WebGL2, with the CPU path as fallback.
+  The context is released after the pass.
+- `scenes/portrait.js` now requires `assets/portrait.jpg` and runs the fixed
+  order: restyle → trace → cut at the neck → bind head and body bones. If the
+  reference is absent, or the silhouette cannot be separated, the scene
+  renders a refusal slate naming the failed step.
+- The figure persona states the order (bring, trace, fix, split, fix the
+  pieces, bind) and forbids both a drawn stand-in and strands drawn over a
+  face.
+
+### Why
+
+The first portrait was rejected on sight: guessed features, a strand per
+hair, no perspective, and no visible reference. A complex subject has to come
+from a picture; the rig's job is to trace, cut and bind it, not to draw it.
+
+### First real trace
+
+- The supplied headshot (blue studio background) now runs the full order:
+  restyle on the GPU, silhouette, neck at the narrowest row (y=436 of 980,
+  span 220), cut with a ten-pixel overlap, two bones.
+- Two bugs found by looking at the output:
+  - the background colour was averaged over the whole border, so a shoulder
+    touching the bottom pulled the average onto the subject; it now reads the
+    two top corners;
+  - the head's two-pixel bob opened a hairline at the joint; the head piece
+    now keeps ten rows below the cut, and the mask is eroded one pixel to
+    drop the background fringe.
+- OpenCV 5 is available in the environment for a reference whose background
+  the distance test cannot separate (GrabCut); this one did not need it.

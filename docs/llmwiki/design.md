@@ -140,6 +140,21 @@ src/lib.rs engine: turn loop, permissions, storage, tools   (no UI types)
 The boundary is testable: no file under `src/engine/` may contain `ratatui`,
 `crossterm`, `tauri` or `svelte`. `tests/engine_boundary.rs` enforces it.
 
+## Figure kit
+
+`kits/explainer` is the renderer for every film rig. `kit/rig.js` adds bones,
+two-bone IK, springs and a frame for parts; `kit/parts.js` is a registry that
+loads a component from `kit/parts/<name>.js` when a scene asks for it. A
+component returns its bones, its parts, a paint order, and optional `update`
+and `step` functions. A scene merges the bones, solves them once, steps the
+springs in fixed slices and draws the parts in order.
+
+`scenes/lighthouse.js` is the reference assembly: six wave bands are bone
+chains, the tower sways on its base bone, the lamp beam is a cone on a bone
+that sweeps, and the pennant is a spring rooted at the lantern. The figure rig
+(`rigs/figure.toml`) is the contract that asks for this: parts drawn
+separately, every moving point a bone, secondary motion on springs.
+
 ## Sessions
 
 One run is one turn. A project directory under
