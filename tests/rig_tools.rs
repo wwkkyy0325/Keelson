@@ -104,13 +104,19 @@ fn the_office_rig_exposes_document_tools() {
         "view_image",
         "launch_app",
         "wait_for_window",
-        "list_controls",
     ] {
         assert!(
             tools.iter().any(|tool| tool == needed),
             "office is missing `{needed}`: {tools:?}"
         );
     }
+    // The accessibility tree is Windows-only; the engine strips the tool from
+    // the visible set elsewhere, so the expectation is platform-bound.
+    #[cfg(windows)]
+    assert!(
+        tools.iter().any(|tool| tool == "list_controls"),
+        "office is missing `list_controls`: {tools:?}"
+    );
     for code_only in ["git_diff", "apply_edits"] {
         assert!(
             !tools.iter().any(|tool| tool == code_only),
@@ -187,13 +193,18 @@ fn the_research_rig_exposes_search_and_cites_sources() {
         "view_image",
         "launch_app",
         "wait_for_window",
-        "list_controls",
     ] {
         assert!(
             tools.iter().any(|tool| tool == needed),
             "research is missing `{needed}`: {tools:?}"
         );
     }
+    // Windows-only tool; see the office probe.
+    #[cfg(windows)]
+    assert!(
+        tools.iter().any(|tool| tool == "list_controls"),
+        "research is missing `list_controls`: {tools:?}"
+    );
     // Research creates notes; reorganising the user's files is office work.
     for office_only in [
         "move_file",
@@ -211,4 +222,66 @@ fn the_research_rig_exposes_search_and_cites_sources() {
         engine.config().system_prompt.contains("Sources"),
         "the research persona did not load its evidence contract"
     );
+}
+
+#[test]
+fn the_ui_rig_exposes_code_tools_and_eyes() {
+    let temp = tempfile::TempDir::new().expect("a temp dir");
+    let engine = open("ui", "profiles/ui-live.toml", temp.path());
+    let tools = &engine.config().visible_tool_names;
+
+    // The interface lives in a repository: a layout change is still an edit.
+    for needed in [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "multi_edit",
+        "apply_edits",
+        "list_trash",
+        "restore_file",
+        "code_search",
+        "glob",
+        "git_diff",
+        "shell",
+        "todo",
+        "search_history",
+    ] {
+        assert!(
+            tools.iter().any(|tool| tool == needed),
+            "ui is missing `{needed}`: {tools:?}"
+        );
+    }
+    // What the rig adds is the way to see the result.
+    for needed in [
+        "view_image",
+        "render_scene",
+        "screen_capture",
+        "list_windows",
+        "launch_app",
+        "wait_for_window",
+    ] {
+        assert!(
+            tools.iter().any(|tool| tool == needed),
+            "ui is missing `{needed}`: {tools:?}"
+        );
+    }
+    // Only the film pipeline needs the film tools.
+    for film_only in [
+        "render_film",
+        "probe_media",
+        "new_episode",
+        "archive_episode",
+    ] {
+        assert!(
+            !tools.iter().any(|tool| tool == film_only),
+            "`{film_only}` does not belong to the ui rig: {tools:?}"
+        );
+    }
+    let persona = &engine.config().system_prompt;
+    for required in ["token file", "390", "prefers-reduced-motion"] {
+        assert!(
+            persona.contains(required),
+            "the ui persona lost `{required}`: the contract is not loaded"
+        );
+    }
 }

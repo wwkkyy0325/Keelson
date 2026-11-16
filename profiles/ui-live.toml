@@ -1,0 +1,39 @@
+[profile]
+name = "ui-live"
+
+[model]
+provider = "anthropic-compatible"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com/anthropic"
+api_key_env = "ANTHROPIC_AUTH_TOKEN"
+thinking_budget = 0
+max_output_tokens = 32768
+# The API model id has no context suffix; capacity is a separate field.
+context_window = 1048576
+
+[context]
+stages = ["system", "memory", "history", "latest"]
+budget_tokens = 64000
+# The context ladder may double this when content does not fit:
+# 64k -> 128k -> 256k, bounded by the model window.
+max_budget_tokens = 262144
+
+[tools]
+# The code tools stay: a layout change is an edit to the same repository the
+# coding rig would touch. What is added is the way to see the result — a
+# window at a chosen size, a capture of it, and the renderer for pages that
+# draw to a canvas themselves.
+visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", "list_trash", "restore_file", "list_dir", "glob", "code_search", "git_diff", "move_file", "delete_file", "shell", "todo", "search_history", "web_search", "web_fetch", "view_image", "render_scene", "list_windows", "screen_capture", "launch_app", "wait_for_window", "list_controls"]
+budget = 1000
+
+[verification]
+# The repository's own checks are not the contract here; the persona carries
+# the loop (build, render, look, measure). A design check may still be declared
+# in the project's `.keelson/checks.toml`, which runs whatever this says.
+mode = "none"
+
+[permission]
+level = "full_auto"
+
+[persona]
+system = "prompts/ui.md"

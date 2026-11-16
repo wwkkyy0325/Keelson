@@ -1,0 +1,15 @@
+# The ui rig: the rendered page is the artifact.
+#
+# What makes this rig different is the contract in its persona, not its
+# subject: the screen is measured at three viewport widths, every colour, size
+# and duration comes from a token file, and a frame is looked at before the
+# work is called done. A change whose acceptance is `cargo test` belongs to the
+# coding rig; one whose acceptance is a picture belongs here.
+#
+# The desktop app is the face: open it from the directory of the front end and
+# pick UI in the rig chip of an empty conversation.
+
+name = "ui"
+title = "UI"
+description = "Build and verify an interface that is rendered, measured and looked at."
+profile = "../profiles/ui-live.toml"
