@@ -465,6 +465,11 @@ mod tests {
 
     impl Drop for ClosePid {
         fn drop(&mut self) {
+            // The guard only has work on Windows, where the probe launches a
+            // program it must close; elsewhere the id is still read so the
+            // field is not dead code on those targets.
+            #[cfg(not(windows))]
+            let _ = self.0;
             #[cfg(windows)]
             {
                 let _ = Command::new("taskkill")
@@ -570,14 +575,19 @@ mod tests {
         assert!(saved.is_file());
 
         // The control tree of the new window is readable and non-empty.
-        let mut control_args = ToolArgs::new();
-        control_args.insert("window", ArgValue::String(title.clone()));
-        let controls = ListControlsTool::new().call(control_args, &context).await;
-        assert!(controls.is_success(), "{controls:?}");
-        assert!(
-            !controls.content().unwrap_or_default().trim().is_empty(),
-            "the control list is empty for `{title}`"
-        );
+        // `list_controls` reads Windows UI Automation; the type does not exist
+        // on other platforms, so neither does this assertion.
+        #[cfg(windows)]
+        {
+            let mut control_args = ToolArgs::new();
+            control_args.insert("window", ArgValue::String(title.clone()));
+            let controls = ListControlsTool::new().call(control_args, &context).await;
+            assert!(controls.is_success(), "{controls:?}");
+            assert!(
+                !controls.content().unwrap_or_default().trim().is_empty(),
+                "the control list is empty for `{title}`"
+            );
+        }
 
         // view_image reopens the saved screenshot.
         let mut view_args = ToolArgs::new();
