@@ -8,8 +8,9 @@ base_url = "https://api.deepseek.com/anthropic"
 api_key_env = "ANTHROPIC_AUTH_TOKEN"
 thinking_budget = 0
 # Every assembly is a drawing decision; the same brief should not produce the
-# same figure twice.
-temperature = 1.05
+# same figure twice. `temperature` is not in the profile schema yet, so this
+# runs at the provider default until Keel ships the field
+# (docs/llmwiki/backlog.md).
 max_output_tokens = 32768
 context_window = 1048576
 
