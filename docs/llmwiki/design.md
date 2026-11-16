@@ -265,19 +265,6 @@ copied ValveGuard then accepted a `compare_demos.py` comparison harness in
 dropped PATH made the model repair the global Python instead of the task
 (M4k).
 
-`tests/replay_eval.rs` replays a recorded Claude Code transcript against a
-live model. It keeps the human prompts (`origin.kind = human`, no
-sidechains), rewrites the absolute paths that point at the original project
-into a shared clone of that project's HEAD, and runs one engine turn per
-prompt. After each turn it reads the kernel's own `context_pressure`,
-`history_assembled` and `context_escalated` events and appends a row to
-`turns.jsonl`; a per-turn timeout cancels a stuck turn, a wall-clock budget
-stops the loop, and three consecutive model errors end it. The companion
-`profiles/replay.toml` keeps the coding tools minus `shell` and
-`delete_file`, so the live model cannot reach outside the copy. The clone is
-used instead of `git archive | tar` because tar on Windows rejects the
-project's Chinese filenames.
-
 ## History compression
 
 The kernel seals a session segment when the next input changes topic, when

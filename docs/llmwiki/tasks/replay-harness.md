@@ -1,5 +1,9 @@
 # Transcript replay harness
 
+> Retired: the harness (`tests/replay_eval.rs`) and its `profiles/replay.toml`
+> were removed from the tree; see `docs/llmwiki/changelog.md`. This file stays
+> as the record of what it did and how each step was verified.
+
 Goal: pour a real, long Claude Code history into the engine and observe the
 kernel's own mechanisms (context assembly, digests, the working-set ladder,
 tool loops, usage) under a live model.
