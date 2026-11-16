@@ -1,9 +1,8 @@
 # The coding rig against the live Anthropic-compatible endpoint.
 #
-# The endpoint and the credential env var are in the profile. Run it from the
-# directory the agent should work in:
-#
-#   keelson run coding-live --session-id live
+# The endpoint and the credential env var are in the profile. The desktop app is
+# the face: open it from the directory the agent should work in and pick Coding
+# (live) in the rig chip of an empty conversation.
 
 name = "coding-live"
 title = "Coding (live)"

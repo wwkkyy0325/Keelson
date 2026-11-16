@@ -5,9 +5,8 @@
 # that moves is a bone, and secondary motion is carried by springs. A shot
 # built this way can be edited part by part instead of redrawn.
 #
-# Run it from the directory the film should live in:
-#
-#   keelson run figure --session-id figure
+# The desktop app is the face: open it from the directory the film should live
+# in and pick Figure (cut-out) in the rig chip of an empty conversation.
 
 name = "figure"
 title = "Figure (cut-out)"
