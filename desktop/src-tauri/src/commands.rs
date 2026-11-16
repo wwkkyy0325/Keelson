@@ -1452,6 +1452,8 @@ pub struct SessionStatus {
 pub struct BackgroundTaskView {
     pub id: String,
     pub program: String,
+    /// The whole command line: the row shows what runs, not the program.
+    pub command: String,
     pub running: bool,
     pub exit_code: Option<i32>,
     pub duration_ms: u64,
@@ -1483,6 +1485,7 @@ pub fn background_tasks(state: State<'_, SharedState>) -> Result<Vec<BackgroundT
         .map(|task| BackgroundTaskView {
             id: task.id,
             program: task.program,
+            command: task.command,
             running: task.running,
             exit_code: task.exit_code,
             duration_ms: task.duration_ms,

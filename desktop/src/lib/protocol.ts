@@ -273,6 +273,8 @@ export type BackgroundFinished = {
 export type LiveBackground = {
   id: string;
   program: string;
+  /// The whole command line; empty until a poll reports it.
+  command: string;
   ok: boolean | null;
   durationMs: number;
   outputPath: string | null;
@@ -282,6 +284,8 @@ export type LiveBackground = {
 export type BackgroundTaskView = {
   id: string;
   program: string;
+  /// The whole command line, so the row shows what runs, not the program.
+  command: string;
   running: boolean;
   exitCode: number | null;
   durationMs: number;

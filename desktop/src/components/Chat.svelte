@@ -87,6 +87,7 @@
         tasks: tasks.map((task) => ({
           id: task.id,
           program: task.program,
+          command: task.command,
           ok: task.running ? null : task.exitCode === 0,
           durationMs: task.durationMs,
           outputPath: task.outputPath,
@@ -97,10 +98,20 @@
     }
   }
 
+  /// A running row's clock moves every second, so the poll follows it. A row
+  /// that already exited cannot change until the engine drains it at the next
+  /// turn, so an idle strip polls once every five ticks and clears itself.
+  let backgroundTick = 0;
+
   function pollBackground(): void {
     if (backgroundTimer !== null) return;
+    backgroundTick = 0;
     void syncBackground();
-    backgroundTimer = setInterval(() => void syncBackground(), 1000);
+    backgroundTimer = setInterval(() => {
+      backgroundTick += 1;
+      const running = $session.background.some((task) => task.ok === null);
+      if (running || backgroundTick % 5 === 0) void syncBackground();
+    }, 1000);
   }
 
   // A background command outlives the view. On every session open, reconcile

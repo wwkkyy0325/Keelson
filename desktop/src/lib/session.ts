@@ -131,6 +131,25 @@ export type Action =
   | { type: "interaction-resolved"; id: string }
   | { type: "reset" };
 
+/// True when a poll reports the rows already on screen. A finished row keeps
+/// its frozen runtime, so an idle poll compares equal and dispatches nothing.
+function sameBackground(
+  left: LiveBackground[],
+  right: LiveBackground[],
+): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((task, index) => {
+    const other = right[index];
+    return (
+      task.id === other.id &&
+      task.command === other.command &&
+      task.ok === other.ok &&
+      task.durationMs === other.durationMs &&
+      task.outputPath === other.outputPath
+    );
+  });
+}
+
 export function reduce(state: SessionState, action: Action): SessionState {
   switch (action.type) {
     case "session-opened":
@@ -291,6 +310,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
       const task: LiveBackground = {
         id: action.id,
         program: action.program,
+        command: "",
         ok: null,
         durationMs: 0,
         outputPath: null,
@@ -317,6 +337,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
             {
               id: action.id,
               program: action.program,
+              command: "",
               ok,
               durationMs: action.durationMs,
               outputPath: action.outputPath,
@@ -328,7 +349,12 @@ export function reduce(state: SessionState, action: Action): SessionState {
     case "background-synced":
       // The engine's measured runtime is the row's only clock: the poll
       // refreshes it every second and a local ticker would only drift from
-      // it or starve against it.
+      // it or starve against it. A poll that reports what is already on
+      // screen changes nothing: the store replaces its value on every
+      // dispatch, so re-dispatching an identical list woke every view.
+      if (sameBackground(state.background, action.tasks)) {
+        return state;
+      }
       return { ...state, background: action.tasks };
 
     case "turn-verifying":

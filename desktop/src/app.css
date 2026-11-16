@@ -1692,7 +1692,12 @@ header .title {
   font-size: 0.78rem;
 }
 
-.tool summary {
+/* One row of a tool call. A background row is the same layout but a plain
+   `<div>`: its Stop button has to stay outside a disclosure's activation
+   area, or the webview routes the click to the toggle and the button never
+   fires. */
+.tool summary,
+.background-row {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
@@ -1701,6 +1706,10 @@ header .title {
   cursor: pointer;
   list-style: none;
   color: var(--muted);
+}
+
+.background-row {
+  cursor: default;
 }
 
 .tool summary::-webkit-details-marker {

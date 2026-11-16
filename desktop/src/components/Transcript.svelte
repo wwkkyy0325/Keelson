@@ -344,43 +344,42 @@
 
   <!-- Background commands outlive the turn that started them: they stay at
        the end of the transcript until the engine hands the result to the
-       model at the next turn. -->
+       model at the next turn. The row is not a `<details>`: the Stop control
+       used to sit inside a `<summary>`, where the webview routes the click to
+       the disclosure and the button never fired. -->
   {#if $session.background.length > 0}
     <div class="tools background-strip">
       {#each $session.background as task (task.id)}
-        <details class="tool">
-          <summary>
-            <span
-              class:fail={task.ok === false}
-              class:ok={task.ok === true}
-              class:pending={task.ok === null}
-              class="tool-mark">{mark(task.ok)}</span
+        <div class="tool background-row">
+          <span
+            class:fail={task.ok === false}
+            class:ok={task.ok === true}
+            class:pending={task.ok === null}
+            class="tool-mark">{mark(task.ok)}</span
+          >
+          <span class="tool-name">{task.id}</span>
+          <span class="tool-args" title={task.command || task.program}
+            >{task.command || task.program}</span
+          >
+          {#if task.ok === null}
+            <span class="tool-time">{elapsed(task.durationMs)}</span>
+            <button
+              class="tool-stop"
+              onclick={() => void stopTask(task.id)}
+              title={$t("turn.backgroundStopHint")}
             >
-            <span class="tool-name">{task.id}</span>
-            <span class="tool-args">{task.program}</span>
-            {#if task.ok === null}
-              <span class="tool-time">{elapsed(task.durationMs)}</span>
-              <button
-                class="tool-stop"
-                onclick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void stopTask(task.id);
-                }}
-              >
-                {$t("turn.backgroundStop")}
-              </button>
-            {:else}
-              <span class="tool-time">{took(task.durationMs, task.ok)}</span>
-            {/if}
-          </summary>
-          {#if task.outputPath}
-            <div class="tool-detail">
-              <span class="tool-label">{$t("turn.backgroundOutput")}</span>
-              <pre>{task.outputPath}</pre>
-            </div>
+              {$t("turn.backgroundStop")}
+            </button>
+          {:else}
+            <span class="tool-time">{took(task.durationMs, task.ok)}</span>
           {/if}
-        </details>
+        </div>
+        {#if task.outputPath}
+          <div class="tool-detail">
+            <span class="tool-label">{$t("turn.backgroundOutput")}</span>
+            <pre>{task.outputPath}</pre>
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}

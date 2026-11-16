@@ -445,6 +445,7 @@ describe("session reducer", () => {
         {
           id: "bg-1",
           program: "npm",
+          command: "npm run dev",
           ok: null,
           durationMs: 4000,
           outputPath: "/out",
@@ -457,6 +458,7 @@ describe("session reducer", () => {
         {
           id: "bg-1",
           program: "npm",
+          command: "npm run dev",
           ok: null,
           durationMs: 8000,
           outputPath: "/out",
@@ -465,5 +467,29 @@ describe("session reducer", () => {
     });
 
     expect(state.background[0].durationMs).toBe(8000);
+  });
+
+  it("shows the command a row runs and ignores a poll that repeats it", () => {
+    const task = {
+      id: "bg-1",
+      program: "sh",
+      command: "sh -c npm run build",
+      ok: false,
+      durationMs: 2400,
+      outputPath: "/out/bg-1.log",
+    };
+    const state = reduce(initialSession(), {
+      type: "background-synced",
+      tasks: [task],
+    });
+    expect(state.background[0].command).toBe("sh -c npm run build");
+
+    // A dispatch replaces the store's value, so an idle poll that reports what
+    // is already on screen would wake every view once a second.
+    const repeated = reduce(state, {
+      type: "background-synced",
+      tasks: [{ ...task }],
+    });
+    expect(repeated).toBe(state);
   });
 });
