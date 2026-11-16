@@ -2,7 +2,7 @@
 //! the session read model.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use keel_core::{CancelToken, Event, PermissionLevel};
@@ -137,6 +137,99 @@ struct TextDelta {
 struct ThinkingDelta {
     seq: u32,
     text: String,
+}
+
+/// The provider streams one chunk per token, and every emitted event costs the
+/// webview a script evaluation of its payload, so forwarding a chunk per event
+/// spends a whole core re-parsing while a turn streams. A batch is held for one
+/// frame and then sent as a single event, or sent early once it is large enough
+/// that holding it longer would show up as a jump in the text.
+const DELTA_FLUSH: std::time::Duration = std::time::Duration::from_millis(16);
+const DELTA_FLUSH_BYTES: usize = 4 * 1024;
+
+/// Streamed output of one frame window, kept per channel because the view puts
+/// thinking and the answer in different places.
+#[derive(Default)]
+struct DeltaBatch {
+    text: String,
+    thinking: String,
+}
+
+impl DeltaBatch {
+    fn push(&mut self, delta: ModelDelta) {
+        match delta {
+            ModelDelta::Text(text) => self.text.push_str(&text),
+            ModelDelta::Thinking(text) => self.thinking.push_str(&text),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.text.len() + self.thinking.len()
+    }
+}
+
+/// Drains streamed output into one batch per frame window. The caller decides
+/// what a batch becomes, so the coalescing can be tested without a webview.
+async fn drain_deltas(
+    deltas: &mut tokio::sync::mpsc::Receiver<ModelDelta>,
+    mut flush: impl FnMut(&mut DeltaBatch),
+) {
+    let mut batch = DeltaBatch::default();
+    loop {
+        // Nothing is streaming yet: wait for the first chunk.
+        let Some(delta) = deltas.recv().await else {
+            return;
+        };
+        batch.push(delta);
+        let deadline = tokio::time::Instant::now() + DELTA_FLUSH;
+        while batch.len() < DELTA_FLUSH_BYTES {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(remaining, deltas.recv()).await {
+                Ok(Some(delta)) => batch.push(delta),
+                // The turn ended under a pending batch: send the tail rather
+                // than drop the end of the answer.
+                Ok(None) => {
+                    flush(&mut batch);
+                    return;
+                }
+                Err(_) => break,
+            }
+        }
+        flush(&mut batch);
+        // A window never carries text into the next one, whether or not the
+        // caller took the batch.
+        batch = DeltaBatch::default();
+    }
+}
+
+/// Sends what the batch holds and empties it.
+fn emit_batch(app: &AppHandle, current_seq: &AtomicU32, batch: &mut DeltaBatch) {
+    let text = std::mem::take(&mut batch.text);
+    let thinking = std::mem::take(&mut batch.thinking);
+    if text.is_empty() && thinking.is_empty() {
+        return;
+    }
+    let seq = current_seq.load(Ordering::Relaxed);
+    // No turn is running: the view drops a delta that names no sequence, so
+    // there is nothing to send.
+    if seq == 0 {
+        return;
+    }
+    if !text.is_empty() {
+        let _ = app.emit(EV_TEXT_DELTA, TextDelta { seq, text });
+    }
+    if !thinking.is_empty() {
+        let _ = app.emit(
+            EV_THINKING_DELTA,
+            ThinkingDelta {
+                seq,
+                text: thinking,
+            },
+        );
+    }
 }
 
 /// A tool call the running turn just started. The previews are bounded and
@@ -1157,20 +1250,7 @@ async fn open_inner(
     let app_handle = app.clone();
     let seq = state.current_seq.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some(delta) = delta_rx.recv().await {
-            let seq = seq.load(Ordering::Relaxed);
-            if seq == 0 {
-                continue;
-            }
-            match delta {
-                ModelDelta::Text(text) => {
-                    let _ = app_handle.emit(EV_TEXT_DELTA, TextDelta { seq, text });
-                }
-                ModelDelta::Thinking(text) => {
-                    let _ = app_handle.emit(EV_THINKING_DELTA, ThinkingDelta { seq, text });
-                }
-            }
-        }
+        drain_deltas(&mut delta_rx, |batch| emit_batch(&app_handle, &seq, batch)).await;
     });
 
     Ok(SessionView {
@@ -1988,10 +2068,12 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        collect_tree, copy_attachment, copy_folder, copy_preset, rig_dirs, rig_for_session,
+        collect_tree, copy_attachment, copy_folder, copy_preset, drain_deltas, rig_dirs,
+        rig_for_session, DELTA_FLUSH_BYTES,
     };
     use crate::config::{DesktopConfig, Preset};
     use crate::sessions::SessionMeta;
+    use keelson::engine::ModelDelta;
 
     fn meta(id: &str, rig: &str) -> SessionMeta {
         SessionMeta {
@@ -2183,5 +2265,70 @@ mod tests {
             .expect_err("a file over the cap is refused");
 
         assert!(error.contains("上限"), "{error}");
+    }
+
+    /// A chunk per event is a script evaluation per token in the webview, which
+    /// is what pinned a core while a turn streamed. One window is one event.
+    #[tokio::test]
+    async fn a_burst_of_chunks_becomes_one_event() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let sender = tokio::spawn(async move {
+            for _ in 0..50 {
+                tx.send(ModelDelta::Text("ab".to_owned()))
+                    .await
+                    .expect("the receiver is alive");
+            }
+        });
+
+        let mut flushes = Vec::new();
+        drain_deltas(&mut rx, |batch| flushes.push(batch.text.len())).await;
+        sender.await.expect("the sender finished");
+
+        assert_eq!(flushes, vec![100], "fifty chunks arrive as one batch");
+    }
+
+    /// Holding a large batch for the rest of the window would read as a jump in
+    /// the text, so size wins over the clock.
+    #[tokio::test]
+    async fn a_large_batch_is_sent_before_the_window_closes() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let sender = tokio::spawn(async move {
+            for _ in 0..3 {
+                tx.send(ModelDelta::Text("x".repeat(2048)))
+                    .await
+                    .expect("the receiver is alive");
+            }
+        });
+
+        let mut flushes = Vec::new();
+        drain_deltas(&mut rx, |batch| flushes.push(batch.text.len())).await;
+        sender.await.expect("the sender finished");
+
+        assert_eq!(flushes, vec![DELTA_FLUSH_BYTES, 2048]);
+    }
+
+    /// Thinking and the answer are shown in different places, so a batch keeps
+    /// them apart even when they interleave.
+    #[tokio::test]
+    async fn thinking_stays_separate_from_the_answer() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let sender = tokio::spawn(async move {
+            for delta in [
+                ModelDelta::Thinking("why".to_owned()),
+                ModelDelta::Text("so".to_owned()),
+                ModelDelta::Thinking(" not".to_owned()),
+            ] {
+                tx.send(delta).await.expect("the receiver is alive");
+            }
+        });
+
+        let mut flushes = Vec::new();
+        drain_deltas(&mut rx, |batch| {
+            flushes.push((batch.thinking.len(), batch.text.len()))
+        })
+        .await;
+        sender.await.expect("the sender finished");
+
+        assert_eq!(flushes, vec![(7, 2)]);
     }
 }

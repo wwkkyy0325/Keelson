@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { loadTurns, stopBackground } from "../lib/api";
   import { dispatch, session } from "../lib/session-store";
   import { t } from "../lib/i18n";
@@ -80,22 +80,46 @@
         0),
   );
 
-  // The streaming answer is markdown too. Re-parsing on every chunk replaces
-  // the whole answer and flickers, so the source lags the stream by at most
-  // 80 ms instead.
+  // Streaming output is sampled, not followed. Each delta rewrites the text of
+  // a block that is still growing, and every rewrite costs a layout pass over
+  // the transcript, so the stream is read once per window instead. The answer
+  // is markdown too: re-parsing it on every chunk flickers.
+  const LIVE_FLUSH_MS = 80;
   let answerSource = $state("");
-  let answerTimer: ReturnType<typeof setTimeout> | null = null;
+  let thinkingShown = $state("");
+  /// The reasoning fold is closed by default and its text is not laid out while
+  /// it is, so nothing is copied into it until someone looks.
+  let reasoningOpen = $state(false);
+  let liveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flushLive(): void {
+    liveTimer = null;
+    const running = $session.running;
+    answerSource = running?.text ?? "";
+    if (reasoningOpen) thinkingShown = running?.thinking ?? "";
+  }
+
   $effect(() => {
-    const text = $session.running?.text ?? "";
-    if (text.trim() === "") {
-      answerSource = "";
-      return;
-    }
-    if (answerTimer !== null) return;
-    answerTimer = setTimeout(() => {
-      answerTimer = null;
-      answerSource = $session.running?.text ?? "";
-    }, 80);
+    // Reading the lengths subscribes to the stream; `flushLive` samples the
+    // values themselves, so one timer serves both blocks.
+    void $session.running?.text.length;
+    void $session.running?.thinking.length;
+    if (liveTimer !== null) return;
+    liveTimer = setTimeout(flushLive, LIVE_FLUSH_MS);
+  });
+
+  // A fold opened mid-turn shows what has streamed so far, not the snapshot it
+  // was closed with. The read is untracked: once open, the fold is refreshed by
+  // the flush above, not once per chunk.
+  $effect(() => {
+    if (!reasoningOpen) return;
+    untrack(() => {
+      thinkingShown = $session.running?.thinking ?? "";
+    });
+  });
+
+  onDestroy(() => {
+    if (liveTimer !== null) clearTimeout(liveTimer);
   });
 
   // The running card shows elapsed time and cost as they accumulate. The
@@ -254,7 +278,7 @@
       {#if $session.running.thinking || $session.running.tools.length > 0 || $session.running.process.length > 0}
         <div class="tools">
           {#if $session.running.thinking || $session.running.process.length > 0}
-            <details class="tool">
+            <details class="tool" bind:open={reasoningOpen}>
               <summary>
                 <span class="tool-mark">·</span>
                 <span class="tool-name">{$t("turn.thinking")}</span>
@@ -265,8 +289,8 @@
                 >
               </summary>
               <div class="tool-detail">
-                {#if $session.running.thinking}
-                  <pre>{$session.running.thinking}</pre>
+                {#if thinkingShown}
+                  <pre>{thinkingShown}</pre>
                 {/if}
                 {#each $session.running.process as part}
                   <pre>{part}</pre>
