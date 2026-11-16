@@ -2744,3 +2744,91 @@ from a picture; the rig's job is to trace, cut and bind it, not to draw it.
     drop the background fringe.
 - OpenCV 5 is available in the environment for a reference whose background
   the distance test cannot separate (GrabCut); this one did not need it.
+
+## 2026-11-16 — the ui rig, and two profiles that could not load
+
+- `rigs/ui.toml`, `profiles/ui-live.toml`, `profiles/prompts/ui.md`: the rig
+  split by output contract (ADR 0040). The artifact is a rendered page; the
+  contract is a token file, three viewports, a state and motion table, and a
+  capture that was actually opened.
+- `tests/rig_contract.rs`: every file under `rigs/` loads, opens, names an
+  existing profile and claims a profile no other rig claims; a rig that can
+  render also carries `view_image`. The directory is the contract, so a fork
+  that differs only in wording fails the suite.
+- `tests/rig_tools.rs`: the ui rig keeps the code tools and gains the eyes
+  (`view_image`, `screen_capture`, `launch_app`, `wait_for_window`,
+  `render_scene`) without the film tools.
+- Removed `temperature` from `profiles/boss-live.toml` and
+  `profiles/figure-live.toml`. `keel-policy`'s `ModelSection` is
+  `deny_unknown_fields` and has no such field, so both rigs failed to load and
+  `doctor` reported them as profile failures. The intent survives as a comment
+  and as a backlog entry.
+- Moved the duplicate `coding-live`, `office` and `research` rig files out of
+  `~/.keelson/rigs` into `~/.keelson/rigs-unused`: they were read only when
+  the working directory had no `rigs/`, and they made `doctor` print three
+  `shadowed` lines on every run. `explainer.toml` stays — it exists nowhere
+  else.
+
+### Why
+
+The coding rig was asked to build front ends and produced code that compiled
+and read wrong: no token layer, no width past the first screen, and no capture
+taken before calling the work done. None of that is wording in a prompt, so the
+fix is a rig whose verification is the picture. The temperature removal is the
+debt paid first: a rig that cannot load cannot be evaluated either.
+
+## 2026-11-16 — a Stop that fires, a row that names its command, a clock that stops
+
+- The background row's Stop button sat inside a `<summary>`. The webview
+  routes a click in the summary's subtree to the disclosure, so the button
+  never fired. The row is a plain flex row now and the button is its sibling;
+  the output path moved to the muted line under it.
+- A row shows the command it runs — `sh -c npm run build`, not `sh`. The
+  kernel's `BackgroundSnapshot` carries `command`, bounded to 400 characters
+  and passed through `redact_secrets` (Keel ADR 0061).
+- A finished row's clock stopped at the exit instead of counting until the
+  engine drained the result: the kernel freezes `duration_ms` the first time
+  it observes the process exit, and `BackgroundResult` reports the same frozen
+  runtime instead of the wait before the drain (Keel ADR 0061).
+- The one-second poll no longer wakes the store with a list already on screen:
+  a `background-synced` dispatch that compares equal returns the same state.
+  A strip whose rows have all exited polls once every five seconds, because a
+  finished row cannot change until the engine drains it — it only has to be
+  cleared.
+- Kernel: `code_search` walks the workspace on every core (Keel ADR 0060). A
+  sparse search no longer pins one core for as long as the walk takes, and the
+  app is rebuilt against kernel 0.2.16.
+
+### Why
+
+Three defects on one row, and one of them was a layout decision: the Stop
+button was placed where a `<details>` owns the click, so the control existed
+and did nothing. The other two were the kernel reporting less than the row
+needed — a program without its arguments, and a runtime that measured the
+start rather than the run. The poll also did free work forever: a finished row
+kept a one-second dispatch alive that changed nothing on screen.
+
+## 2026-11-16 — the lead desk and the replay harness leave the tree
+
+- `rigs/boss.toml`, `profiles/boss-live.toml` and `profiles/prompts/boss.md`
+  are deleted. The rig opened short conversations on hiring boards (Boss直聘
+  first, 58同城 and 智联 as fallbacks) by driving the user's own Chrome over
+  the DevTools port. No other file referenced it and the app never depended on
+  it.
+- `profiles/replay.toml` (provider `mock`, model `mock-coding`) went with
+  `tests/replay_eval.rs`, the ignored harness that was its only consumer. The
+  other eval harnesses keep `profiles/coding.toml`.
+- `docs/llmwiki/design.md` no longer describes the replay; the task record in
+  `docs/llmwiki/tasks/replay-harness.md` stays, with a retirement note.
+- `doctor` loads 6 rigs now — coding-live, figure, office, research, ui and
+  `~/.keelson/rigs/explainer.toml` — with no shadowed entries.
+
+### Why
+
+A rig is a file the app offers, so a rig nobody runs is not free: it loads, it
+sits in the picker, and it makes the next reader work out what it is for. The
+lead desk was a one-off browser workflow that depends on the user's own Chrome
+profile and answers to nothing this app can verify. The replay profile was the
+same leftover from the other side — a mock model id kept alive by a single
+ignored test.
+
