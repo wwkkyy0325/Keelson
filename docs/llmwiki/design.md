@@ -254,7 +254,8 @@ change. `apply_edits` extends the contract across files: every replacement is
 validated before any file is written (M4x). The workspace's `AGENTS.md`
 (fallback `CLAUDE.md`) is appended to the system prompt at engine open, capped
 at 16 KiB. Background shell commands run through the kernel's registry, write
-under the project's `outputs/`, and are killed when the engine drops. Three
+under the conversation's folder in the project's `outputs/` (ADR 0061), and are
+killed when the engine drops. Three
 live evals exercise the loop: the demo repair, a two-module discount feature
 in `examples/inventory-workspace`, and a larger shop task in
 `examples/shop-workspace`. The two-module run used `glob`, `read_file`,
@@ -419,7 +420,8 @@ M4b — Coding rig capability pass (done)
   (ADR 0019). Keel `code_search` is case-sensitive on request and accepts a
   file-name or path glob.
 - `shell` background commands are wired to the kernel's
-  `LocalBackgroundTasks`, with output under the project's `outputs/`.
+  `LocalBackgroundTasks`, with output under the conversation's folder in the
+  project's `outputs/`.
 - Automatic verification detects Cargo, Go, Python (nested) and Node (only
   with a `scripts.test`), in that order.
 - Verify: the live eval still repairs the demo; the new tool contracts have

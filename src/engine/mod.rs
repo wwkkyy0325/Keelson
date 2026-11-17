@@ -493,6 +493,13 @@ impl Engine {
             ),
         })?;
         let outputs_dir = project_dir.join("outputs");
+        // A spill is named `turn-<n>-call-<m>.txt`: unique inside one
+        // conversation and not across two. Every conversation in a workspace
+        // shares the project's state directory, so each one spills into a
+        // folder of its own. The permission root stays the project's `outputs/`,
+        // which is also what keeps the spills written before this split — and
+        // the ones a turn row already points at — readable.
+        let session_outputs = session_outputs_dir(&project_dir, &store_path);
 
         let mut config = load_profile(&rig.profile)?;
         // A host may override the profile's permission level before the
@@ -550,7 +557,8 @@ impl Engine {
         // Background commands are session-scoped: the engine owns the
         // registry, and dropping it kills the process tree.
         let background = Arc::new(
-            LocalBackgroundTasks::new(outputs_dir.join("background")).with_events(events.clone()),
+            LocalBackgroundTasks::new(session_outputs.join("background"))
+                .with_events(events.clone()),
         );
         // The connected model's own provider searches first, on its own key.
         // A host-supplied search key and a configured SearXNG URL are the
@@ -662,7 +670,7 @@ impl Engine {
                 options: KernelOptions::default(),
             },
         )
-        .with_outputs_dir(outputs_dir);
+        .with_outputs_dir(session_outputs);
         // Sealed segments are compressed into records; those keep the goal,
         // result and open items, not the decisions and errors. A second model
         // instance writes the rolling summary that does. The mock provider has
@@ -1693,6 +1701,25 @@ fn project_state_dir(state_dir: &Path, workspace: &Path) -> PathBuf {
     state_dir.join("projects").join(format!("{hash:016x}"))
 }
 
+/// The folder one conversation owns under the project's `outputs/`.
+///
+/// A spill is named after the turn and the call, so two conversations in one
+/// workspace write the same file name. The folder is the session id — the same
+/// name `screens/` uses — and the project's `outputs/` stays the permission
+/// root, so a row recorded before this split still resolves.
+fn session_outputs_dir(project_dir: &Path, store_path: &Path) -> PathBuf {
+    project_dir.join("outputs").join(session_scope(store_path))
+}
+
+/// A document's own name, without its directory or its `.json` suffix.
+fn session_scope(store_path: &Path) -> String {
+    store_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "session".to_owned())
+}
+
 fn tools(
     project_dir: &Path,
     config: &RuntimeConfig,
@@ -2059,6 +2086,26 @@ system = "prompt.md"
         assert_eq!(
             session.turns[0].tools[0].args.as_deref(),
             Some("text=mock input")
+        );
+    }
+
+    #[test]
+    fn two_conversations_spill_into_different_folders() {
+        let project = Path::new("/state/projects/77a7a77cc72bf284");
+        let one = session_outputs_dir(
+            project,
+            Path::new("/state/sessions/h/s-18e8b20ffa85b980.json"),
+        );
+        let two = session_outputs_dir(
+            project,
+            Path::new("/state/sessions/h/s-18e863f1298707b0.json"),
+        );
+
+        assert_eq!(one, project.join("outputs").join("s-18e8b20ffa85b980"));
+        assert_ne!(one, two, "two conversations must not share a spill folder");
+        assert!(
+            one.starts_with(project.join("outputs")),
+            "the project's outputs folder stays the permission root"
         );
     }
 

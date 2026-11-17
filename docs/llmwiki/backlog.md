@@ -53,9 +53,11 @@ What is left:
 - The state file still holds the memo and every fact. What that costs, and
   why compacting it is not the win it looks like, is measured below.
 - `tools[].output` pointing at the spill file under
-  `projects/<hash>/outputs/` is still not an archive: those names carry no
-  session id and `MAX_SPILL_FILES` (200) prunes by directory, so two
-  conversations in one workspace overwrite each other. What the model sees of a
+  `projects/<hash>/outputs/<session-id>/` is still not an archive: the folder is
+  per conversation since ADR 0061, so two conversations no longer overwrite each
+  other, but the kernel keeps only the newest 200 `turn-*-call-*.txt` in it and
+  an older marker then points at a file that is gone. Spills written before the
+  split sit in `outputs/` itself and are never pruned. What the model sees of a
   tool output is `TOOL_HEAD_CHARS` + `TOOL_TAIL_CHARS` (3 000 characters,
   `keel-runtime/src/summary.rs`); 4 KiB is the host's live preview
   (`UI_PREVIEW_BYTES`), and 8 000 characters is the document's cap.
@@ -104,4 +106,15 @@ pass: keep the last N turn rows verbatim and mark on the conversation that
 older rows are gone, and cap the facts at N with confirmed and user-explicit
 entries kept first. Both are destructive, so both need a number the user can
 see and change, not a silent sweep.
+
+Wanted: no (2026-11-17). All three are left as they are. 21.8 MB across nine
+conversations is accepted: the largest state file is 32.7 KB, the memo is
+already bounded, and the one unbounded memory item — the facts list — costs
+roughly 5.5 k tokens of a 64 k working set in the largest conversation. Each
+candidate trades something unrecoverable for a number that is not hurting: a
+fact is extracted once and cannot be re-derived, and a pruned turn row is the
+only verbatim copy of a segment the kernel has absorbed. The numbers that would
+reopen this are a state file past a few hundred KB, or facts past about a tenth
+of the working set; neither is close. The 15 578-term segment recorded before
+the term cap (ADR 0069 in the Keel repository) stays as history.
 

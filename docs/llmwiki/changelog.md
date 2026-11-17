@@ -2942,3 +2942,21 @@ reopens, so it is the unit that should be written once; after the split the
 same conversation is a 5,636-byte state file plus ten segment files, and this
 project's own is a 10,917-byte state file plus nineteen.
 
+## 2026-11-17 — a spill belongs to one conversation
+
+- A tool result too long for the kernel's cap spills to
+  `projects/<hash>/outputs/<session-id>/` instead of the project's `outputs/`
+  (ADR 0061). The permission root stays the project's folder, so a row recorded
+  before the split still resolves, and the files already there are left alone.
+- Background commands move under the same folder: they are session-scoped and
+  die with the engine.
+
+### Why
+
+A spill is named `turn-<n>-call-<m>.txt`, which is unique inside one
+conversation and not across two, and `MAX_SPILL_FILES` prunes one directory. In
+this project's state directory one workspace held three conversations: eleven
+spill names were referenced by more than one of them, and eight spill files a
+turn row points at were gone. An old "read the full output" marker opened
+another conversation's text or failed outright.
+
