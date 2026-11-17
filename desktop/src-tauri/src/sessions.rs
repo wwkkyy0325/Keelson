@@ -7,7 +7,6 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -124,8 +123,7 @@ pub fn create(state_dir: &Path, workspace: &Path, rig: &str) -> Result<SessionMe
 pub fn touch(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta> {
     let dir = project_dir(state_dir, workspace);
     let path = dir.join(format!("{id}.json"));
-    let text = fs::read_to_string(&path).ok()?;
-    let document: StoredSession = serde_json::from_str(&text).ok()?;
+    let document = Store::open(path.clone()).load_unchecked().ok().flatten()?;
 
     let now = now_ms();
     let mut index = load_index(&dir);
@@ -161,12 +159,8 @@ pub fn remove(state_dir: &Path, workspace: &Path, id: &str) -> Result<(), String
         return Err("会话 id 不合法".to_owned());
     }
     let dir = project_dir(state_dir, workspace);
-    let path = dir.join(format!("{id}.json"));
-    match fs::remove_file(&path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("cannot delete `{}`: {error}", path.display())),
-    }
+    let store = Store::open(dir.join(format!("{id}.json")));
+    store.delete().map_err(|error| error.to_string())?;
     let mut index = load_index(&dir);
     index.sessions.retain(|meta| meta.id != id);
     save_index(&dir, &index)
@@ -224,8 +218,7 @@ pub fn sync(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta>
     }
     let dir = project_dir(state_dir, workspace);
     let path = dir.join(format!("{id}.json"));
-    let text = fs::read_to_string(&path).ok()?;
-    let document: StoredSession = serde_json::from_str(&text).ok()?;
+    let document = Store::open(path.clone()).load_unchecked().ok().flatten()?;
 
     let mut index = load_index(&dir);
     let position = index.sessions.iter().position(|meta| meta.id == id);
@@ -414,9 +407,10 @@ fn documents(dir: &Path) -> Vec<(String, PathBuf)> {
 }
 
 fn meta_from_file(path: &Path, id: &str) -> SessionMeta {
-    let document = fs::read_to_string(path)
+    let document = Store::open(path.to_path_buf())
+        .load_unchecked()
         .ok()
-        .and_then(|text| serde_json::from_str::<StoredSession>(&text).ok());
+        .flatten();
     let time = file_ms(path).unwrap_or_else(now_ms);
     let (title, archived, rig, turns) = document
         .as_ref()
@@ -771,5 +765,47 @@ mod tests {
         assert!(!valid_id("a/b"));
         assert!(!valid_id(""));
         assert!(valid_id("s-123abc"));
+    }
+
+    #[test]
+    fn a_row_counts_the_turns_that_live_in_their_own_files() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let meta = create(&state, &workspace, "coding").expect("create");
+        Store::open(session_path(&state, &workspace, &meta.id))
+            .save(&document(&workspace, "first question", 3))
+            .expect("save");
+
+        // The index is dropped so the row is derived from the files, which is
+        // the path a migrated conversation takes.
+        fs::remove_file(project_dir(&state, &workspace).join(INDEX_FILE)).expect("drop the index");
+        let rows = list(&state, &workspace);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].turns, 3);
+        assert_eq!(rows[0].title, "first question");
+        assert_eq!(touch(&state, &workspace, &meta.id).expect("touch").turns, 3);
+    }
+
+    #[test]
+    fn deleting_a_conversation_removes_its_turn_files() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let meta = create(&state, &workspace, "coding").expect("create");
+        let path = session_path(&state, &workspace, &meta.id);
+        Store::open(path.clone())
+            .save(&document(&workspace, "first question", 2))
+            .expect("save");
+        let turns = path.with_extension("turns");
+        assert!(turns.is_dir());
+        set_archived(&state, &workspace, &meta.id, true).expect("archive");
+
+        remove(&state, &workspace, &meta.id).expect("delete");
+
+        assert!(!path.exists());
+        assert!(!turns.exists(), "{}", turns.display());
+        assert!(list(&state, &workspace).is_empty());
     }
 }

@@ -61,23 +61,19 @@ the walk running out.
 
 ## One session document, rewritten every turn
 
-`SessionStore::save` serialises the whole document with `to_string_pretty`,
-writes a temporary file and renames it (`src/engine/store.rs:173-185`). A
-conversation that grew to 10.5 MB therefore rewrites 10.5 MB at every turn, and
-opening it parses all of it inside a Tauri command. Total bytes written grow
-with the square of the turn count.
+Done: a turn row is its own file (ADR 0057). `s-<id>.json` is a header and
+`s-<id>.turns/<seq>.json` holds the rows, each written once, so a save costs
+one turn instead of the whole conversation. What is left:
 
-`tools[].output` pointing at the spill file under
-`projects/<hash>/outputs/` is not a way out: those names carry no session id and
-`MAX_SPILL_FILES` (200) prunes by directory, so two conversations in one
-workspace overwrite each other. They are a scratch file for the model to
-re-read, not an archive. What the model sees of a tool output is
-`TOOL_HEAD_CHARS` + `TOOL_TAIL_CHARS` (3 000 characters, `keel-runtime/src/
-summary.rs`); 4 KiB is the host's live preview (`UI_PREVIEW_BYTES`), and 8 000
-characters is the document's cap.
-
-First step: keep the newest K turns inline and give older ones their own file
-under a per-session directory, so the per-turn write is bounded. One file per
-turn with `index.json` holding metadata is the endpoint, but it moves the
-storage layout ADR 0006 fixes, so it needs its own ADR.
+- The header still carries the kernel snapshot, which is rewritten every turn.
+  It is small today; if it ever grows, the same argument applies to it.
+- `tools[].output` pointing at the spill file under
+  `projects/<hash>/outputs/` is still not an archive: those names carry no
+  session id and `MAX_SPILL_FILES` (200) prunes by directory, so two
+  conversations in one workspace overwrite each other. What the model sees of a
+  tool output is `TOOL_HEAD_CHARS` + `TOOL_TAIL_CHARS` (3 000 characters,
+  `keel-runtime/src/summary.rs`); 4 KiB is the host's live preview
+  (`UI_PREVIEW_BYTES`), and 8 000 characters is the document's cap.
+- Nothing compacts old conversations yet, and nothing deletes a row directory
+  whose header has been removed by an older build.
 

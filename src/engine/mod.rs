@@ -356,9 +356,12 @@ fn context_point(turn: &StoredTurn) -> Option<ContextPoint> {
 /// Folds an old turn's event stream into the fields the host reads, then drops
 /// the stream. New turns never wrote events, so this is a one-time migration
 /// for documents from before the fields: the numbers stay, the bytes go.
-fn absorb_events(turn: &mut StoredTurn) {
+///
+/// Returns whether the turn changed, so the caller can name the row that has to
+/// be written again — a row is otherwise written once and never touched.
+fn absorb_events(turn: &mut StoredTurn) -> bool {
     if turn.events.is_empty() {
-        return;
+        return false;
     }
     let usage = turn_usage(turn);
     if turn.usage == StoredUsage::default() {
@@ -368,6 +371,7 @@ fn absorb_events(turn: &mut StoredTurn) {
         turn.context = context_from_events(turn);
     }
     turn.events.clear();
+    true
 }
 
 #[derive(Default)]
@@ -811,10 +815,13 @@ impl Engine {
     /// the usage and context fields first, so an old document shrinks on its
     /// next save instead of carrying its events forever.
     fn save_session(&self, session: &mut StoredSession) -> Result<(), KernelError> {
+        let mut rewritten = Vec::new();
         for turn in &mut session.turns {
-            absorb_events(turn);
+            if absorb_events(turn) {
+                rewritten.push(turn.seq);
+            }
         }
-        self.store.save(session)
+        self.store.save_with(session, &rewritten)
     }
 
     pub fn config(&self) -> &RuntimeConfig {

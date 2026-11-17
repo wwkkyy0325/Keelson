@@ -2864,3 +2864,31 @@ The remaining two are corrections of what the tool says about itself — a
 result that has been cut short must announce it, and a tool that cannot do
 something must not imply that it can.
 
+## 2026-11-17 — Rig values, and a turn is one file
+
+Kernel 0.2.16 gains sampling knobs and profile inheritance; Keelson uses both
+and moves the conversation layout (ADR 0057 here, 0067–0068 in Keel).
+
+- `[profile] extends = "live-base.toml"`: a profile inherits field by field
+  from a shared file, arrays and scalars replacing as a whole. The five live
+  profiles now hold only what makes them different.
+- `[model] temperature` and `top_p` reach the request body. An unset knob is
+  not sent at all rather than sent as a default; a value outside its range is
+  refused when the profile loads.
+- The values themselves: coding 0.2, ui 0.5, figure 0.9, office 0.7, research
+  0.2. `command_timeout_ms` is 300 s for coding and figure, 120 s for ui, and
+  left at the default 60 s for office and research — written only where it
+  differs.
+- `s-<id>.json` is now a header; each turn is `s-<id>.turns/<seq>.json`,
+  written once. A save costs one turn instead of the whole conversation, and
+  the row directory goes away with the conversation. A document written before
+  the split is read as it is and lands as one file per turn on its next save.
+
+### Why
+
+Two profiles that share an endpoint and a context ladder were four copies of
+the same eleven lines; five copies of a constant drift, and a drifted endpoint
+is a rig that fails only when you use it. The turn document was the other half
+of the same story: a row that never changes was rewritten at every turn because
+it shared a file with the header that does change.
+
