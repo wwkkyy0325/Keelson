@@ -161,12 +161,15 @@ One run is one turn. A project directory under
 `<state>/sessions/<workspace-hash>/` holds one conversation per document, with
 `<state>` from `$KEELSON_HOME` (default `~/.keelson`). A conversation is
 `s-<id>.json` — the header: workspace, rig, title, archive flag, task list —
-`s-<id>.snapshot.json` with the kernel snapshot, and `s-<id>.turns/<seq>.json`,
-one row per turn: the answer, the bounded tool lines and thinking, usage, and
-the turn's last context point. The header is what a list reads, so it holds
-nothing that grows with the conversation (ADR 0058). A snapshot or a row
-directory whose header is gone is moved into `.orphans/` when the project is
-listed, never deleted (ADR 0059).
+`s-<id>.snapshot.json` with the state the kernel is still working from,
+`s-<id>.segments/<segment>.json` with one file per topic span, and
+`s-<id>.turns/<seq>.json`, one row per turn: the answer, the bounded tool lines
+and thinking, usage, and the turn's last context point. The header is what a
+list reads, so it holds nothing that grows with the conversation (ADR 0058). A
+segment file is written only when that segment changed, so a save writes the
+segment that grew rather than the conversation (ADR 0060). A state file, a
+segment directory or a row directory whose header is gone is moved into
+`.orphans/` when the project is listed, never deleted (ADR 0059).
 The event stream is not stored for new turns; a document written before that
 change is still read through it, and folds its usage and last context point
 into the fields on the next save, which drops the stream. The workspace is

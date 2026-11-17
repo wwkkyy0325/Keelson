@@ -1,21 +1,30 @@
 //! Session persistence.
 //!
-//! One session is a header, one snapshot file and one file per turn: the
-//! header holds what a list needs, the snapshot file holds the kernel's opaque
-//! state, each turn row is its own file. The kernel owns the snapshot shape;
-//! this adapter only moves it in and out of a file.
+//! One session is a header, a state file, one file per segment and one file per
+//! turn: the header holds what a list needs, the state file holds the session
+//! planes the kernel is still working from, each segment is its own file, each
+//! turn row is its own file. The kernel owns the snapshot shape; this adapter
+//! only moves it in and out of files.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use keel_core::{KernelError, SessionSnapshot, TodoList};
+use keel_core::{KernelError, SegmentSnapshot, SessionSnapshot, TodoList};
 use serde::{Deserialize, Serialize};
 
 /// Where a sidecar whose header is gone is moved to, inside the project
 /// directory. A dot-directory: the list's id filter never sees it.
 const ORPHAN_DIR: &str = ".orphans";
+
+/// The sidecars named after a header by directory suffix.
+const SIDECAR_DIRS: [&str; 2] = [".turns", ".segments"];
+
+/// The manifest inside the segment directory: which segments it holds, and the
+/// hash of what was written for each, so a save writes only what moved.
+const MANIFEST_FILE: &str = "manifest.json";
+const MANIFEST_VERSION: u32 = 1;
 
 /// A stored session. The workspace is recorded so a session id cannot be
 /// resumed against a different project by accident.
@@ -155,17 +164,35 @@ pub struct StoredEvent {
     pub payload: serde_json::Value,
 }
 
+/// One segment file, as the manifest records it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManifestEntry {
+    id: u32,
+    hash: String,
+}
+
+/// What the segment directory holds: the ids, and the hash of the file each
+/// was written with.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SegmentManifest {
+    version: u32,
+    segments: Vec<ManifestEntry>,
+}
+
 /// A session document at one path.
 ///
 /// The path is the header: `s-<id>.json` holds the workspace, the rig, the
-/// title, the archive flag and the todo list. The kernel snapshot is beside it
-/// in `s-<id>.snapshot.json`, and each turn is its own file under
+/// title, the archive flag and the todo list. The planes the kernel is still
+/// working from are beside it in `s-<id>.snapshot.json`, each segment is its own
+/// file under `s-<id>.segments/`, and each turn is its own file under
 /// `s-<id>.turns/`, named by sequence number.
 ///
-/// Three files rather than one for the same reason twice over: a turn row is
-/// written once and never rewritten (ADR 0057), and the snapshot sits apart
-/// from the header so listing conversations reads a few hundred bytes per
-/// conversation instead of the whole conversation state (ADR 0058).
+/// Four shapes rather than one for the same reason three times over: a turn row
+/// is written once and never rewritten (ADR 0057), the state sits apart from the
+/// header so listing conversations reads a few hundred bytes per conversation
+/// instead of the whole conversation state (ADR 0058), and the segments sit
+/// apart from the state so a save writes the segment that grew, not the whole
+/// conversation (ADR 0060).
 pub struct Store {
     path: PathBuf,
 }
@@ -185,6 +212,17 @@ impl Store {
     /// caller that knows the session path still finds it.
     pub fn snapshot_path(&self) -> PathBuf {
         self.path.with_extension("snapshot.json")
+    }
+
+    /// Where the segment files live: one per segment, beside the state file
+    /// that used to carry every one of them.
+    pub fn segments_dir(&self) -> PathBuf {
+        self.path.with_extension("segments")
+    }
+
+    /// The manifest naming the segment files, and the hash of each.
+    fn manifest_path(&self) -> PathBuf {
+        self.segments_dir().join(MANIFEST_FILE)
     }
 
     /// Loads the session, or `None` when the file does not exist yet.
@@ -282,9 +320,141 @@ impl Store {
             }
             Err(error) => return Err(storage_error(&path, error)),
         };
-        serde_json::from_str(&text).map_err(|error| KernelError::InvalidConfig {
-            message: format!("snapshot `{}` is not valid JSON: {error}", path.display()),
-        })
+        let mut snapshot: SessionSnapshot =
+            serde_json::from_str(&text).map_err(|error| KernelError::InvalidConfig {
+                message: format!("snapshot `{}` is not valid JSON: {error}", path.display()),
+            })?;
+        // A snapshot written before the segments had files of their own still
+        // carries them inline. It is read as it is and written out file by file
+        // on the next save, which is the whole migration.
+        if snapshot.segments.is_empty() {
+            snapshot.segments = self.read_segment_files()?;
+        }
+        Ok(snapshot)
+    }
+
+    /// Reads the segment files the manifest names, in id order.
+    fn read_segment_files(&self) -> Result<Vec<SegmentSnapshot>, KernelError> {
+        let dir = self.segments_dir();
+        let mut entries = self.read_manifest()?;
+        entries.sort_by_key(|entry| entry.id);
+        let mut segments = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let path = dir.join(segment_file_name(entry.id));
+            let text = match fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Err(KernelError::InvalidConfig {
+                        message: format!(
+                            "session `{}` has no segment {}: `{}` is missing",
+                            self.path.display(),
+                            entry.id,
+                            path.display()
+                        ),
+                    })
+                }
+                Err(error) => return Err(storage_error(&path, error)),
+            };
+            let segment: SegmentSnapshot =
+                serde_json::from_str(&text).map_err(|error| KernelError::InvalidConfig {
+                    message: format!("segment `{}` is not valid JSON: {error}", path.display()),
+                })?;
+            segments.push(segment);
+        }
+        Ok(segments)
+    }
+
+    /// The manifest as written, or nothing when there is none.
+    ///
+    /// A manifest that cannot be read is treated as empty: it carries only the
+    /// hashes that let a save skip an unchanged segment, so losing it costs one
+    /// rewrite of segments that are already on disk, never a segment.
+    fn read_manifest(&self) -> Result<Vec<ManifestEntry>, KernelError> {
+        let path = self.manifest_path();
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(storage_error(&path, error)),
+        };
+        let Ok(manifest) = serde_json::from_str::<SegmentManifest>(&text) else {
+            return Ok(Vec::new());
+        };
+        Ok(manifest.segments)
+    }
+
+    /// Writes one file per segment, then the manifest that names them.
+    ///
+    /// A segment file is written only when its content changed: the manifest
+    /// keeps the hash of every segment that was written, so a save costs the
+    /// segments that moved. A sealed segment is never touched again, and the
+    /// file grows with its own segment rather than with the conversation.
+    fn save_segments(&self, snapshot: &SessionSnapshot) -> Result<(), KernelError> {
+        let dir = self.segments_dir();
+        fs::create_dir_all(&dir).map_err(|error| storage_error(&dir, error))?;
+        let written = self.read_manifest()?;
+        let mut entries = Vec::with_capacity(snapshot.segments.len());
+        for segment in &snapshot.segments {
+            let text = serde_json::to_string(segment).map_err(|error| KernelError::Internal {
+                message: format!("cannot encode segment {}: {error}", segment.id),
+            })?;
+            let hash = content_hash(&text);
+            if !written
+                .iter()
+                .any(|entry| entry.id == segment.id && entry.hash == hash)
+            {
+                write_atomic(&dir.join(segment_file_name(segment.id)), &text)?;
+            }
+            entries.push(ManifestEntry {
+                id: segment.id,
+                hash,
+            });
+        }
+        // A segment file the new manifest does not name is one the kernel
+        // absorbed into a summary, or one a save that never finished left
+        // behind. Neither belongs to the conversation any more.
+        self.prune_segments(&entries)?;
+        let manifest = SegmentManifest {
+            version: MANIFEST_VERSION,
+            segments: entries,
+        };
+        let text = serde_json::to_string(&manifest).map_err(|error| KernelError::Internal {
+            message: format!(
+                "cannot encode the segment manifest of `{}`: {error}",
+                self.path.display()
+            ),
+        })?;
+        write_atomic(&self.manifest_path(), &text)
+    }
+
+    fn prune_segments(&self, entries: &[ManifestEntry]) -> Result<(), KernelError> {
+        let dir = self.segments_dir();
+        let keep: BTreeSet<String> = entries
+            .iter()
+            .map(|entry| segment_file_name(entry.id))
+            .collect();
+        let files = match fs::read_dir(&dir) {
+            Ok(files) => files,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(storage_error(&dir, error)),
+        };
+        for file in files {
+            let path = file.map_err(|error| storage_error(&dir, error))?.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name == MANIFEST_FILE || keep.contains(name) {
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(storage_error(&path, error)),
+            }
+        }
+        Ok(())
     }
 
     /// Loads the document without checking which workspace it belongs to.
@@ -353,13 +523,13 @@ impl Store {
         Ok(rows)
     }
 
-    /// Writes the snapshot, the header and any turn row that does not have a
-    /// file yet.
+    /// Writes the state, the segments, the header and any turn row that does
+    /// not have a file yet.
     ///
-    /// The snapshot goes first: the header names it, so a crash between the two
-    /// leaves the previous header with the new snapshot — the state the resume
-    /// path reads — rather than a header that points at a file that is not
-    /// there.
+    /// The parts go in that order and the header goes last: the header names
+    /// the sidecars, so a crash before it leaves the previous header pointing
+    /// at a state that is one turn ahead — the state the resume path reads —
+    /// rather than a header that points at a file that is not there.
     ///
     /// A crash leaves a conversation that is missing its last row, not one with
     /// a half-written row: every file is written through a temporary name and
@@ -388,13 +558,17 @@ impl Store {
             })?;
             write_atomic(&path, &text)?;
         }
-        let snapshot =
-            serde_json::to_string(&session.snapshot).map_err(|error| KernelError::Internal {
-                message: format!(
-                    "cannot encode the snapshot of `{}`: {error}",
-                    self.path.display()
-                ),
-            })?;
+        self.save_segments(&session.snapshot)?;
+        // The segments live in their own files; what is left is the state a
+        // save has to rewrite — the memo, the facts and the counters.
+        let mut state = session.snapshot.clone();
+        state.segments.clear();
+        let snapshot = serde_json::to_string(&state).map_err(|error| KernelError::Internal {
+            message: format!(
+                "cannot encode the state of `{}`: {error}",
+                self.path.display()
+            ),
+        })?;
         write_atomic(&self.snapshot_path(), &snapshot)?;
         let header = SessionHeader {
             workspace: &session.workspace,
@@ -410,31 +584,32 @@ impl Store {
         write_atomic(&self.path, &text)
     }
 
-    /// Removes the header, the snapshot and every turn row it owns.
+    /// Removes the header, the state, the segments and every turn row it owns.
     pub fn delete(&self) -> Result<(), KernelError> {
-        match fs::remove_file(&self.path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(storage_error(&self.path, error)),
+        for path in [self.path.clone(), self.snapshot_path()] {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(storage_error(&path, error)),
+            }
         }
-        match fs::remove_file(self.snapshot_path()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(storage_error(&self.snapshot_path(), error)),
+        for dir in [self.segments_dir(), self.turns_dir()] {
+            match fs::remove_dir_all(&dir) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(storage_error(&dir, error)),
+            }
         }
-        match fs::remove_dir_all(self.turns_dir()) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(storage_error(&self.turns_dir(), error)),
-        }
+        Ok(())
     }
 
     /// Moves the sidecars of a header that is gone into `<dir>/.orphans/`.
     ///
-    /// A snapshot file and a row directory are named after their header, so a
-    /// header removed without them — by a build that predates the split, or by
-    /// a crash between the two — leaves the largest files in the directory
-    /// behind and no row in the list that would ever remove them.
+    /// The state file, the segment directory and the row directory are all
+    /// named after their header, so a header removed without them — by a build
+    /// that predates the split, or by a crash between the two — leaves the
+    /// largest files in the directory behind and no row in the list that would
+    /// ever remove them.
     ///
     /// Nothing is deleted. Each orphan is renamed into `.orphans/`, where it
     /// stays readable until a person confirms the loss and removes it.
@@ -452,8 +627,14 @@ impl Store {
             };
             let header = if let Some(prefix) = name.strip_suffix(".snapshot.json") {
                 dir.join(format!("{prefix}.json"))
-            } else if name.ends_with(".turns") && path.is_dir() {
-                dir.join(format!("{}.json", name.trim_end_matches(".turns")))
+            } else if path.is_dir() {
+                match SIDECAR_DIRS
+                    .iter()
+                    .find_map(|suffix| name.strip_suffix(suffix))
+                {
+                    Some(prefix) => dir.join(format!("{prefix}.json")),
+                    None => continue,
+                }
             } else {
                 continue;
             };
@@ -561,6 +742,19 @@ fn turn_file_name(seq: u32) -> String {
     format!("{seq:08}.json")
 }
 
+fn segment_file_name(id: u32) -> String {
+    format!("{id:08}.json")
+}
+
+/// A fingerprint of one segment's JSON, so a save can tell an unchanged segment
+/// from one that grew without reading the file back.
+fn content_hash(text: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 fn write_atomic(path: &Path, text: &str) -> Result<(), KernelError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| storage_error(path, error))?;
@@ -579,6 +773,26 @@ fn storage_error(path: &Path, error: io::Error) -> KernelError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use keel_core::{EntrySnapshot, SegmentState};
+
+    fn segment(id: u32, topic: &str) -> SegmentSnapshot {
+        SegmentSnapshot {
+            id,
+            topic: topic.to_owned(),
+            state: SegmentState::Sealed,
+            entries: vec![EntrySnapshot {
+                role: "user".to_owned(),
+                content: format!("about {topic}"),
+            }],
+            turns: 1,
+            terms: vec![topic.to_lowercase()],
+            artifacts: Vec::new(),
+            pending: Vec::new(),
+            verified: false,
+            record: None,
+        }
+    }
 
     fn session(workspace: PathBuf) -> StoredSession {
         StoredSession {
@@ -868,6 +1082,132 @@ mod tests {
     }
 
     #[test]
+    fn every_segment_is_a_file_and_the_state_keeps_none() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-1.json"));
+        let mut session = session(workspace.clone());
+        session.snapshot.segments = vec![segment(1, "alpha"), segment(2, "beta")];
+
+        store.save(&session).expect("save");
+
+        let state = fs::read_to_string(store.snapshot_path()).expect("the state file");
+        assert!(state.contains("\"segments\":[]"), "{state}");
+        assert!(store.segments_dir().join("00000001.json").is_file());
+        assert!(store.segments_dir().join("00000002.json").is_file());
+        let loaded = store.load(&workspace).expect("load").expect("a session");
+        let topics: Vec<&str> = loaded
+            .snapshot
+            .segments
+            .iter()
+            .map(|segment| segment.topic.as_str())
+            .collect();
+        assert_eq!(topics, ["alpha", "beta"]);
+    }
+
+    #[test]
+    fn an_unchanged_segment_is_not_written_again() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-1.json"));
+        let mut session = session(workspace.clone());
+        session.snapshot.segments = vec![segment(1, "alpha")];
+        store.save(&session).expect("save");
+        let file = store.segments_dir().join("00000001.json");
+        let before = fs::metadata(&file)
+            .expect("the segment file")
+            .modified()
+            .expect("a time");
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        store.save(&session).expect("save again");
+
+        let after = fs::metadata(&file)
+            .expect("the segment file")
+            .modified()
+            .expect("a time");
+        assert_eq!(before, after, "a sealed segment was written again");
+
+        // A segment that grew is written, and only it.
+        let mut grown = session.clone();
+        grown.snapshot.segments[0].topic = "alpha grown".to_owned();
+        grown.snapshot.segments.push(segment(2, "beta"));
+        store.save(&grown).expect("save a grown segment");
+
+        let text = fs::read_to_string(&file).expect("the segment file");
+        assert!(text.contains("alpha grown"), "{text}");
+        assert!(store.segments_dir().join("00000002.json").is_file());
+    }
+
+    #[test]
+    fn a_segment_the_kernel_dropped_loses_its_file() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-1.json"));
+        let mut session = session(workspace.clone());
+        session.snapshot.segments = vec![segment(1, "alpha"), segment(2, "beta")];
+        store.save(&session).expect("save");
+        let dropped = store.segments_dir().join("00000001.json");
+
+        // Absorbed into a summary, so the snapshot no longer lists it.
+        session.snapshot.segments.remove(0);
+        store.save(&session).expect("save");
+
+        assert!(!dropped.exists(), "a segment the kernel dropped is gone");
+        let loaded = store.load(&workspace).expect("load").expect("a session");
+        assert_eq!(loaded.snapshot.segments.len(), 1);
+        assert_eq!(loaded.snapshot.segments[0].topic, "beta");
+    }
+
+    #[test]
+    fn a_missing_segment_file_is_an_error() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-1.json"));
+        let mut session = session(workspace.clone());
+        session.snapshot.segments = vec![segment(1, "alpha")];
+        store.save(&session).expect("save");
+        fs::remove_file(store.segments_dir().join("00000001.json")).expect("remove the segment");
+
+        let error = store.load(&workspace).expect_err("refused");
+
+        assert!(error.to_string().contains("no segment 1"), "{error}");
+    }
+
+    #[test]
+    fn a_snapshot_written_inline_is_moved_into_files() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-1.json"));
+        store.save(&session(workspace.clone())).expect("save");
+        // The shape a build before the split left behind: the whole snapshot,
+        // segments included, in one file, and no segment directory.
+        let inline = SessionSnapshot {
+            segments: vec![segment(1, "alpha")],
+            ..SessionSnapshot::default()
+        };
+        fs::write(
+            store.snapshot_path(),
+            serde_json::to_string(&inline).expect("json"),
+        )
+        .expect("an inline snapshot");
+        fs::remove_dir_all(store.segments_dir()).expect("remove the segment files");
+
+        let loaded = store.load(&workspace).expect("load").expect("a session");
+        assert_eq!(loaded.snapshot.segments.len(), 1);
+        store.save(&loaded).expect("save");
+
+        let state = fs::read_to_string(store.snapshot_path()).expect("the state file");
+        assert!(state.contains("\"segments\":[]"), "{state}");
+        assert!(store.segments_dir().join("00000001.json").is_file());
+    }
+
+    #[test]
     fn a_sidecar_without_a_header_is_moved_aside() {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = dir.path().join("workspace");
@@ -881,11 +1221,13 @@ mod tests {
         // A build that predates the split deleted the header and left the rest.
         fs::remove_file(&store.path).expect("remove the header");
 
-        assert_eq!(Store::sweep_orphans(&dir).expect("sweep"), 2);
-        assert!(!store.snapshot_path().exists(), "the snapshot moved");
+        assert_eq!(Store::sweep_orphans(&dir).expect("sweep"), 3);
+        assert!(!store.snapshot_path().exists(), "the state moved");
         assert!(!store.turns_dir().exists(), "the rows moved");
+        assert!(!store.segments_dir().exists(), "the segments moved");
         assert!(kept.snapshot_path().exists(), "a live sidecar stays");
         assert!(kept.turns_dir().is_dir(), "a live row dir stays");
+        assert!(kept.segments_dir().is_dir(), "a live segment dir stays");
         let aside = dir.join(ORPHAN_DIR);
         let moved: Vec<String> = fs::read_dir(&aside)
             .expect("the orphan dir")
@@ -909,7 +1251,7 @@ mod tests {
             fs::remove_file(&store.path).expect("remove the header");
             assert_eq!(
                 Store::sweep_orphans(&dir).expect("sweep"),
-                2,
+                3,
                 "round {round}"
             );
         }
@@ -919,12 +1261,17 @@ mod tests {
             .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(moved.len(), 4, "{moved:?}");
+        assert_eq!(moved.len(), 6, "{moved:?}");
         assert!(moved.iter().any(|name| name == "s-1.snapshot.json"));
         assert!(
             moved
                 .iter()
                 .any(|name| name.starts_with("s-1.snapshot.json.")),
+            "{moved:?}"
+        );
+        assert!(moved.iter().any(|name| name == "s-1.segments"));
+        assert!(
+            moved.iter().any(|name| name.starts_with("s-1.segments.")),
             "{moved:?}"
         );
     }
@@ -957,6 +1304,7 @@ mod tests {
 
         assert!(!store.path.exists());
         assert!(!store.turns_dir().exists());
+        assert!(!store.segments_dir().exists());
         assert!(store.load(&workspace).expect("load").is_none());
         // Deleting what is already gone is not an error.
         store.delete().expect("delete again");

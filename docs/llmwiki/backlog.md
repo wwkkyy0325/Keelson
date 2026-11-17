@@ -44,13 +44,14 @@ one turn instead of the whole conversation. Done since: the list reads the
 header alone (`read_header`, `turn_count`, `first_turn`), and the kernel
 snapshot has its own file (`s-<id>.snapshot.json`, ADR 0058), so opening a
 project no longer parses history or state to count and name conversations.
+Done too: a segment is its own file, written once and rewritten only when it
+changes (ADR 0060), and a turn buys at most 128 terms (ADR 0069 in the Keel
+repository). A save now costs the state file — the memo, the facts and the
+counters — plus the segment that grew, instead of the whole conversation.
 What is left:
 
-- A save still rewrites the whole snapshot every turn — on this project's
-  495 KB conversation the snapshot alone is 435 KB. It no longer fills the list
-  path, but it still grows with the conversation. The first Keel change is in
-  (ADR 0069 there: a turn buys at most 128 terms, and a term is at most 40
-  characters); storing segments outside the snapshot is the rest of it.
+- The state file still holds the memo and every fact, and nothing drops a
+  segment the kernel has not absorbed into a summary.
 - `tools[].output` pointing at the spill file under
   `projects/<hash>/outputs/` is still not an archive: those names carry no
   session id and `MAX_SPILL_FILES` (200) prunes by directory, so two

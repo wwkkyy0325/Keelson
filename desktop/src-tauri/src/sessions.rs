@@ -822,6 +822,7 @@ mod tests {
         assert!(rows.is_empty());
         assert!(!path.with_extension("snapshot.json").exists());
         assert!(!path.with_extension("turns").exists());
+        assert!(!path.with_extension("segments").exists());
         assert!(project_dir(&state, &workspace)
             .join(".orphans")
             .join(format!("{}.snapshot.json", meta.id))
@@ -846,6 +847,7 @@ mod tests {
 
         assert!(!path.exists());
         assert!(!turns.exists(), "{}", turns.display());
+        assert!(!path.with_extension("segments").exists());
         assert!(list(&state, &workspace).is_empty());
     }
 }
