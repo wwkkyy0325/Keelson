@@ -2,29 +2,6 @@
 
 Cases that are not scheduled yet, with the evidence and the first step.
 
-## Sampling parameters in a profile
-
-`temperature` (and the rest of the sampling knobs) cannot be set from a rig
-profile: `keel-policy`'s `ModelSection` is `deny_unknown_fields` and has no
-such field, so a profile that writes `temperature = 0.7` fails to load and the
-whole rig disappears from the picker. `figure-live.toml` carried the field
-and was broken this way until it was removed.
-
-First step: add `temperature: Option<f32>` to `ModelSection` in the Keel
-repository, forward it to the model route, and cover it with a contract test.
-The rig files then get their comments' promises back.
-
-## Profile inheritance
-
-`ProfileSection` already parses `extends`, but `from_profile_str` refuses it
-with `profile inheritance is not supported in M1`. Every live profile repeats
-the same 18-line `[model]` and `[context]` block, so changing an endpoint or a
-model id is five edits.
-
-First step: decide whether `extends` merges sections field by field or only
-`[model]`; then implement it in Keel with a contract test. Until then the
-duplication is deliberate — one file you can read beats a merge you cannot.
-
 ## Two different timeouts share one word
 
 `tool_timeout` in a rig is a wall-clock deadline: the dispatcher wraps the whole
@@ -63,7 +40,9 @@ the walk running out.
 
 Done: a turn row is its own file (ADR 0057). `s-<id>.json` is a header and
 `s-<id>.turns/<seq>.json` holds the rows, each written once, so a save costs
-one turn instead of the whole conversation. What is left:
+one turn instead of the whole conversation. Done since: the list reads a header
+per unseen document (`read_document`, `turn_count`, `first_turn`), so opening a
+project no longer parses history to count it. What is left:
 
 - The header still carries the kernel snapshot, which is rewritten every turn,
   and the snapshot is not small: on the 11.0 MB / 52-turn conversation the
