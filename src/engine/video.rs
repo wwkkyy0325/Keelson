@@ -34,6 +34,11 @@ const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 const MAX_DURATION_MS: u64 = 10 * 60 * 1000;
 /// A page that produces no frame for this long is stuck, not slow.
 const STALL_WINDOW: Duration = Duration::from_secs(90);
+/// The window every scene is rendered in. The kit's canvas is 1920x1080 and the
+/// page posts its own frames, so a viewport is emulated inside the page (an
+/// iframe, or a layout that reads its container) — never by resizing this.
+const RENDER_WIDTH: u32 = 1920;
+const RENDER_HEIGHT: u32 = 1080;
 
 /// Renders one scene to `out/<index>.png` by asking the page for each frame.
 pub struct RenderSceneTool;
@@ -53,7 +58,8 @@ impl Tool for RenderSceneTool {
                           the project directory and must contain `kit/scene.html` and \
                           `scenes/<scene>.js`. The page draws a frame for every t and posts it \
                           back; the tool writes 0000.png, 0001.png and so on. Look at a frame \
-                          with view_image before assembling anything."
+                          with view_image before assembling anything. The browser window is \
+                          fixed at 1920x1080, so emulate another viewport inside the page."
                 .to_owned(),
             // The frames land in the workspace. A read-only declaration and a
             // write request are contradictory, and the dispatcher refuses the
@@ -776,7 +782,7 @@ fn launch_browser(profile: &Path, url: &str) -> Result<Child, String> {
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg(format!("--user-data-dir={}", profile.display()))
-            .arg("--window-size=1920,1080")
+            .arg(format!("--window-size={RENDER_WIDTH},{RENDER_HEIGHT}"))
             .arg(url)
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))

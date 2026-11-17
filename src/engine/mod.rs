@@ -42,14 +42,14 @@ use keel_core::{
 use keel_model_anthropic::{AnthropicConfig, AnthropicProvider};
 use keel_model_openai::{OpenAiConfig, OpenAiProvider};
 use keel_runtime::{
-    load_profile, validate_config, AcceptanceSelector, ApplyEditsTool, BackgroundSnapshot,
-    BackgroundTasks, CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool, EditFileTool,
-    EventLog, EventRecord, GlobTool, HistoryStage, InteractionBroker, InterjectionPush,
-    KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks, LocalTrashStore,
-    MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, MultiEditTool, PermissionEngine,
-    ProviderSummarizer, ReadFileTool, ReadLedger, RestoreFileTool, RootScope, RuntimeConfig,
-    ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver, TurnDriverConfig,
-    TurnOutcome, WriteFileTool,
+    is_skipped_directory, load_profile, validate_config, AcceptanceSelector, ApplyEditsTool,
+    BackgroundSnapshot, BackgroundTasks, CodeSearchTool, ContextBuilder, DeleteFileTool, EchoTool,
+    EditFileTool, EventLog, EventRecord, GlobTool, HistoryStage, InteractionBroker,
+    InterjectionPush, KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks,
+    LocalTrashStore, MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, MultiEditTool,
+    PermissionEngine, ProviderSummarizer, ReadFileTool, ReadLedger, RestoreFileTool, RootScope,
+    RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver,
+    TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -301,8 +301,8 @@ const MAX_TURN_THINKING_BYTES: usize = 64 * 1024;
 
 /// What one stored turn keeps of a tool output and of the thinking text. The
 /// live view is not affected; only the document is bounded.
-const MAX_STORED_TOOL_OUTPUT_CHARS: usize = 8_000;
-const MAX_STORED_THINKING_CHARS: usize = 8_000;
+const STORED_TOOL_OUTPUT_CHARS: usize = 8_000;
+const STORED_THINKING_CHARS: usize = 8_000;
 
 /// Keeps the head of `text` and names what was dropped, so a reader can tell a
 /// short output from a clipped one.
@@ -320,7 +320,7 @@ fn cap_chars(text: &str, limit: usize) -> String {
 fn cap_tool_lines(lines: &mut [ToolLine]) {
     for line in lines {
         if let Some(output) = line.output.as_deref() {
-            line.output = Some(cap_chars(output, MAX_STORED_TOOL_OUTPUT_CHARS));
+            line.output = Some(cap_chars(output, STORED_TOOL_OUTPUT_CHARS));
         }
     }
 }
@@ -766,7 +766,7 @@ impl Engine {
             input: input.to_owned(),
             state: outcome.state.to_string(),
             answer: outcome.answer.body.clone(),
-            thinking: cap_chars(&thinking, MAX_STORED_THINKING_CHARS),
+            thinking: cap_chars(&thinking, STORED_THINKING_CHARS),
             error,
             duration_ms: outcome.duration_ms,
             usage: StoredUsage {
@@ -1636,27 +1636,16 @@ fn mentions_pytest(text: &str) -> bool {
         .any(|line| !line.trim_start().starts_with('#') && line.contains("pytest"))
 }
 
+/// Directories a test-file search must not descend into. The named list lives
+/// in the kernel (`keel_runtime::is_skipped_directory`) so the search tools and
+/// this discovery cannot drift; hidden directories are added here because no
+/// project keeps its own test suite in one.
 fn is_skipped_test_directory(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-    // Tool and framework caches are hidden directories; none of them holds
-    // the project's own tests.
-    if name.starts_with('.') {
-        return true;
-    }
-    matches!(
-        name,
-        "target"
-            | "node_modules"
-            | "dist"
-            | "build"
-            | "venv"
-            | "site-packages"
-            | "__pycache__"
-            | "__pypackages__"
-            | "coverage"
-    )
+    is_skipped_directory(path)
+        || path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.'))
 }
 
 fn has_node_test(workspace: &Path) -> bool {
@@ -3244,6 +3233,23 @@ system = "prompt.md"
     }
 
     #[test]
+    fn a_dependency_tree_is_not_discovered_as_a_project() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        std::fs::write(dir.path().join("go.mod"), "module example.com/root\n")
+            .expect("the root manifest");
+        let vendored = dir.path().join("vendor/github.com/example/app");
+        std::fs::create_dir_all(&vendored).expect("a vendor directory");
+        std::fs::write(vendored.join("go.mod"), "module example.com/app\n")
+            .expect("a vendored manifest");
+
+        assert_eq!(
+            project_directories(dir.path(), "go.mod"),
+            vec![PathBuf::new()],
+            "a vendored module is somebody else's project"
+        );
+    }
+
+    #[test]
     fn a_root_project_yields_to_a_nested_one() {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         std::fs::write(
@@ -3708,7 +3714,7 @@ system = "prompt.md"
 
         let output = lines[0].output.as_deref().expect("the output");
         assert!(
-            output.chars().count() <= MAX_STORED_TOOL_OUTPUT_CHARS + 40,
+            output.chars().count() <= STORED_TOOL_OUTPUT_CHARS + 40,
             "the stored output stays near the cap"
         );
         assert!(

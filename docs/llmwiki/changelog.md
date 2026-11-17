@@ -2832,3 +2832,35 @@ profile and answers to nothing this app can verify. The replay profile was the
 same leftover from the other side — a mock model id kept alive by a single
 ignored test.
 
+## 2026-11-17 — one owner per list, and a window the rig can widen
+
+Kernel 0.2.16 moves with this entry; five ADRs in the Keel repository
+(0063–0066) carry the reasoning.
+
+- The build-directory list has one owner in the kernel. The engine's own test
+  discovery delegates to it and keeps only the rule that a hidden directory
+  holds no project tests. `vendor/` with a `go.mod` inside is no longer
+  reported as a project, and `site-packages/` is no longer searched as source.
+- `glob` and `code_search` stop walking after 200 000 entries or five seconds
+  and say so (`... stopped after N entries visited`). A pattern pointed at a
+  home directory used to run for a minute without a result.
+- An `edit_file` whose target text is already in the file now succeeds and
+  writes nothing; `multi_edit` and `apply_edits` skip that entry. A model that
+  retries a landed edit is no longer sent into a repair loop.
+- A verification command's inactivity window follows the profile:
+  `[verification] command_timeout_ms`, default 60 s. `figures`, `office` and
+  `ui` can widen it when their own check is slow to start; nothing that says
+  nothing behaves differently.
+- `render_scene` documents its fixed 1920×1080 window in the tool description,
+  because the parameter that would change it does not exist.
+
+### Why
+
+Three of these were the same defect: a fact with two owners drifts. The skip
+list existed twice and the copies disagreed; the verification window was a
+constant while the profile next to it knew what the checks were; the stored
+output cap was named `MAX_` while the model saw a different, smaller number.
+The remaining two are corrections of what the tool says about itself — a
+result that has been cut short must announce it, and a tool that cannot do
+something must not imply that it can.
+

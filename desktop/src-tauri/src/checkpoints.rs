@@ -122,6 +122,12 @@ fn checkpoint_index_too_large(state_dir: &Path, workspace: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Directories the checkpoint file count skips.
+///
+/// This is not the search list (`keel_runtime::is_skipped_directory`), and the
+/// difference is deliberate: a checkpoint has to capture what `git add` would,
+/// so a checked-in `vendor/` tree still counts. What it skips is output and
+/// caches that no restore needs.
 fn is_skipped_dir(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
