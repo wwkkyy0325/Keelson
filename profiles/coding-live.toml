@@ -1,32 +1,24 @@
+# The coding rig against the live endpoint. Shared settings are in
+# `live-base.toml`; this file holds what differs.
+
 [profile]
 name = "coding-live"
+extends = "live-base.toml"
 
 [model]
-provider = "anthropic-compatible"
-model = "deepseek-flash"
-base_url = "https://api.deepseek.com/anthropic"
-api_key_env = "ANTHROPIC_AUTH_TOKEN"
-thinking_budget = 0
-max_output_tokens = 32768
-# The API model id has no context suffix; capacity is a separate field.
-context_window = 1048576
-
-[context]
-stages = ["system", "memory", "history", "latest"]
-budget_tokens = 64000
-# The context ladder may double this when content does not fit:
-# 64k -> 128k -> 256k, bounded by the model window.
-max_budget_tokens = 262144
+# An edit is the most probable continuation of the file, not a variation on
+# it. Kept low so the same task twice produces the same diff.
+temperature = 0.2
 
 [tools]
 visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", "list_trash", "restore_file", "list_dir", "glob", "code_search", "git_diff", "move_file", "delete_file", "shell", "todo", "search_history", "web_search", "web_fetch", "list_windows", "screen_capture", "view_image", "launch_app", "wait_for_window", "list_controls"]
-budget = 1000
 
 [verification]
 mode = "none"
-
-[permission]
-level = "full_auto"
+# A release link with LTO and a single slow test both run for minutes without
+# printing a line. The window is inactivity, not a deadline, so this only
+# bounds how long a silent command is given.
+command_timeout_ms = 300000
 
 [persona]
 system = "prompts/coding.md"

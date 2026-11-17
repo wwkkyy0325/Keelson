@@ -1,0 +1,37 @@
+# What every live profile shares: the endpoint, the context ladder and the
+# permission level.
+#
+# This file is a fragment, not a profile. Nothing points a rig at it; a live
+# profile picks it up with `[profile] extends`, so changing the endpoint or the
+# model id is one edit here instead of six.
+#
+# A child keeps every key it writes and inherits the rest. Tables merge key by
+# key; an array such as `[tools] visible` is replaced wholesale, so a child
+# that lists tools states the whole list.
+#
+# `temperature` and `top_p` are per rig and stay in the child: a rig's sampling
+# is a statement about what it produces, not about which endpoint it reaches.
+
+[model]
+provider = "anthropic-compatible"
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com/anthropic"
+api_key_env = "ANTHROPIC_AUTH_TOKEN"
+thinking_budget = 0
+max_output_tokens = 32768
+# The API model id has no context suffix; capacity is a separate field.
+context_window = 1048576
+
+[context]
+stages = ["system", "memory", "history", "latest"]
+budget_tokens = 64000
+# The context ladder may double this when content does not fit:
+# 64k -> 128k -> 256k, bounded by the model window.
+max_budget_tokens = 262144
+
+[tools]
+# Each profile names the tools it can see; the call budget is the same for all.
+budget = 1000
+
+[permission]
+level = "full_auto"

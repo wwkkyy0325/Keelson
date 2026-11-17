@@ -211,3 +211,51 @@ fn discovery_over_the_rigs_directory_is_clean() {
         dir.display()
     );
 }
+
+/// The live profiles are five files over one fragment. If the fragment stops
+/// applying, an endpoint change becomes five edits again and nothing fails:
+/// every profile still loads. So the inheritance itself is pinned here, with
+/// the one value each rig chose for itself beside it.
+#[test]
+fn a_live_profile_inherits_the_endpoint_and_keeps_its_own_choices() {
+    let base = root().join("profiles/live-base.toml");
+    assert!(base.is_file(), "{} is missing", base.display());
+
+    let cases = [
+        // name, temperature, verification window in milliseconds
+        ("coding-live", 0.2, 300_000),
+        ("ui-live", 0.5, 120_000),
+        ("figure-live", 0.9, 300_000),
+        ("office-live", 0.7, 60_000),
+        ("research-live", 0.2, 60_000),
+    ];
+    for (name, temperature, window) in cases {
+        let path = root().join(format!("profiles/{name}.toml"));
+        let config = keel_runtime::load_profile(&path)
+            .unwrap_or_else(|error| panic!("{name}: {} does not load: {error}", path.display()));
+
+        assert_eq!(
+            config.model_route.provider, "anthropic-compatible",
+            "{name} should inherit the endpoint"
+        );
+        assert_eq!(
+            config.model_route.model, "deepseek-flash",
+            "{name} should inherit the model id"
+        );
+        assert_eq!(
+            config.context.budget_tokens, 64_000,
+            "{name} should inherit the context ladder"
+        );
+        assert_eq!(config.tool_budget, 1000, "{name} should inherit the budget");
+        assert_eq!(
+            config.model_route.sampling.temperature,
+            Some(temperature),
+            "{name} chose its own sampling"
+        );
+        assert_eq!(
+            config.verification_timeout,
+            std::time::Duration::from_millis(window),
+            "{name} should have the window it declares or the default"
+        );
+    }
+}

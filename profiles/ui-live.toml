@@ -1,22 +1,14 @@
+# The ui rig against the live endpoint. Shared settings are in
+# `live-base.toml`; this file holds what differs.
+
 [profile]
 name = "ui-live"
+extends = "live-base.toml"
 
 [model]
-provider = "anthropic-compatible"
-model = "deepseek-flash"
-base_url = "https://api.deepseek.com/anthropic"
-api_key_env = "ANTHROPIC_AUTH_TOKEN"
-thinking_budget = 0
-max_output_tokens = 32768
-# The API model id has no context suffix; capacity is a separate field.
-context_window = 1048576
-
-[context]
-stages = ["system", "memory", "history", "latest"]
-budget_tokens = 64000
-# The context ladder may double this when content does not fit:
-# 64k -> 128k -> 256k, bounded by the model window.
-max_budget_tokens = 262144
+# A page has to agree with itself — the same spacing scale, the same corner
+# radius, the same type ramp. Somewhere above an edit and below a sketch.
+temperature = 0.5
 
 [tools]
 # The code tools stay: a layout change is an edit to the same repository the
@@ -24,16 +16,15 @@ max_budget_tokens = 262144
 # window at a chosen size, a capture of it, and the renderer for pages that
 # draw to a canvas themselves.
 visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", "list_trash", "restore_file", "list_dir", "glob", "code_search", "git_diff", "move_file", "delete_file", "shell", "todo", "search_history", "web_search", "web_fetch", "view_image", "render_scene", "list_windows", "screen_capture", "launch_app", "wait_for_window", "list_controls"]
-budget = 1000
 
 [verification]
 # The repository's own checks are not the contract here; the persona carries
 # the loop (build, render, look, measure). A design check may still be declared
 # in the project's `.keelson/checks.toml`, which runs whatever this says.
 mode = "none"
-
-[permission]
-level = "full_auto"
+# A bundler prints a line per module, so a build keeps the window alive; a
+# browser that is settling a layout goes quiet for a while.
+command_timeout_ms = 120000
 
 [persona]
 system = "prompts/ui.md"
