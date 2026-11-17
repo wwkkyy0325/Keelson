@@ -122,9 +122,10 @@ the term cap (ADR 0069 in the Keel repository) stays as history.
 
 Every write, edit, move and delete backs the old file up into
 `projects/<hash>/trash/` before touching it, and nothing ever removes one.
-Measured over the six projects in this state directory: 31 MB in the trash, 817
-entries, against 21.8 MB of conversations — one project holds 19 MB of it and
-728 entries, this one 8.4 MB and 204. Screenshots in the neighbouring `screens/`
+Measured over the six projects in this state directory (2026-11-17, version files
+plus their `meta/` sidecars): 31 MB in the trash, 1 012 backed-up versions,
+against 21.8 MB of conversations — one project holds 19 MB of it and 727
+versions, this one 8.4 MB and 204. Screenshots in the neighbouring `screens/`
 folder are pruned twice, by count and by age (`KEEP_SCREENS`,
 `prune_old_screens`, seven days); the trash has neither.
 
@@ -132,6 +133,8 @@ The undo file is the whole reason `write_file` may overwrite a file the agent
 has not read, so this is not a candidate for removal. What is missing is a
 bound: the newest N versions of a path (the entry id already carries the path
 hash and the timestamp, so versions of one file are recognisable) and an age
-limit for the rest, printed the way the screenshot limit is. It is a deletion
+limit for the rest, printed the way the screenshot limit is. A version and its
+`meta/` sidecar have to go together, or the listing starts naming backups that
+are already gone. It is a deletion
 of a deletion's safety net, so the number belongs where the user can see it.
 
