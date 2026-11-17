@@ -332,6 +332,10 @@ fn load_index(dir: &Path) -> SessionIndex {
     if reconcile(dir, &mut index) {
         let _ = save_index(dir, &index);
     }
+    // A header removed without its sidecars leaves the largest files in the
+    // project behind and no row that would ever remove them; listing is the one
+    // moment they are found. The sweep moves them aside, never deletes them.
+    let _ = Store::sweep_orphans(dir);
     index
 }
 
@@ -798,6 +802,30 @@ mod tests {
         assert_eq!(rows[0].turns, 3);
         assert_eq!(rows[0].title, "first question");
         assert_eq!(touch(&state, &workspace, &meta.id).expect("touch").turns, 3);
+    }
+
+    #[test]
+    fn listing_moves_the_sidecars_of_a_removed_header_aside() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let meta = create(&state, &workspace, "coding").expect("create");
+        let path = session_path(&state, &workspace, &meta.id);
+        Store::open(path.clone())
+            .save(&document(&workspace, "first question", 2))
+            .expect("save");
+        // A build before the split removed the header and left the sidecars.
+        fs::remove_file(&path).expect("remove the header");
+
+        let rows = list(&state, &workspace);
+
+        assert!(rows.is_empty());
+        assert!(!path.with_extension("snapshot.json").exists());
+        assert!(!path.with_extension("turns").exists());
+        assert!(project_dir(&state, &workspace)
+            .join(".orphans")
+            .join(format!("{}.snapshot.json", meta.id))
+            .exists());
     }
 
     #[test]

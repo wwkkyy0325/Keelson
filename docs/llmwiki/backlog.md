@@ -58,6 +58,8 @@ What is left:
   tool output is `TOOL_HEAD_CHARS` + `TOOL_TAIL_CHARS` (3 000 characters,
   `keel-runtime/src/summary.rs`); 4 KiB is the host's live preview
   (`UI_PREVIEW_BYTES`), and 8 000 characters is the document's cap.
-- Nothing compacts old conversations yet, and nothing deletes a row directory
-  whose header has been removed by an older build.
+- Nothing compacts old conversations yet. The other half of this line used to
+  be "nothing deletes a row directory whose header has been removed by an older
+  build": that is now a sweep at index load, which moves an orphan snapshot or
+  row directory into `.orphans/` instead of deleting it (ADR 0059).
 

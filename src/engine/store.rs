@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 use keel_core::{KernelError, SessionSnapshot, TodoList};
 use serde::{Deserialize, Serialize};
 
+/// Where a sidecar whose header is gone is moved to, inside the project
+/// directory. A dot-directory: the list's id filter never sees it.
+const ORPHAN_DIR: &str = ".orphans";
+
 /// A stored session. The workspace is recorded so a session id cannot be
 /// resumed against a different project by accident.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -425,6 +429,61 @@ impl Store {
         }
     }
 
+    /// Moves the sidecars of a header that is gone into `<dir>/.orphans/`.
+    ///
+    /// A snapshot file and a row directory are named after their header, so a
+    /// header removed without them — by a build that predates the split, or by
+    /// a crash between the two — leaves the largest files in the directory
+    /// behind and no row in the list that would ever remove them.
+    ///
+    /// Nothing is deleted. Each orphan is renamed into `.orphans/`, where it
+    /// stays readable until a person confirms the loss and removes it.
+    pub fn sweep_orphans(dir: &Path) -> Result<u32, KernelError> {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(storage_error(dir, error)),
+        };
+        let mut orphans = Vec::new();
+        for entry in entries {
+            let path = entry.map_err(|error| storage_error(dir, error))?.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let header = if let Some(prefix) = name.strip_suffix(".snapshot.json") {
+                dir.join(format!("{prefix}.json"))
+            } else if name.ends_with(".turns") && path.is_dir() {
+                dir.join(format!("{}.json", name.trim_end_matches(".turns")))
+            } else {
+                continue;
+            };
+            if !header.exists() {
+                orphans.push(path);
+            }
+        }
+        if orphans.is_empty() {
+            return Ok(0);
+        }
+
+        let aside = dir.join(ORPHAN_DIR);
+        fs::create_dir_all(&aside).map_err(|error| storage_error(&aside, error))?;
+        let mut moved = 0;
+        for path in orphans {
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let mut target = aside.join(name);
+            let mut suffix = 1;
+            while target.exists() {
+                target = aside.join(format!("{name}.{suffix}"));
+                suffix += 1;
+            }
+            fs::rename(&path, &target).map_err(|error| storage_error(&path, error))?;
+            moved += 1;
+        }
+        Ok(moved)
+    }
+
     /// Appends the turn rows on disk to `turns`, keeping the document's own
     /// rows when both exist (a document written before the split).
     fn read_turns(&self, turns: &mut Vec<StoredTurn>) -> Result<(), KernelError> {
@@ -806,6 +865,68 @@ mod tests {
         let error = store.load(&workspace).expect_err("refused");
 
         assert!(error.to_string().contains("no snapshot"), "{error}");
+    }
+
+    #[test]
+    fn a_sidecar_without_a_header_is_moved_aside() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let dir = dir.path().join("sessions");
+        let store = Store::open(dir.join("s-1.json"));
+        store.save(&session(workspace.clone())).expect("save");
+        let kept = Store::open(dir.join("s-2.json"));
+        kept.save(&session(workspace)).expect("save");
+
+        // A build that predates the split deleted the header and left the rest.
+        fs::remove_file(&store.path).expect("remove the header");
+
+        assert_eq!(Store::sweep_orphans(&dir).expect("sweep"), 2);
+        assert!(!store.snapshot_path().exists(), "the snapshot moved");
+        assert!(!store.turns_dir().exists(), "the rows moved");
+        assert!(kept.snapshot_path().exists(), "a live sidecar stays");
+        assert!(kept.turns_dir().is_dir(), "a live row dir stays");
+        let aside = dir.join(ORPHAN_DIR);
+        let moved: Vec<String> = fs::read_dir(&aside)
+            .expect("the orphan dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(moved.iter().any(|name| name == "s-1.snapshot.json"));
+        assert!(moved.iter().any(|name| name == "s-1.turns"));
+    }
+
+    #[test]
+    fn a_second_orphan_of_the_same_name_does_not_replace_the_first() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let dir = dir.path().join("sessions");
+        let store = Store::open(dir.join("s-1.json"));
+
+        for round in 1..=2 {
+            store.save(&session(workspace.clone())).expect("save");
+            fs::remove_file(&store.path).expect("remove the header");
+            assert_eq!(
+                Store::sweep_orphans(&dir).expect("sweep"),
+                2,
+                "round {round}"
+            );
+        }
+
+        let moved: Vec<String> = fs::read_dir(dir.join(ORPHAN_DIR))
+            .expect("the orphan dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(moved.len(), 4, "{moved:?}");
+        assert!(moved.iter().any(|name| name == "s-1.snapshot.json"));
+        assert!(
+            moved
+                .iter()
+                .any(|name| name.starts_with("s-1.snapshot.json.")),
+            "{moved:?}"
+        );
     }
 
     #[test]
