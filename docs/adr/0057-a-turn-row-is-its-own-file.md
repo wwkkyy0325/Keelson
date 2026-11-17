@@ -33,10 +33,12 @@ the kernel snapshot and the title, which do change.
   written before the split still carries its rows inline; they are read as they
   are and written out one file each on the next save. Nothing has to be
   migrated by hand and an older build can still read a newer document's header.
-- `Store::load_unchecked` exists for the one caller that already knows the
-  path belongs to the project: the desktop index, whose directory is derived
-  from the workspace hash. It needs the rows to count turns and to fall back to
-  the first message for a title.
+- `Store::read_document` reads the header alone; `Store::turn_count`
+  answers a count from the row file names, and `Store::first_turn` reads one
+  row for the title a nameless conversation falls back to. The desktop index
+  asks those three questions, so listing a project opens a header per unseen
+  document instead of parsing every turn of every conversation.
+- `Store::load_unchecked` stays for the caller that needs the rows themselves.
 - `Store::delete` removes the header and the row directory together. Deleting
   a conversation cannot leave its rows behind.
 
@@ -44,8 +46,9 @@ the kernel snapshot and the title, which do change.
 
 - A save is proportional to one turn. A twenty-turn conversation and a
   thousand-turn one cost the same per turn.
-- The listing path reads a small header per unseen document plus its rows; the
-  index stays a cache and is still rebuilt from the directory.
+- The listing path reads a header per unseen document, plus one row when a
+  conversation has no custom title. The index stays a cache and is still
+  rebuilt from the directory.
 - A directory holds more files: a conversation is one header and *n* rows. The
   per-conversation count is bounded by the turns, which is the thing that
   grows anyway.

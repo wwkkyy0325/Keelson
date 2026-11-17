@@ -123,7 +123,8 @@ pub fn create(state_dir: &Path, workspace: &Path, rig: &str) -> Result<SessionMe
 pub fn touch(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta> {
     let dir = project_dir(state_dir, workspace);
     let path = dir.join(format!("{id}.json"));
-    let document = Store::open(path.clone()).load_unchecked().ok().flatten()?;
+    let store = Store::open(path.clone());
+    let document = store.read_document().ok().flatten()?;
 
     let now = now_ms();
     let mut index = load_index(&dir);
@@ -143,10 +144,10 @@ pub fn touch(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta
             index.sessions.last_mut().expect("a row was just pushed")
         }
     };
-    meta.title = title_for(&document);
+    meta.title = title_for(&store, &document);
     meta.archived = document.archived;
     meta.rig = document.rig.clone();
-    meta.turns = document.turns.len() as u32;
+    meta.turns = turn_count(&store, &document);
     meta.updated_at = now;
     let meta = meta.clone();
     let _ = save_index(&dir, &index);
@@ -218,7 +219,8 @@ pub fn sync(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta>
     }
     let dir = project_dir(state_dir, workspace);
     let path = dir.join(format!("{id}.json"));
-    let document = Store::open(path.clone()).load_unchecked().ok().flatten()?;
+    let store = Store::open(path.clone());
+    let document = store.read_document().ok().flatten()?;
 
     let mut index = load_index(&dir);
     let position = index.sessions.iter().position(|meta| meta.id == id);
@@ -238,10 +240,10 @@ pub fn sync(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta>
             index.sessions.last_mut().expect("a row was just pushed")
         }
     };
-    meta.title = title_for(&document);
+    meta.title = title_for(&store, &document);
     meta.archived = document.archived;
     meta.rig = document.rig.clone();
-    meta.turns = document.turns.len() as u32;
+    meta.turns = turn_count(&store, &document);
     let meta = meta.clone();
     let _ = save_index(&dir, &index);
     Some(meta)
@@ -291,16 +293,28 @@ fn title_from(input: &str) -> String {
     line.chars().take(TITLE_CHARS).collect()
 }
 
-/// A custom title wins; otherwise the first user message is the title.
-fn title_for(document: &StoredSession) -> String {
+/// A custom title wins; otherwise the first user message is the title. The
+/// first row is one file, not the conversation: a list row must not read the
+/// whole history to write one string.
+fn title_for(store: &Store, document: &StoredSession) -> String {
     if !document.title.trim().is_empty() {
         return document.title.trim().to_owned();
     }
-    document
-        .turns
-        .first()
+    store
+        .first_turn(document)
+        .ok()
+        .flatten()
         .map(|turn| title_from(&turn.input))
         .unwrap_or_default()
+}
+
+/// How many rows a document has. Counted from the row file names, so listing a
+/// project reads headers rather than conversations. A document written before
+/// the split still carries its rows inline, and those count too.
+fn turn_count(store: &Store, document: &StoredSession) -> u32 {
+    store
+        .turn_count(document)
+        .unwrap_or(document.turns.len() as u32)
 }
 
 fn sort(sessions: &mut [SessionMeta]) {
@@ -407,19 +421,17 @@ fn documents(dir: &Path) -> Vec<(String, PathBuf)> {
 }
 
 fn meta_from_file(path: &Path, id: &str) -> SessionMeta {
-    let document = Store::open(path.to_path_buf())
-        .load_unchecked()
-        .ok()
-        .flatten();
+    let store = Store::open(path.to_path_buf());
+    let document = store.read_document().ok().flatten();
     let time = file_ms(path).unwrap_or_else(now_ms);
     let (title, archived, rig, turns) = document
         .as_ref()
         .map(|document| {
             (
-                title_for(document),
+                title_for(&store, document),
                 document.archived,
                 document.rig.clone(),
-                document.turns.len() as u32,
+                turn_count(&store, document),
             )
         })
         .unwrap_or_default();

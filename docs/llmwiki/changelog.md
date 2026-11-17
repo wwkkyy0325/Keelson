@@ -2892,3 +2892,20 @@ is a rig that fails only when you use it. The turn document was the other half
 of the same story: a row that never changes was rewritten at every turn because
 it shared a file with the header that does change.
 
+## 2026-11-17 — the list reads headers, not conversations
+
+- The desktop index counts a conversation from the row file names and takes a
+  fallback title from the earliest row: one header per unseen document, and one
+  row when the conversation has no custom title. `sync` and `touch` do the
+  same, so a turn no longer re-reads its own conversation to update one row.
+- `Store::read_document` reads the header alone, `Store::turn_count` and
+  `Store::first_turn` are the two questions a list asks, and
+  `Store::load_unchecked` stays for the caller that needs the rows themselves.
+
+### Why
+
+ADR 0057 split the file and left the cost: the listing path still called the
+loader that returns every turn, so a fifty-turn conversation was parsed to
+learn that it has fifty turns. The index is a cache rebuilt from a directory;
+it should pay for a header, not for a history.
+

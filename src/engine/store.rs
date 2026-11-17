@@ -1,9 +1,11 @@
 //! Session persistence.
 //!
-//! One session is one JSON document: the kernel's opaque snapshot, the task
-//! list and the turn rows this host has run. The kernel owns the
-//! snapshot shape; this adapter only moves it in and out of a file.
+//! One session is a header plus one file per turn: the header holds the
+//! kernel's opaque snapshot and what a list needs, each turn row is its own
+//! file. The kernel owns the snapshot shape; this adapter only moves it in and
+//! out of a file.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -178,26 +180,91 @@ impl Store {
         Ok(Some(session))
     }
 
-    /// Loads the document without checking which workspace it belongs to.
+    /// Reads the header and the rows a document written before the split still
+    /// carries inline, without opening a single row file.
     ///
-    /// For a caller that already knows the path belongs to the project — the
-    /// desktop index derives the directory from the workspace hash — and needs
-    /// the rows that the header no longer carries.
-    pub fn load_unchecked(&self) -> Result<Option<StoredSession>, KernelError> {
+    /// For a caller that needs the workspace, the flags and the title and
+    /// nothing else — the desktop index, and the row it refreshes after a turn.
+    pub fn read_document(&self) -> Result<Option<StoredSession>, KernelError> {
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(storage_error(&self.path, error)),
         };
-        let mut session: StoredSession =
+        let session: StoredSession =
             serde_json::from_str(&text).map_err(|error| KernelError::InvalidConfig {
                 message: format!(
                     "session `{}` is not valid JSON: {error}",
                     self.path.display()
                 ),
             })?;
+        Ok(Some(session))
+    }
+
+    /// Loads the document without checking which workspace it belongs to.
+    ///
+    /// For a caller that already knows the path belongs to the project — the
+    /// desktop index derives the directory from the workspace hash — and needs
+    /// the rows themselves.
+    pub fn load_unchecked(&self) -> Result<Option<StoredSession>, KernelError> {
+        let Some(mut session) = self.read_document()? else {
+            return Ok(None);
+        };
         self.read_turns(&mut session.turns)?;
         Ok(Some(session))
+    }
+
+    /// How many rows the conversation has. Counts the names, not the contents:
+    /// a row the header still carries is counted once.
+    pub fn turn_count(&self, session: &StoredSession) -> Result<u32, KernelError> {
+        let mut seqs: BTreeSet<u32> = session.turns.iter().map(|turn| turn.seq).collect();
+        for (seq, _) in self.row_files()? {
+            seqs.insert(seq);
+        }
+        Ok(seqs.len() as u32)
+    }
+
+    /// The earliest row, which is where a conversation without a custom title
+    /// takes its name from. Reads one file, not the conversation.
+    pub fn first_turn(&self, session: &StoredSession) -> Result<Option<StoredTurn>, KernelError> {
+        let inline = session.turns.iter().min_by_key(|turn| turn.seq);
+        let Some((seq, path)) = self.row_files()?.into_iter().next() else {
+            return Ok(inline.cloned());
+        };
+        if inline.is_some_and(|turn| turn.seq < seq) {
+            return Ok(inline.cloned());
+        }
+        let text = fs::read_to_string(&path).map_err(|error| storage_error(&path, error))?;
+        let turn: StoredTurn =
+            serde_json::from_str(&text).map_err(|error| KernelError::InvalidConfig {
+                message: format!("turn `{}` is not valid JSON: {error}", path.display()),
+            })?;
+        Ok(Some(turn))
+    }
+
+    /// The row files in sequence order. Names only; nothing is parsed.
+    fn row_files(&self) -> Result<Vec<(u32, PathBuf)>, KernelError> {
+        let dir = self.turns_dir();
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(storage_error(&dir, error)),
+        };
+        let mut rows: Vec<(u32, PathBuf)> = Vec::new();
+        for entry in entries {
+            let path = entry.map_err(|error| storage_error(&dir, error))?.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let seq = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .and_then(|stem| stem.parse::<u32>().ok());
+            let Some(seq) = seq else { continue };
+            rows.push((seq, path));
+        }
+        rows.sort_by_key(|(seq, _)| *seq);
+        Ok(rows)
     }
 
     /// Writes the header and any turn row that does not have a file yet.
@@ -491,6 +558,66 @@ mod tests {
         let again = store.load(&workspace).expect("load").expect("a session");
         assert_eq!(again.turns.len(), 1);
         assert_eq!(again.turns[0].answer, "hi");
+    }
+
+    #[test]
+    fn the_list_reads_a_count_and_a_title_without_the_conversation() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-1.json"));
+        let mut stored = session(workspace.clone());
+        let second = StoredTurn {
+            seq: 2,
+            input: "second question".to_owned(),
+            ..stored.turns[0].clone()
+        };
+        stored.turns.push(second);
+        store.save(&stored).expect("save");
+
+        // What a list row opens: the header alone, with no row in it.
+        let header = store.read_document().expect("read").expect("a header");
+        assert!(header.turns.is_empty());
+
+        assert_eq!(store.turn_count(&header).expect("count"), 2);
+        let first = store.first_turn(&header).expect("first").expect("a row");
+        assert_eq!(first.seq, 1);
+        assert_eq!(first.input, "hello");
+    }
+
+    #[test]
+    fn a_row_the_header_still_carries_is_counted_once() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        // A document written before the split: its rows are inline, and a later
+        // save has already written one of them out as a file.
+        let store = Store::open(dir.path().join("sessions/s-old.json"));
+        let legacy = session(workspace.clone());
+        fs::create_dir_all(store.path.parent().expect("a parent")).expect("the session dir");
+        fs::write(
+            &store.path,
+            serde_json::to_string(&legacy).expect("encode the document"),
+        )
+        .expect("the legacy document");
+        let row = StoredTurn {
+            seq: 2,
+            input: "second question".to_owned(),
+            ..legacy.turns[0].clone()
+        };
+        fs::create_dir_all(store.turns_dir()).expect("the turn dir");
+        fs::write(
+            store.turns_dir().join(turn_file_name(2)),
+            serde_json::to_string(&row).expect("encode the row"),
+        )
+        .expect("the row file");
+
+        let header = store.read_document().expect("read").expect("a header");
+        assert_eq!(header.turns.len(), 1, "the inline row is still there");
+
+        assert_eq!(store.turn_count(&header).expect("count"), 2);
+        let first = store.first_turn(&header).expect("first").expect("a row");
+        assert_eq!(first.seq, 1);
     }
 
     #[test]
