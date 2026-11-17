@@ -118,3 +118,20 @@ reopen this are a state file past a few hundred KB, or facts past about a tenth
 of the working set; neither is close. The 15 578-term segment recorded before
 the term cap (ADR 0069 in the Keel repository) stays as history.
 
+## The trash keeps every version forever
+
+Every write, edit, move and delete backs the old file up into
+`projects/<hash>/trash/` before touching it, and nothing ever removes one.
+Measured over the six projects in this state directory: 31 MB in the trash, 817
+entries, against 21.8 MB of conversations — one project holds 19 MB of it and
+728 entries, this one 8.4 MB and 204. Screenshots in the neighbouring `screens/`
+folder are pruned twice, by count and by age (`KEEP_SCREENS`,
+`prune_old_screens`, seven days); the trash has neither.
+
+The undo file is the whole reason `write_file` may overwrite a file the agent
+has not read, so this is not a candidate for removal. What is missing is a
+bound: the newest N versions of a path (the entry id already carries the path
+hash and the timestamp, so versions of one file are recognisable) and an age
+limit for the rest, printed the way the screenshot limit is. It is a deletion
+of a deletion's safety net, so the number belongs where the user can see it.
+
