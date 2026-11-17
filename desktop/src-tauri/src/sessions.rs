@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use keelson::engine::{Store, StoredSession};
+use keelson::engine::{Header, Store, StoredSession};
 use serde::{Deserialize, Serialize};
 
 const INDEX_FILE: &str = "index.json";
@@ -124,7 +124,7 @@ pub fn touch(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta
     let dir = project_dir(state_dir, workspace);
     let path = dir.join(format!("{id}.json"));
     let store = Store::open(path.clone());
-    let document = store.read_document().ok().flatten()?;
+    let document = store.read_header().ok().flatten()?;
 
     let now = now_ms();
     let mut index = load_index(&dir);
@@ -220,7 +220,7 @@ pub fn sync(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta>
     let dir = project_dir(state_dir, workspace);
     let path = dir.join(format!("{id}.json"));
     let store = Store::open(path.clone());
-    let document = store.read_document().ok().flatten()?;
+    let document = store.read_header().ok().flatten()?;
 
     let mut index = load_index(&dir);
     let position = index.sessions.iter().position(|meta| meta.id == id);
@@ -296,7 +296,7 @@ fn title_from(input: &str) -> String {
 /// A custom title wins; otherwise the first user message is the title. The
 /// first row is one file, not the conversation: a list row must not read the
 /// whole history to write one string.
-fn title_for(store: &Store, document: &StoredSession) -> String {
+fn title_for(store: &Store, document: &Header) -> String {
     if !document.title.trim().is_empty() {
         return document.title.trim().to_owned();
     }
@@ -311,7 +311,7 @@ fn title_for(store: &Store, document: &StoredSession) -> String {
 /// How many rows a document has. Counted from the row file names, so listing a
 /// project reads headers rather than conversations. A document written before
 /// the split still carries its rows inline, and those count too.
-fn turn_count(store: &Store, document: &StoredSession) -> u32 {
+fn turn_count(store: &Store, document: &Header) -> u32 {
     store
         .turn_count(document)
         .unwrap_or(document.turns.len() as u32)
@@ -422,7 +422,7 @@ fn documents(dir: &Path) -> Vec<(String, PathBuf)> {
 
 fn meta_from_file(path: &Path, id: &str) -> SessionMeta {
     let store = Store::open(path.to_path_buf());
-    let document = store.read_document().ok().flatten();
+    let document = store.read_header().ok().flatten();
     let time = file_ms(path).unwrap_or_else(now_ms);
     let (title, archived, rig, turns) = document
         .as_ref()

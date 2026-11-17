@@ -158,16 +158,19 @@ separately, every moving point a bone, secondary motion on springs.
 ## Sessions
 
 One run is one turn. A project directory under
-`<state>/sessions/<workspace-hash>/` holds one JSON document per conversation,
-with `<state>` from `$KEELSON_HOME` (default `~/.keelson`). Each document holds
-the kernel snapshot, the task list and one row per turn: the answer, the
-bounded tool lines and thinking, usage, and the turn's last context point.
+`<state>/sessions/<workspace-hash>/` holds one conversation per document, with
+`<state>` from `$KEELSON_HOME` (default `~/.keelson`). A conversation is
+`s-<id>.json` — the header: workspace, rig, title, archive flag, task list —
+`s-<id>.snapshot.json` with the kernel snapshot, and `s-<id>.turns/<seq>.json`,
+one row per turn: the answer, the bounded tool lines and thinking, usage, and
+the turn's last context point. The header is what a list reads, so it holds
+nothing that grows with the conversation (ADR 0058).
 The event stream is not stored for new turns; a document written before that
 change is still read through it, and folds its usage and last context point
-into the fields on the next save, which drops the stream. The workspace is recorded in
-the document, so a conversation is
-refused against a different project; the workspace hash keeps separate
-projects from ever sharing a document.
+into the fields on the next save, which drops the stream. The workspace is
+recorded in the document, so a conversation is refused against a different
+project; the workspace hash keeps separate projects from ever sharing a
+document.
 
 A conversation id is opaque and immutable (`s-<unix nanos in hex>`); the
 workspace hash partitions directories and the id identifies a row. The

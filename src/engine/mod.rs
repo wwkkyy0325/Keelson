@@ -59,8 +59,8 @@ use crate::rig::{self, Rig};
 
 pub use keel_core::PermissionLevel;
 pub use store::{
-    Store, StoredContext, StoredEvent, StoredEvidence, StoredSession, StoredTurn, StoredUsage,
-    StoredVerification, ToolLine,
+    Header, Store, StoredContext, StoredEvent, StoredEvidence, StoredSession, StoredTurn,
+    StoredUsage, StoredVerification, ToolLine,
 };
 
 /// Everything opening a session needs. A host supplies its own interaction

@@ -1,9 +1,9 @@
 //! Session persistence.
 //!
-//! One session is a header plus one file per turn: the header holds the
-//! kernel's opaque snapshot and what a list needs, each turn row is its own
-//! file. The kernel owns the snapshot shape; this adapter only moves it in and
-//! out of a file.
+//! One session is a header, one snapshot file and one file per turn: the
+//! header holds what a list needs, the snapshot file holds the kernel's opaque
+//! state, each turn row is its own file. The kernel owns the snapshot shape;
+//! this adapter only moves it in and out of a file.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -32,6 +32,24 @@ pub struct StoredSession {
     #[serde(default)]
     pub todos: Option<TodoList>,
     #[serde(default)]
+    pub turns: Vec<StoredTurn>,
+}
+
+/// The header file on its own: the workspace, the rig, the display name, the
+/// archive flag, the todo list and whatever turn rows an old document still
+/// carries inline.
+///
+/// This is everything a conversation list shows, and reading it never parses
+/// the kernel snapshot. The snapshot is the part that grows with the
+/// conversation — before it had its own file the list parsed 19 MB of headers
+/// to paint nine rows (ADR 0058).
+#[derive(Debug, Clone)]
+pub struct Header {
+    pub workspace: PathBuf,
+    pub rig: String,
+    pub title: String,
+    pub archived: bool,
+    pub todos: Option<TodoList>,
     pub turns: Vec<StoredTurn>,
 }
 
@@ -136,13 +154,14 @@ pub struct StoredEvent {
 /// A session document at one path.
 ///
 /// The path is the header: `s-<id>.json` holds the workspace, the rig, the
-/// title, the archive flag, the kernel snapshot and the todo list. Each turn is
-/// its own file under `s-<id>.turns/`, named by sequence number.
+/// title, the archive flag and the todo list. The kernel snapshot is beside it
+/// in `s-<id>.snapshot.json`, and each turn is its own file under
+/// `s-<id>.turns/`, named by sequence number.
 ///
-/// A turn row is written once and never rewritten. That is what keeps a save
-/// proportional to the new turn instead of the whole conversation: before this
-/// layout a 10.5 MB document was rewritten at every turn, so bytes written grew
-/// with the square of the turn count (ADR 0057).
+/// Three files rather than one for the same reason twice over: a turn row is
+/// written once and never rewritten (ADR 0057), and the snapshot sits apart
+/// from the header so listing conversations reads a few hundred bytes per
+/// conversation instead of the whole conversation state (ADR 0058).
 pub struct Store {
     path: PathBuf,
 }
@@ -156,6 +175,12 @@ impl Store {
     /// that already knows the session path keeps working.
     pub fn turns_dir(&self) -> PathBuf {
         self.path.with_extension("turns")
+    }
+
+    /// Where the kernel snapshot lives. Beside the header, named from it, so a
+    /// caller that knows the session path still finds it.
+    pub fn snapshot_path(&self) -> PathBuf {
+        self.path.with_extension("snapshot.json")
     }
 
     /// Loads the session, or `None` when the file does not exist yet.
@@ -185,20 +210,77 @@ impl Store {
     ///
     /// For a caller that needs the workspace, the flags and the title and
     /// nothing else — the desktop index, and the row it refreshes after a turn.
+    pub fn read_header(&self) -> Result<Option<Header>, KernelError> {
+        let Some(header) = self.read_header_json()? else {
+            return Ok(None);
+        };
+        Ok(Some(Header {
+            workspace: header.workspace,
+            rig: header.rig,
+            title: header.title,
+            archived: header.archived,
+            todos: header.todos,
+            turns: header.turns,
+        }))
+    }
+
+    /// The header and the kernel snapshot, without a single turn row.
+    ///
+    /// A document written before the snapshot had its own file carries it
+    /// inline and is read from there; the next save writes the separate file.
     pub fn read_document(&self) -> Result<Option<StoredSession>, KernelError> {
+        let Some(header) = self.read_header_json()? else {
+            return Ok(None);
+        };
+        let snapshot = match header.snapshot {
+            Some(snapshot) => snapshot,
+            None => self.read_snapshot()?,
+        };
+        Ok(Some(StoredSession {
+            workspace: header.workspace,
+            rig: header.rig,
+            title: header.title,
+            archived: header.archived,
+            snapshot,
+            todos: header.todos,
+            turns: header.turns,
+        }))
+    }
+
+    fn read_header_json(&self) -> Result<Option<HeaderJson>, KernelError> {
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(storage_error(&self.path, error)),
         };
-        let session: StoredSession =
+        let header: HeaderJson =
             serde_json::from_str(&text).map_err(|error| KernelError::InvalidConfig {
                 message: format!(
                     "session `{}` is not valid JSON: {error}",
                     self.path.display()
                 ),
             })?;
-        Ok(Some(session))
+        Ok(Some(header))
+    }
+
+    fn read_snapshot(&self) -> Result<SessionSnapshot, KernelError> {
+        let path = self.snapshot_path();
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(KernelError::InvalidConfig {
+                    message: format!(
+                        "session `{}` has no snapshot: `{}` is missing",
+                        self.path.display(),
+                        path.display()
+                    ),
+                })
+            }
+            Err(error) => return Err(storage_error(&path, error)),
+        };
+        serde_json::from_str(&text).map_err(|error| KernelError::InvalidConfig {
+            message: format!("snapshot `{}` is not valid JSON: {error}", path.display()),
+        })
     }
 
     /// Loads the document without checking which workspace it belongs to.
@@ -216,8 +298,8 @@ impl Store {
 
     /// How many rows the conversation has. Counts the names, not the contents:
     /// a row the header still carries is counted once.
-    pub fn turn_count(&self, session: &StoredSession) -> Result<u32, KernelError> {
-        let mut seqs: BTreeSet<u32> = session.turns.iter().map(|turn| turn.seq).collect();
+    pub fn turn_count(&self, header: &Header) -> Result<u32, KernelError> {
+        let mut seqs: BTreeSet<u32> = header.turns.iter().map(|turn| turn.seq).collect();
         for (seq, _) in self.row_files()? {
             seqs.insert(seq);
         }
@@ -226,8 +308,8 @@ impl Store {
 
     /// The earliest row, which is where a conversation without a custom title
     /// takes its name from. Reads one file, not the conversation.
-    pub fn first_turn(&self, session: &StoredSession) -> Result<Option<StoredTurn>, KernelError> {
-        let inline = session.turns.iter().min_by_key(|turn| turn.seq);
+    pub fn first_turn(&self, header: &Header) -> Result<Option<StoredTurn>, KernelError> {
+        let inline = header.turns.iter().min_by_key(|turn| turn.seq);
         let Some((seq, path)) = self.row_files()?.into_iter().next() else {
             return Ok(inline.cloned());
         };
@@ -267,11 +349,17 @@ impl Store {
         Ok(rows)
     }
 
-    /// Writes the header and any turn row that does not have a file yet.
+    /// Writes the snapshot, the header and any turn row that does not have a
+    /// file yet.
     ///
-    /// A crash between the two leaves a conversation that is missing its last
-    /// row, not one with a half-written row: every file is written through a
-    /// temporary name and renamed.
+    /// The snapshot goes first: the header names it, so a crash between the two
+    /// leaves the previous header with the new snapshot — the state the resume
+    /// path reads — rather than a header that points at a file that is not
+    /// there.
+    ///
+    /// A crash leaves a conversation that is missing its last row, not one with
+    /// a half-written row: every file is written through a temporary name and
+    /// renamed.
     pub fn save(&self, session: &StoredSession) -> Result<(), KernelError> {
         self.save_with(session, &[])
     }
@@ -296,12 +384,19 @@ impl Store {
             })?;
             write_atomic(&path, &text)?;
         }
+        let snapshot =
+            serde_json::to_string(&session.snapshot).map_err(|error| KernelError::Internal {
+                message: format!(
+                    "cannot encode the snapshot of `{}`: {error}",
+                    self.path.display()
+                ),
+            })?;
+        write_atomic(&self.snapshot_path(), &snapshot)?;
         let header = SessionHeader {
             workspace: &session.workspace,
             rig: &session.rig,
             title: &session.title,
             archived: session.archived,
-            snapshot: &session.snapshot,
             todos: session.todos.as_ref(),
         };
         let text =
@@ -311,12 +406,17 @@ impl Store {
         write_atomic(&self.path, &text)
     }
 
-    /// Removes the header and every turn row it owns.
+    /// Removes the header, the snapshot and every turn row it owns.
     pub fn delete(&self) -> Result<(), KernelError> {
         match fs::remove_file(&self.path) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(storage_error(&self.path, error)),
+        }
+        match fs::remove_file(self.snapshot_path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(storage_error(&self.snapshot_path(), error)),
         }
         match fs::remove_dir_all(self.turns_dir()) {
             Ok(()) => Ok(()),
@@ -364,17 +464,38 @@ impl Store {
     }
 }
 
-/// What the session document keeps once each turn has its own file:
-/// everything the list and the resume path need, and nothing that grows with
-/// the length of the conversation.
+/// What the session document keeps once each turn has its own file and the
+/// kernel snapshot has its own: everything the list and the resume path need,
+/// and nothing that grows with the length of the conversation.
 #[derive(serde::Serialize)]
 struct SessionHeader<'a> {
     workspace: &'a Path,
     rig: &'a str,
     title: &'a str,
     archived: bool,
-    snapshot: &'a SessionSnapshot,
     todos: Option<&'a TodoList>,
+}
+
+/// The header as it is read back.
+///
+/// `snapshot` is `None` in every document written since the snapshot moved to
+/// its own file, and `Some` in a document written before it did; that is the
+/// whole migration (ADR 0058).
+#[derive(serde::Deserialize)]
+struct HeaderJson {
+    workspace: PathBuf,
+    #[serde(default)]
+    rig: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    archived: bool,
+    #[serde(default)]
+    snapshot: Option<SessionSnapshot>,
+    #[serde(default)]
+    todos: Option<TodoList>,
+    #[serde(default)]
+    turns: Vec<StoredTurn>,
 }
 
 fn turn_file_name(seq: u32) -> String {
@@ -500,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn the_header_carries_no_turns_and_each_row_is_one_file() {
+    fn the_header_carries_no_turns_and_no_snapshot() {
         let dir = tempfile::TempDir::new().expect("a temp dir");
         let workspace = dir.path().join("workspace");
         fs::create_dir(&workspace).expect("a workspace");
@@ -510,7 +631,12 @@ mod tests {
 
         let header = fs::read_to_string(&store.path).expect("the header");
         assert!(!header.contains("\"turns\""), "{header}");
-        assert!(header.contains("\"snapshot\""), "{header}");
+        assert!(!header.contains("\"snapshot\""), "{header}");
+        assert!(
+            store.snapshot_path().is_file(),
+            "{}",
+            store.snapshot_path().display()
+        );
         let row = store.turns_dir().join("00000001.json");
         assert!(row.is_file(), "{}", row.display());
 
@@ -576,7 +702,7 @@ mod tests {
         store.save(&stored).expect("save");
 
         // What a list row opens: the header alone, with no row in it.
-        let header = store.read_document().expect("read").expect("a header");
+        let header = store.read_header().expect("read").expect("a header");
         assert!(header.turns.is_empty());
 
         assert_eq!(store.turn_count(&header).expect("count"), 2);
@@ -612,12 +738,74 @@ mod tests {
         )
         .expect("the row file");
 
-        let header = store.read_document().expect("read").expect("a header");
+        let header = store.read_header().expect("read").expect("a header");
         assert_eq!(header.turns.len(), 1, "the inline row is still there");
 
         assert_eq!(store.turn_count(&header).expect("count"), 2);
         let first = store.first_turn(&header).expect("first").expect("a row");
         assert_eq!(first.seq, 1);
+    }
+
+    #[test]
+    fn the_snapshot_round_trips_through_its_own_file() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-1.json"));
+        let mut stored = session(workspace.clone());
+        stored.snapshot = SessionSnapshot {
+            next_segment_id: 12,
+            last_verified: true,
+            ..SessionSnapshot::default()
+        };
+
+        store.save(&stored).expect("save");
+        let loaded = store.load(&workspace).expect("load").expect("a session");
+
+        assert_eq!(loaded.snapshot.next_segment_id, 12);
+        assert!(loaded.snapshot.last_verified);
+    }
+
+    #[test]
+    fn a_document_that_still_carries_its_snapshot_moves_it_out() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-old.json"));
+        let mut legacy = session(workspace.clone());
+        legacy.snapshot.next_segment_id = 7;
+        fs::create_dir_all(store.path.parent().expect("a parent")).expect("the session dir");
+        fs::write(
+            &store.path,
+            serde_json::to_string(&legacy).expect("encode the document"),
+        )
+        .expect("the legacy document");
+
+        let loaded = store.load(&workspace).expect("load").expect("a session");
+        assert_eq!(loaded.snapshot.next_segment_id, 7, "read from the header");
+
+        store.save(&loaded).expect("save");
+        let header = fs::read_to_string(&store.path).expect("the header");
+        assert!(!header.contains("\"snapshot\""), "{header}");
+        let again = store.load(&workspace).expect("load").expect("a session");
+        assert_eq!(
+            again.snapshot.next_segment_id, 7,
+            "read from the snapshot file"
+        );
+    }
+
+    #[test]
+    fn a_session_without_its_snapshot_file_is_an_error() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = dir.path().join("workspace");
+        fs::create_dir(&workspace).expect("a workspace");
+        let store = Store::open(dir.path().join("sessions/s-1.json"));
+        store.save(&session(workspace.clone())).expect("save");
+        fs::remove_file(store.snapshot_path()).expect("remove the snapshot");
+
+        let error = store.load(&workspace).expect_err("refused");
+
+        assert!(error.to_string().contains("no snapshot"), "{error}");
     }
 
     #[test]

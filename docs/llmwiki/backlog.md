@@ -40,17 +40,17 @@ the walk running out.
 
 Done: a turn row is its own file (ADR 0057). `s-<id>.json` is a header and
 `s-<id>.turns/<seq>.json` holds the rows, each written once, so a save costs
-one turn instead of the whole conversation. Done since: the list reads a header
-per unseen document (`read_document`, `turn_count`, `first_turn`), so opening a
-project no longer parses history to count it. What is left:
+one turn instead of the whole conversation. Done since: the list reads the
+header alone (`read_header`, `turn_count`, `first_turn`), and the kernel
+snapshot has its own file (`s-<id>.snapshot.json`, ADR 0058), so opening a
+project no longer parses history or state to count and name conversations.
+What is left:
 
-- The header still carries the kernel snapshot, which is rewritten every turn,
-  and the snapshot is not small: on the 11.0 MB / 52-turn conversation the
-  header is 223 KB, of which `segments` is 188 KB, `facts` 22 KB and
-  `summary` 12 KB. A save on that conversation went from 11.0 MB to 558 KB
-  (header plus its largest row, 335 KB), so the remaining per-turn cost is the
-  snapshot, and it still grows with the conversation. Letting the kernel store
-  segments outside the snapshot would bound it; that is a Keel change.
+- A save still rewrites the whole snapshot every turn — on this project's
+  495 KB conversation the snapshot alone is 435 KB. It no longer fills the list
+  path, but it still grows with the conversation. The first Keel change is in
+  (ADR 0069 there: a turn buys at most 128 terms, and a term is at most 40
+  characters); storing segments outside the snapshot is the rest of it.
 - `tools[].output` pointing at the spill file under
   `projects/<hash>/outputs/` is still not an archive: those names carry no
   session id and `MAX_SPILL_FILES` (200) prunes by directory, so two
