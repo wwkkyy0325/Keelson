@@ -50,8 +50,8 @@ repository). A save now costs the state file — the memo, the facts and the
 counters — plus the segment that grew, instead of the whole conversation.
 What is left:
 
-- The state file still holds the memo and every fact, and nothing drops a
-  segment the kernel has not absorbed into a summary.
+- The state file still holds the memo and every fact. What that costs, and
+  why compacting it is not the win it looks like, is measured below.
 - `tools[].output` pointing at the spill file under
   `projects/<hash>/outputs/` is still not an archive: those names carry no
   session id and `MAX_SPILL_FILES` (200) prunes by directory, so two
@@ -63,4 +63,45 @@ What is left:
   be "nothing deletes a row directory whose header has been removed by an older
   build": that is now a sweep at index load, which moves an orphan snapshot or
   row directory into `.orphans/` instead of deleting it (ADR 0059).
+
+## The archive grows, the memory does not
+
+Measured over the nine conversations in this project's state directory
+(`~/.keelson/sessions`, 2026-11-17), 21.8 MB in total:
+
+- Turn rows, 19.2 MB — 88%. `s-<id>.turns/<seq>.json`, one file per turn,
+  written once and never pruned. One 52-turn conversation is 10.3 MB of them.
+- Segment files, 2.3 MB. Terms dominate: 0.45 MB across all nine, and 97% of
+  this project's own 221 KB — one segment recorded before the term cap holds
+  15,578 of them.
+- State files, 0.30 MB: the memo, the facts and the counters. The largest is
+  32.7 KB, the smallest 191 bytes.
+
+The memory the model reads is bounded where the archive is not:
+
+- The memo is capped at `working_set / 10`, clamped to 256..4096 tokens, and
+  rewritten every third seal (`keel-runtime/src/summarizer.rs`).
+- The facts are not capped. The largest conversation carries 130 of them,
+  21 902 bytes, and the memory stage puts all of them into every prompt. This
+  is the one memory item that grows with the conversation.
+- Turn rows never enter a prompt. The kernel rebuilds history from segments and
+  clears the entries of a segment once a summary covers it; after that the row
+  file is the only verbatim copy of what was said.
+
+So the three candidate changes cost different things:
+
+- Compacting the state buys under 33 KB and risks the least recoverable data. A
+  fact is a user statement extracted once; dropping it loses it, because recall
+  matches segment terms and never facts.
+- Pruning turn rows buys 88% of the disk and costs the scrollback: the app
+  restores a conversation from those rows, and nothing else holds the text of
+  an absorbed segment.
+- Capping the facts buys prompt tokens on every turn. Of the three, it is the
+  only one that is a context win rather than a disk win.
+
+The first step is a retention policy with a visible limit, not a compaction
+pass: keep the last N turn rows verbatim and mark on the conversation that
+older rows are gone, and cap the facts at N with confirmed and user-explicit
+entries kept first. Both are destructive, so both need a number the user can
+see and change, not a silent sweep.
 

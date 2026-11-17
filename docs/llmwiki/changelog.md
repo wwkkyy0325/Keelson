@@ -2909,3 +2909,36 @@ loader that returns every turn, so a fifty-turn conversation was parsed to
 learn that it has fifty turns. The index is a cache rebuilt from a directory;
 it should pay for a header, not for a history.
 
+## 2026-11-17 — the snapshot and each segment are files
+
+- The kernel snapshot leaves the header for `s-<id>.snapshot.json`, and a
+  segment leaves the snapshot for `s-<id>.segments/<segment-id>.json` (ADR
+  0058, ADR 0060). The header keeps the title flags; the state file keeps the
+  memo, the facts and the counters.
+- `s-<id>.segments/manifest.json` records a hash of what was written for each
+  segment. A save serializes every segment, compares the hash and writes only
+  the ones that changed, so an unchanged segment costs no file I/O and a sealed
+  one is never rewritten.
+- The manifest is written after the segment files: a save that dies in the
+  middle leaves a file the manifest does not name, which is ignored on read and
+  pruned on the next save. A segment the manifest names but the disk lacks is
+  an error that names the id and the path.
+- `Store::read_header` returns the header alone. `read_document` is header plus
+  state, `load` adds the rows. A save writes the segment files, then the
+  manifest, then the state, then the header.
+- A snapshot or a sidecar directory whose header is gone is moved into
+  `.orphans/` at index load instead of being deleted (ADR 0059), and `delete`
+  removes the state file, the segment directory and the row directory together.
+- Documents written before the split are read as they are and rewritten in the
+  new layout by their next save.
+
+### Why
+
+Measured on this state directory: the largest conversation had a 1,535,386-byte
+snapshot, and its terms alone were 53% of one 495 KB file. A conversation that
+is not advanced is not written, but the one being advanced paid for its whole
+history on every save. A segment is already the unit the kernel seals and never
+reopens, so it is the unit that should be written once; after the split the
+same conversation is a 5,636-byte state file plus ten segment files, and this
+project's own is a 10,917-byte state file plus nineteen.
+
