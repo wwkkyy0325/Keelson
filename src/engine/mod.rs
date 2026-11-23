@@ -48,8 +48,8 @@ use keel_runtime::{
     InterjectionPush, KernelOptions, LatestStage, ListDirTool, ListTrashTool, LocalBackgroundTasks,
     LocalTrashStore, MakeDirTool, MemoryStage, MockModel, MockStep, MoveFileTool, MultiEditTool,
     PermissionEngine, ProviderSummarizer, ReadFileTool, ReadLedger, RestoreFileTool, RootScope,
-    RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TurnDriver,
-    TurnDriverConfig, TurnOutcome, WriteFileTool,
+    RuntimeConfig, ShellTool, SystemStage, TaskStateStage, TodoTool, ToolRegistry, TrashStore,
+    TurnDriver, TurnDriverConfig, TurnOutcome, WriteFileTool,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1754,6 +1754,29 @@ fn session_scope(store_path: &Path) -> String {
         .unwrap_or_else(|| "session".to_owned())
 }
 
+/// Five versions per file, none older than thirty days. The trash is a second
+/// copy of the workspace; without a bound it becomes a third.
+const TRASH_VERSIONS: usize = 5;
+const TRASH_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Prunes the trash once per process. The scan reads one small file per entry,
+/// which is cheap once but not on every turn, and the count cannot run away in
+/// an hour.
+fn prune_trash_once(trash: &Arc<LocalTrashStore>) {
+    static PRUNED: AtomicU64 = AtomicU64::new(0);
+    if PRUNED.swap(1, Ordering::Relaxed) != 0 {
+        return;
+    }
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let store = trash.clone();
+    handle.spawn(async move {
+        let retention = keel_runtime::Retention::policy(TRASH_VERSIONS, TRASH_MAX_AGE);
+        let _ = store.prune(retention).await;
+    });
+}
+
 fn tools(
     project_dir: &Path,
     config: &RuntimeConfig,
@@ -1764,6 +1787,7 @@ fn tools(
     screens: PathBuf,
 ) -> Result<ToolRegistry, KernelError> {
     let trash = Arc::new(LocalTrashStore::at(project_dir.join("trash")));
+    prune_trash_once(&trash);
     // One ledger per engine: a write or edit must follow a current read.
     let ledger = ReadLedger::new();
     let mut registry = ToolRegistry::new();
