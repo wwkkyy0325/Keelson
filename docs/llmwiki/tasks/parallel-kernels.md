@@ -1,6 +1,6 @@
 # 并行内核、记录时序与 rig 显示：四项调整
 
-Status: 第 3 项与「对话身份」已实现（ADR 0039 增补 + ADR 0076），已重编安装入 `/Applications`，待运行时确认；第 1、2 项待确认后排期。
+Status: 第 1、3 项与第 2 项的 A 步已实现并提交（ADR 0039 增补、0064/0067 增补、0076），待打包替换后做运行时确认；第 2 项的 B/C/D 步未开始。
 
 四项来自同一条反馈，改造量差三个数量级，所以分开定案、分开合并。
 
@@ -32,6 +32,16 @@ Status: 第 3 项与「对话身份」已实现（ADR 0039 增补 + ADR 0076）�
 ### 需要
 
 ADR 0064 增补一小节（“文档在两处写，身份在开始时确定”）。
+
+### 实现（已完成）
+
+- `taskdoc::Entry.ok: bool` → `Entry.status: Status{Running, Done, Failed}`；`render` 按三态写，
+  `running` 时 Changes 段写“回合还在跑，变更在结束时记录”，Git 段前缀“回合开始时：”。
+  读旧文档时 `ok` 仍被认作 done/failed，`## Next` 的搬运逻辑没动。
+- `send_message` 在 `log_meta` 之后记 `started_ms`，`spawn` 最开头写 `Status::Running`；
+  收尾用**同一个 `at_ms`** 重写，所以是一个文件被替换，不是两份文档。
+- 测试 `a_turn_has_its_document_from_the_first_moment`：`running` → 索引出现 `| running |` →
+  同一回合结束后文件数仍为 1、内容变 `done`。
 
 ---
 
@@ -196,5 +206,40 @@ ADR 0039 增补一句（“保留引擎”的例外），或并入 0076。
   拦的情况；空且空闲的才重建（rig 那项）。
 - `OpenConversation` 增加 `workspace` / `state_dir`：点名某对话的命令不必再问 `current`。
 
-这是第 2 项 A 步（命令身份化）的前三刀，`turn_changes` / `load_turns` / `background_tasks` /
-`undo_last_turn` / `branch_session` 仍读 `current`；`current` 现在跟着窗口走，所以它们是对的。
+A 步收尾之后，寻址不再有例外：`turn_changes` / `load_turns` / `background_tasks` /
+`stop_background` / `undo_last_turn` / `branch_session` 全部接受 `session_id`，前端一律传
+`shownSession()`；后端只有一个解析入口 `conversation_named(&state, session_id)`——点名就按名找，
+没点才落到窗口指针。
+
+同时删掉 `ensure_idle`（以 `current` 为准的那把锁），换成按对象判忙：
+
+- `new_session` 不再被别处的回合挡住：新对话自带 id 和引擎，跑着的那个留在 map 里不受影响。
+- `branch_session` / `undo_last_turn` 只要求**被操作的那个**对话空闲。
+- `delete_session` / `archive_session` 同样只查目标对话；`archive_session` 还顺带修了一个洞——
+  以前只有“当前”对话会通知引擎改 `archived`，别的已打开对话归档后引擎仍以为可写。
+
+还没做：`DesktopConfig` 仍全局一份（两个项目不能各用一套模型/权限/rig），`state.open` 的键
+仍只有 session id，`session_io` 仍是一把全局锁。这些是 B/C/D 步。
+
+---
+
+## 附二：跟随底部的判据从来没有把“正在跑的回合”算进去（已修，ADR 0067 增补）
+
+用户报“发消息后对话消息还是得生成完才落进去”。根因不在发送、也不在事件，在
+`Transcript.svelte` 的 `bottomKey`：它数的是已渲染块、工具行、背景行、已持久化回合数和错误，
+而这些在回合开始的一瞬间全是空的——正在跑的那张卡片带着用户自己的输入出现了，但没有任何一个
+计数器跟着变（回合数要等落盘才 +1）。于是从底部发一句话，它被插到视口下方，看着像“没发出去”，
+直到回合结束、计数变了才跳上来。
+
+改法：判据提成纯函数 `bottomKey(parts)`（`lib/live.ts` 的 `BottomParts`），把 `runningSeq` 和
+`runningInputChars` 算进去；`live.test.ts` 加 4 个用例，第一条直接钉住这个 bug。
+
+---
+
+## 附三：成本账的文件名按对话分开（ADR 0071 的落地修正）
+
+`perf.rs` 的文件名原来只有 `turn-NNNN-<phase>`。回合号是每个对话各自从头数的，所以两个对话
+并行时互相覆盖，存下来的账也不知道属于哪一轮——上一轮读 perf 时已被误导过一次（`turn-0004`
+与 `turn-0065` 混在同一目录）。现在文件名是 `turn-<session>-NNNN-<phase>.json`，`perf_report`
+与 `report.ts` / `Chat.svelte` 传 `sessionId`；两条测试钉住“两个对话互不覆盖”和“对话出现在
+文件名里”。

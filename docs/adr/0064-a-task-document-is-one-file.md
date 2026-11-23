@@ -80,3 +80,30 @@ whose keys have to be guessed is not.
 - The document's prose stays in the language the user writes. The structure —
   header keys and section headings — is fixed English, so a reader anchors on
   it without parsing.
+
+## Amendment: the document is written twice, and its identity is fixed at the start
+
+A turn used to get its document only when it ended, so `progress/` was silent
+for exactly as long as the turn ran. The case where a reader most needs the
+document — a turn that is stuck, or one somebody is waiting on — was the case in
+which nothing existed.
+
+The document is now written at both ends of a turn, as one file:
+
+- **At the start**, after the step log's row exists: the file name's timestamp
+  (UTC minute) and the header's `task: <session>:<turn>` are fixed here, and the
+  header says `status: running`. Model calls, tool counts and duration are the
+  end's business, so the sections that carry them say so.
+- **At the end**, the same identity is rewritten — the file is found by its
+  `task` field, not by guessing a name from the clock — with `status: done` or
+  `failed`, the real counts, the change list and the repository state.
+
+The change list belongs to the end: a turn's changes are the checkpoint pair,
+and the pair exists only once the turn is over. The `Git` block needs no such
+rule, but it is labelled with what it is: the tree when the turn *started*, not
+when it ended.
+
+A turn killed hard leaves `running` behind. Nothing guesses the outcome at the
+next start: the index repeats what the file says, because a wrong `failed` is
+worse than an honest `running` that a human can correct. The next turn of the
+same conversation writes its own identity, so a dead row never blocks a live one.

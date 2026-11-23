@@ -857,15 +857,14 @@ pub async fn branch_session(
     app: AppHandle,
     state: State<'_, SharedState>,
     seq: u32,
+    session_id: Option<String>,
 ) -> Result<SessionView, String> {
     let state = state.inner().clone();
-    ensure_idle(&state)?;
-    let current = state
-        .current
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    // The source is the conversation the window names, and only that one has to
+    // be idle: a branch is a copy, so a turn streaming elsewhere is no reason to
+    // refuse it (ADR 0076).
+    let current = conversation_named(&state, session_id.as_deref())?;
+    ensure_conversation_idle(Some(&current))?;
     let source = sessions::session_path(&current.state_dir, &current.workspace, &current.id);
     let mut document = Store::open(source)
         .load(&current.workspace)
@@ -881,7 +880,7 @@ pub async fn branch_session(
         .save(&document)
         .map_err(|error| error.to_string())?;
     sessions::touch(&current.state_dir, &current.workspace, &id);
-    open_inner(app, state, current.workspace, Some(id), false).await
+    open_inner(app, state, current.workspace.clone(), Some(id), false).await
 }
 
 /// Reopens a conversation under its current settings.
@@ -911,7 +910,9 @@ pub async fn new_session(
     workspace: Option<String>,
 ) -> Result<SessionView, String> {
     let state = state.inner().clone();
-    ensure_idle(&state)?;
+    // A new conversation is never the one that is running: it gets its own id
+    // and its own engine, so work in progress elsewhere does not block it
+    // (ADR 0076).
     let workspace = resolve_workspace(&state, workspace);
     open_inner(app, state, workspace, Some(sessions::fresh_id()), true).await
 }
@@ -1033,7 +1034,9 @@ pub fn delete_session(
     if !sessions::valid_id(&session_id) {
         return Err("会话 id 不合法".to_owned());
     }
-    ensure_idle(state.inner())?;
+    // Only the conversation being deleted has to be idle: a turn elsewhere does
+    // not make this one busy.
+    ensure_conversation_idle(state.inner().open_of(&session_id).as_deref())?;
     let current = state
         .current
         .lock()
@@ -1121,23 +1124,22 @@ pub fn archive_session(
     if !sessions::valid_id(&session_id) {
         return Err("会话 id 不合法".to_owned());
     }
-    ensure_idle(state.inner())?;
+    // Archive is the recoverable step before delete, and it is refused only
+    // while the conversation being archived is streaming a turn.
+    let target = state.inner().open_of(&session_id);
+    ensure_conversation_idle(target.as_deref())?;
     let workspace = resolve_workspace(state.inner(), Some(workspace));
     let state_dir = state_dir_for(&workspace);
-    let current = state
+    let is_current = state
         .current
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    let is_current = current
         .as_ref()
         .is_some_and(|current| current.id == session_id.as_str() && current.workspace == workspace);
-    let meta = if is_current {
-        let engine = state
-            .open_of(&session_id)
-            .ok_or_else(|| "还没有打开会话".to_owned())?
-            .engine
-            .clone();
+    // An open conversation carries the archive flag its engine enforces, so the
+    // engine is told even when the window is showing another one.
+    let meta = if let Some(target) = target {
+        let engine = target.engine.clone();
         engine
             .set_archived(archived)
             .map_err(|error| error.to_string())?;
@@ -1668,18 +1670,25 @@ pub struct BackgroundTaskView {
 }
 
 #[tauri::command]
-pub fn stop_background(state: State<'_, SharedState>, id: String) -> Result<bool, String> {
-    let engine = state.current_open()?.engine.clone();
-    Ok(engine.stop_background(&id))
+pub fn stop_background(
+    state: State<'_, SharedState>,
+    id: String,
+    session_id: Option<String>,
+) -> Result<bool, String> {
+    let conversation = conversation_named(state.inner(), session_id.as_deref())?;
+    Ok(conversation.engine.stop_background(&id))
 }
 
 #[tauri::command]
 pub async fn background_tasks(
     state: State<'_, SharedState>,
+    session_id: Option<String>,
 ) -> Result<Vec<BackgroundTaskView>, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let engine = state.current_open()?.engine.clone();
+        let engine = conversation_named(&state, session_id.as_deref())?
+            .engine
+            .clone();
         Ok(engine
             .background_tasks()
             .into_iter()
@@ -1787,13 +1796,14 @@ pub struct RecordPaths {
 #[tauri::command]
 pub async fn perf_report(
     workspace: String,
+    session_id: String,
     seq: u32,
     phase: String,
     report: String,
 ) -> Result<String, String> {
     let dir = crate::perf::dir(&state_dir_for(Path::new(&workspace)));
     tauri::async_runtime::spawn_blocking(move || {
-        crate::perf::write(&dir, seq, &phase, &report)
+        crate::perf::write(&dir, &session_id, seq, &phase, &report)
             .map(|path| path.display().to_string())
             .map_err(|error| error.to_string())
     })
@@ -1853,9 +1863,22 @@ pub fn force_recover(state: State<'_, SharedState>) -> bool {
     state.inner().forget_open()
 }
 
-fn ensure_idle(state: &DesktopState) -> Result<(), String> {
-    let conversation = state.current_id().and_then(|id| state.open_of(&id));
-    ensure_conversation_idle(conversation.as_deref())
+/// The conversation a command acts on: the one it names, else the one the
+/// window shows (ADR 0076).
+///
+/// A command that names a conversation must reach it even after the window has
+/// moved on, because the pointer is a view of the window, not the address of
+/// the work.
+fn conversation_named(
+    state: &DesktopState,
+    session_id: Option<&str>,
+) -> Result<Arc<OpenConversation>, String> {
+    match session_id.filter(|id| !id.is_empty()) {
+        Some(id) => state
+            .open_of(id)
+            .ok_or_else(|| "这个对话没有打开，请重新选择".to_owned()),
+        None => state.current_open(),
+    }
 }
 
 /// Whether a conversation is working right now: a turn streaming into it, or a
@@ -1904,10 +1927,15 @@ fn show_conversation(
                     .map(|current| current.archived)
             };
             known.unwrap_or_else(|| {
-                archived_in(
-                    &sessions::list(&conversation.state_dir, &conversation.workspace),
+                // One document, not the whole project: the flag lives in the
+                // conversation's own file, and listing every session to read
+                // one boolean is a scan per send.
+                sessions::is_archived(
+                    &conversation.state_dir,
+                    &conversation.workspace,
                     &conversation.id,
                 )
+                .unwrap_or(false)
             })
         }
     };
@@ -2076,6 +2104,10 @@ pub async fn send_message(
             .unwrap_or_default(),
         input: input.clone(),
     };
+    // The document's identity from here on: the moment the turn started, so the
+    // write at the end replaces the running document instead of adding a second
+    // file for one task.
+    let started_ms = sessions::now_ms();
     tauri::async_runtime::spawn(async move {
         let step_log = records_base
             .as_ref()
@@ -2086,6 +2118,40 @@ pub async fn send_message(
                 let _ = log.meta(&log_meta);
                 Arc::new(Mutex::new(log))
             });
+        // The turn's document exists before its first step (ADR 0064, amended by
+        // ADR 0077). A turn that is still running used to be nowhere in
+        // `progress/`: the row under `{progress}/` appeared only once the turn
+        // had ended, so a reader looking for work in flight found nothing, and a
+        // turn the app did not survive left no trace at all. The status says
+        // `running`, and the same identity rewrites the file when the turn ends.
+        if let Some(base) = records_base.as_ref() {
+            let dir = records::progress_dir(base);
+            let workspace = log_meta.workspace.clone();
+            // Where the tree stood before the turn touched it. Cheap enough to
+            // ask twice per turn, and the end write replaces it.
+            let git = tauri::async_runtime::spawn_blocking(move || {
+                taskdoc::git_state(Path::new(&workspace))
+            })
+            .await
+            .unwrap_or_default();
+            let entry = taskdoc::Entry {
+                at_ms: started_ms,
+                session: &log_meta.session,
+                turn: log_meta.turn,
+                input: &log_meta.input,
+                rig: &log_meta.rig,
+                model: &log_meta.model,
+                provider: &log_meta.provider,
+                status: taskdoc::Status::Running,
+                error: None,
+                model_calls: None,
+                tools: None,
+                duration_ms: None,
+                changes: &[],
+                git: &git,
+            };
+            let _ = taskdoc::write_task(&dir, &entry);
+        }
         let before = match checkpoint_session.as_ref() {
             Some(current) => take_snapshot(current).await,
             None => None,
@@ -2324,14 +2390,18 @@ pub async fn send_message(
             let failure = result.as_ref().err().map(|error| error.to_string());
             let turn = engine.turn(seq);
             let entry = taskdoc::Entry {
-                at_ms: sessions::now_ms(),
+                at_ms: started_ms,
                 session: &log_meta.session,
                 turn: seq,
                 input: &log_meta.input,
                 rig: &log_meta.rig,
                 model: &log_meta.model,
                 provider: &log_meta.provider,
-                ok: result.is_ok(),
+                status: if result.is_ok() {
+                    taskdoc::Status::Done
+                } else {
+                    taskdoc::Status::Failed
+                },
                 error: failure.as_deref(),
                 model_calls: turn.as_ref().map(|turn| u64::from(turn.model_calls)),
                 tools: turn.as_ref().map(|turn| turn.tools.len()),
@@ -2371,24 +2441,27 @@ pub fn cancel_turn(state: State<'_, SharedState>, session_id: Option<String>) ->
 }
 
 #[tauri::command]
-pub async fn undo_last_turn(state: State<'_, SharedState>) -> Result<(), String> {
+pub async fn undo_last_turn(
+    state: State<'_, SharedState>,
+    session_id: Option<String>,
+) -> Result<(), String> {
     let state = state.inner().clone();
-    ensure_idle(&state)?;
-    let current = state
-        .current
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "还没有打开会话".to_owned())?;
-    let engine = state.current_open()?.engine.clone();
+    let conversation = conversation_named(&state, session_id.as_deref())?;
+    ensure_conversation_idle(Some(&conversation))?;
+    let engine = conversation.engine.clone();
     let seq = engine
         .history(None, 1)
         .turns
         .first()
         .map(|turn| turn.seq)
         .ok_or_else(|| "还没有可撤销的回合".to_owned())?;
+    let (state_dir, workspace, id) = (
+        conversation.state_dir.clone(),
+        conversation.workspace.clone(),
+        conversation.id.clone(),
+    );
     tauri::async_runtime::spawn_blocking(move || {
-        checkpoints::undo(&current.state_dir, &current.workspace, &current.id, seq)
+        checkpoints::undo(&state_dir, &workspace, &id, seq)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2400,14 +2473,10 @@ pub async fn undo_last_turn(state: State<'_, SharedState>) -> Result<(), String>
 pub async fn turn_changes(
     state: State<'_, SharedState>,
     seq: Option<u32>,
+    session_id: Option<String>,
 ) -> Result<Vec<checkpoints::FileChange>, String> {
     let state = state.inner().clone();
-    let current = state
-        .current
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    let (Some(current), Ok(conversation)) = (current, state.current_open()) else {
+    let Ok(conversation) = conversation_named(&state, session_id.as_deref()) else {
         return Ok(Vec::new());
     };
     let engine = conversation.engine.clone();
@@ -2415,8 +2484,13 @@ pub async fn turn_changes(
     else {
         return Ok(Vec::new());
     };
+    let (state_dir, workspace, id) = (
+        conversation.state_dir.clone(),
+        conversation.workspace.clone(),
+        conversation.id.clone(),
+    );
     let changes = tauri::async_runtime::spawn_blocking(move || {
-        checkpoints::changes(&current.state_dir, &current.workspace, &current.id, seq)
+        checkpoints::changes(&state_dir, &workspace, &id, seq)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -2429,32 +2503,18 @@ pub async fn load_turns(
     state: State<'_, SharedState>,
     before: Option<u32>,
     limit: Option<usize>,
+    session_id: Option<String>,
 ) -> Result<TurnPageWithChanges, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let engine = state.current_open()?.engine.clone();
-        let current = state
-            .current
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        let page = engine.history(before, limit.unwrap_or(30));
-        let turns = match current {
-            Some(current) => with_changes(
-                &current.state_dir,
-                &current.workspace,
-                &current.id,
-                page.turns,
-            ),
-            None => page
-                .turns
-                .into_iter()
-                .map(|turn| TurnWithChanges {
-                    turn,
-                    changes: Vec::new(),
-                })
-                .collect(),
-        };
+        let conversation = conversation_named(&state, session_id.as_deref())?;
+        let page = conversation.engine.history(before, limit.unwrap_or(30));
+        let turns = with_changes(
+            &conversation.state_dir,
+            &conversation.workspace,
+            &conversation.id,
+            page.turns,
+        );
         Ok(TurnPageWithChanges {
             turns,
             next_before: page.next_before,

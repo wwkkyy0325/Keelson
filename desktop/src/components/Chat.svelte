@@ -181,6 +181,9 @@
   let accountTimer: ReturnType<typeof setInterval> | null = null;
   let accountedSeq = -1;
   let accountedWorkspace = "";
+  /// The account's name carries its conversation: turn numbers restart at one
+  /// per conversation, so the file name without it is ambiguous (perf.rs).
+  let accountedSession = "";
 
   function stopAccounting(): void {
     if (accountTimer !== null) {
@@ -190,7 +193,7 @@
     if (accountedSeq >= 0) {
       const seq = accountedSeq;
       accountedSeq = -1;
-      void reportTurn(accountedWorkspace, seq, "end");
+      void reportTurn(accountedWorkspace, accountedSession, seq, "end");
     }
   }
 
@@ -205,14 +208,15 @@
       if (accountedSeq !== seq) {
         accountedSeq = seq;
         accountedWorkspace = workspace;
-        void reportTurn(workspace, seq, "start");
+        accountedSession = $session.sessionId;
+        void reportTurn(workspace, accountedSession, seq, "start");
       }
       if (accountTimer === null) {
         // The account of a turn in flight is written over itself, so a spike is
         // bracketed by the sample that follows it without growing a file per
         // tick.
         accountTimer = setInterval(() => {
-          void reportTurn(accountedWorkspace, seq, "during");
+          void reportTurn(accountedWorkspace, accountedSession, seq, "during");
         }, ACCOUNT_EVERY_MS);
       }
     });

@@ -26,14 +26,42 @@ pub fn dir(state_dir: &Path) -> PathBuf {
 
 /// Writes one account and drops the oldest beyond [`FILES_KEPT`].
 ///
-/// The name carries the phase, so the account of a turn in flight is written
-/// over as it progresses while the account of its end stays.
-pub fn write(dir: &Path, seq: u32, phase: &str, report: &str) -> std::io::Result<PathBuf> {
+/// The name carries the conversation, the turn and the phase: two conversations
+/// number their turns from one, so without the conversation the account of turn
+/// 4 in one project was written over by the turn 4 of whichever conversation ran
+/// last, and the account that survived could not be tied back to the turn that
+/// produced it. The phase stays in the name so the account of a turn in flight
+/// is written over itself while the account of its end stays.
+pub fn write(
+    dir: &Path,
+    session: &str,
+    seq: u32,
+    phase: &str,
+    report: &str,
+) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("turn-{seq:04}-{}.json", safe_phase(phase)));
+    let path = dir.join(format!(
+        "turn-{}-{seq:04}-{}.json",
+        safe_session(session),
+        safe_phase(phase)
+    ));
     std::fs::write(&path, report)?;
     prune(dir);
     Ok(path)
+}
+
+/// A conversation id is chosen by the host, and it still becomes part of a file
+/// name: letters, digits and dashes survive, everything else is dropped.
+fn safe_session(session: &str) -> String {
+    let cleaned: String = session
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(24)
+        .collect();
+    if cleaned.is_empty() {
+        return "session".to_owned();
+    }
+    cleaned
 }
 
 /// The phase becomes part of a file name, so it is reduced to letters and
@@ -96,10 +124,28 @@ mod tests {
     }
 
     #[test]
+    fn a_conversation_becomes_part_of_the_file_name() {
+        assert_eq!(safe_session("s-18e8b20ffa85b980"), "s-18e8b20ffa85b980");
+        assert_eq!(safe_session("../../etc/passwd"), "etcpasswd");
+        assert_eq!(safe_session(""), "session");
+    }
+
+    #[test]
+    fn two_conversations_do_not_write_over_each_other() {
+        // Both are on turn 4; the account of each has to survive.
+        let dir = scratch("sessions");
+        let first = write(&dir, "s-aaa", 4, "end", "{}").unwrap();
+        let second = write(&dir, "s-bbb", 4, "end", "{}").unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_mid_flight_account_is_written_over() {
         let dir = scratch("overwrite");
-        let first = write(&dir, 7, "during", r#"{"a":1}"#).unwrap();
-        let second = write(&dir, 7, "during", r#"{"a":2}"#).unwrap();
+        let first = write(&dir, "s-1", 7, "during", r#"{"a":1}"#).unwrap();
+        let second = write(&dir, "s-1", 7, "during", r#"{"a":2}"#).unwrap();
         assert_eq!(first, second);
         assert_eq!(std::fs::read_to_string(&first).unwrap(), r#"{"a":2}"#);
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
@@ -110,15 +156,15 @@ mod tests {
     fn only_the_newest_accounts_survive() {
         let dir = scratch("prune");
         for seq in 0..(FILES_KEPT as u32 + 5) {
-            write(&dir, seq, "end", "{}").unwrap();
+            write(&dir, "s-1", seq, "end", "{}").unwrap();
             // The file system's timestamp is coarse; a distinct mtime per file
             // is what the prune orders by.
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), FILES_KEPT);
-        assert!(!dir.join("turn-0000-end.json").exists());
+        assert!(!dir.join("turn-s-1-0000-end.json").exists());
         assert!(dir
-            .join(format!("turn-{:04}-end.json", FILES_KEPT as u32 + 4))
+            .join(format!("turn-s-1-{:04}-end.json", FILES_KEPT as u32 + 4))
             .exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

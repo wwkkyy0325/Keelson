@@ -25,6 +25,8 @@ describe("the window's account of a turn", () => {
 
   it("says nothing for a workspace that is not open", async () => {
     // No conversation, no file: the account must not invent a path.
-    await expect(reportTurn("", 3, "start")).resolves.toBeUndefined();
+    await expect(
+      reportTurn("", "s-1", 3, "start"),
+    ).resolves.toBeUndefined();
   });
 });

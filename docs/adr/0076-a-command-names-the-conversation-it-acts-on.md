@@ -83,7 +83,16 @@ blocked the wrong conversation.
 - `OpenConversation` now carries its `workspace` and `state_dir`. A command that
   names a conversation can do its bookkeeping without consulting the pointer,
   which may have moved on while the turn ran.
-- The remaining commands (`turn_changes`, `load_turns`, `background_tasks`,
-  `undo_last_turn`, `branch_session`) still read the pointer. That is now sound
-  because the pointer follows the window, and they are the next candidates if a
-  later bug shows the same shape.
+- Every command that acts on a conversation now names it: `send_message`,
+  `cancel_turn`, `session_status` first, then `turn_changes`, `load_turns`,
+  `background_tasks`, `stop_background`, `undo_last_turn` and `branch_session`.
+  The host resolves the name in one place (`conversation_named`): the named
+  conversation, or the pointer when nothing was named. `null` remains only for
+  the boot screen.
+- `ensure_idle` is gone. It asked whether *the pointer's* conversation was busy,
+  and every caller used the answer about a different conversation: a turn in one
+  project refused a new conversation in another, refused a branch of a quiet
+  one, refused archiving a third. The busy question is now asked of the
+  conversation the command acts on.
+- Only a conversation without a document and without work is rebuilt when
+  reopened, so the busy question no longer arises at open.

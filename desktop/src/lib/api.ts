@@ -107,8 +107,8 @@ export function reopenSession(
   return invoke("reopen_session", { workspace, sessionId });
 }
 
-export function branchSession(seq: number): Promise<SessionView> {
-  return invoke("branch_session", { seq });
+export function branchSession(seq: number, sessionId: string | null = shownSession()): Promise<SessionView> {
+  return invoke("branch_session", { seq, sessionId });
 }
 
 export function saveRig(name: string): Promise<void> {
@@ -178,12 +178,12 @@ export function cancelTurn(
 }
 
 export function undoLastTurn(): Promise<void> {
-  return invoke("undo_last_turn");
+  return invoke("undo_last_turn", { sessionId: shownSession() });
 }
 
 /// The files the latest turn changed; empty when there is nothing to undo.
 export function turnChanges(seq?: number | null): Promise<FileChange[]> {
-  return invoke("turn_changes", { seq: seq ?? null });
+  return invoke("turn_changes", { seq: seq ?? null, sessionId: shownSession() });
 }
 
 export function sessionStatus(): Promise<SessionStatus> {
@@ -210,20 +210,20 @@ export function recordPaths(): Promise<RecordPaths> {
 /// Running and finished-but-unreported background commands. Reading this
 /// never consumes a result; the engine hands those to the model itself.
 export function backgroundTasks(): Promise<BackgroundTaskView[]> {
-  return invoke("background_tasks");
+  return invoke("background_tasks", { sessionId: shownSession() });
 }
 
 /// Kills a running background command. Its exit still reaches the model at
 /// the next safe point.
 export function stopBackground(id: string): Promise<boolean> {
-  return invoke("stop_background", { id });
+  return invoke("stop_background", { id, sessionId: shownSession() });
 }
 
 export function loadTurns(
   before: number | null,
   limit = 30,
 ): Promise<TurnPage> {
-  return invoke("load_turns", { before, limit });
+  return invoke("load_turns", { before, limit, sessionId: shownSession() });
 }
 
 export function respondInteraction(

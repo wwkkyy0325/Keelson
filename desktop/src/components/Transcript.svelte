@@ -1,7 +1,7 @@
 <script lang="ts">
   import { flushSync, onDestroy, tick, untrack } from "svelte";
   import { loadTurns, stopBackground } from "../lib/api";
-  import { flushDelay } from "../lib/live";
+  import { bottomKey, flushDelay } from "../lib/live";
   import {
     DENSITY_KEY,
     DENSITY_SAMPLES,
@@ -240,20 +240,25 @@
     });
   }
 
-  /// What can move the bottom of the transcript: a block that was just
-  /// rendered, a new tool row, a new turn, a new background row, or an error.
-  /// Reading the store here would read `scrollHeight` — a layout over every
-  /// rendered turn — once per delta instead of once per rendered change.
-  let bottomKey = $derived(
-    `${answerSource.length}:${thinkingShown.length}:${
-      $session.turns.length
-    }:${$session.running?.tools.length ?? 0}:${$session.background.length}:${
-      error ?? ""
-    }`,
+  /// What can move the bottom of the transcript, as one figure the effect can
+  /// compare (lib/live.ts). The running turn is in it: the live card is
+  /// appended the moment a turn starts, and a send that landed below the fold
+  /// used to stay there because nothing the follow watched had changed.
+  let bottom = $derived(
+    bottomKey({
+      answerChars: answerSource.length,
+      reasoningChars: thinkingShown.length,
+      turns: $session.turns.length,
+      runningSeq: $session.running?.seq ?? null,
+      runningInputChars: $session.running?.input.length ?? 0,
+      tools: $session.running?.tools.length ?? 0,
+      background: $session.background.length,
+      error: error ?? "",
+    }),
   );
 
   $effect(() => {
-    void bottomKey;
+    void bottom;
     if (suppressAutoScroll || !stick || !scroller) return;
     follow();
   });

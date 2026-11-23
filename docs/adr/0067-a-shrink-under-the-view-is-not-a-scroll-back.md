@@ -44,3 +44,24 @@ auto-scroll scheduled in the same tick cannot pull the view back.
   trackpad flick that moves up with the height unchanged releases the follow,
   and the transcript shows the "load older" button rather than pulling itself
   away.
+
+## Amendment: what moves the bottom is named, not guessed
+
+The follow had a blind spot precisely where a message is sent. The figure that
+decided whether to scroll counted rendered blocks, tool rows, background rows,
+persisted turns and an error — every one of them empty at the instant a turn
+begins. The live card appears immediately, carrying the user's own text, and
+none of those numbers moved with it: the turn count only rises when the turn is
+persisted. So a send from the end of a thread landed below the fold, and the
+thread looked as though the send had gone nowhere until the finished turn
+raised the count minutes later.
+
+The set of things that move the bottom is now a named, tested value
+(`BottomParts` in `lib/live.ts`), and it includes the running turn: its
+sequence, which a fresh turn always changes, and the length of its input, so a
+card rebuilt from the engine's view at a different length is not mistaken for
+the same one.
+
+The parts are lengths and ids, not elements, for the reason 0068 gives: reading
+`scrollHeight` per delta would lay out every rendered turn once per chunk. The
+caller passes what it already has.

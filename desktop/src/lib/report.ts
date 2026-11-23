@@ -63,6 +63,7 @@ export function accountNow(seq: number, phase: string): Account {
 /// account is evidence, not a step of the turn.
 export async function reportTurn(
   workspace: string,
+  sessionId: string,
   seq: number,
   phase: string,
 ): Promise<void> {
@@ -75,7 +76,7 @@ export async function reportTurn(
     return;
   }
   try {
-    await invoke("perf_report", { workspace, seq, phase, report });
+    await invoke("perf_report", { workspace, sessionId, seq, phase, report });
   } catch {
     // The host may be shutting down; the next account is written anyway.
   }

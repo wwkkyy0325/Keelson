@@ -66,6 +66,28 @@ pub struct GitState {
     pub dirty: usize,
 }
 
+/// How a document stands. A turn writes its document twice under one
+/// identity: `Running` the moment it starts, then `Done` or `Failed` when it
+/// ends, in the same file (ADR 0064 and its amendment). A `Running` document
+/// that nobody rewrote is a turn the app did not survive — the host does not
+/// guess what happened to it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Status {
+    Running,
+    Done,
+    Failed,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Status::Running => "running",
+            Status::Done => "done",
+            Status::Failed => "failed",
+        }
+    }
+}
+
 /// Everything one document needs. Borrowed: the caller already owns these.
 pub struct Entry<'a> {
     pub at_ms: u64,
@@ -75,7 +97,7 @@ pub struct Entry<'a> {
     pub rig: &'a str,
     pub model: &'a str,
     pub provider: &'a str,
-    pub ok: bool,
+    pub status: Status,
     pub error: Option<&'a str>,
     pub model_calls: Option<u64>,
     pub tools: Option<usize>,
@@ -331,7 +353,7 @@ pub fn render(entry: &Entry<'_>, notes: Option<&str>) -> String {
         ("session", quote(entry.session)),
         ("at", quote(&iso(entry.at_ms))),
         ("at_ms", entry.at_ms.to_string()),
-        ("status", quote(if entry.ok { "done" } else { "failed" })),
+        ("status", quote(entry.status.as_str())),
         ("rig", quote(entry.rig)),
         ("model", quote(entry.model)),
         ("provider", quote(entry.provider)),
@@ -360,7 +382,11 @@ pub fn render(entry: &Entry<'_>, notes: Option<&str>) -> String {
     out.push('\n');
 
     out.push_str("\n## Changes\n\n");
-    if entry.changes.is_empty() {
+    if entry.status == Status::Running {
+        // The turn has not touched anything yet, and the empty list would be
+        // read as "this turn changed nothing".
+        out.push_str("回合还在跑，变更在结束时记录。\n");
+    } else if entry.changes.is_empty() {
         out.push_str("这轮没有留下文件变更。\n");
     } else {
         out.push_str("| 文件 | 状态 | 增 | 删 |\n|---|---|---|---|\n");
@@ -379,7 +405,7 @@ pub fn render(entry: &Entry<'_>, notes: Option<&str>) -> String {
     }
 
     out.push_str("\n## Git\n\n");
-    out.push_str(&git_line(entry.git));
+    out.push_str(&git_line(entry.git, entry.status == Status::Running));
     out.push('\n');
 
     out.push_str("\n## Next\n\n");
@@ -491,12 +517,11 @@ fn number(value: Option<u64>) -> String {
 
 fn outcome(entry: &Entry<'_>) -> String {
     let mut parts = Vec::new();
-    if let Some(error) = entry.error {
-        parts.push(format!("失败 — {error}"));
-    } else if entry.ok {
-        parts.push("完成".to_owned());
-    } else {
-        parts.push("未完成".to_owned());
+    match (entry.status, entry.error) {
+        (Status::Running, _) => parts.push("进行中".to_owned()),
+        (Status::Done, _) => parts.push("完成".to_owned()),
+        (Status::Failed, Some(error)) => parts.push(format!("失败 — {error}")),
+        (Status::Failed, None) => parts.push("未完成".to_owned()),
     }
     if let Some(calls) = entry.model_calls {
         parts.push(format!("{calls} 次模型调用"));
@@ -510,7 +535,7 @@ fn outcome(entry: &Entry<'_>) -> String {
     parts.join(" · ")
 }
 
-fn git_line(git: &GitState) -> String {
+fn git_line(git: &GitState, running: bool) -> String {
     if !git.repo {
         return "工作区不是 git 仓库。".to_owned();
     }
@@ -523,6 +548,10 @@ fn git_line(git: &GitState) -> String {
     } else {
         format!(" · {} 个文件未提交。", git.dirty)
     });
+    if running {
+        // Measured before the turn touched anything, so it says so.
+        return format!("回合开始时：{line}");
+    }
     line
 }
 
@@ -638,7 +667,7 @@ mod tests {
             rig: "ui",
             model: "doubao-1",
             provider: "volcengine",
-            ok: true,
+            status: Status::Done,
             error: None,
             model_calls: Some(4),
             tools: Some(9),
@@ -691,7 +720,7 @@ mod tests {
     fn a_failed_turn_is_marked_failed_and_keeps_its_error() {
         let git = GitState::default();
         let mut item = entry(&[], &git);
-        item.ok = false;
+        item.status = Status::Failed;
         item.error = Some("provider returned 400");
         let text = render(&item, None);
 
@@ -821,6 +850,44 @@ mod tests {
         assert_eq!(header(&text, "missing"), None);
         assert_eq!(title(&text), "修一下后台任务的停止按钮");
         assert_eq!(next_section(&text), "接下来跑 clippy");
+    }
+
+    #[test]
+    fn a_turn_has_its_document_from_the_first_moment() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = git();
+        // What `send_message` writes when the turn starts: no result yet.
+        let mut started = entry(&[], &git);
+        started.status = Status::Running;
+        started.model_calls = None;
+        started.tools = None;
+        started.duration_ms = None;
+        let path = write_task(dir.path(), &started).unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\nstatus: \"running\"\n"));
+        assert!(text.contains("\nmodel_calls: null\n"));
+        assert!(text.contains("进行中"));
+        assert!(text.contains("回合还在跑，变更在结束时记录。"));
+        assert!(text.contains("回合开始时：`main` @ `a1b2c3d`"));
+        let index = fs::read_to_string(dir.path().join(INDEX_FILE)).unwrap();
+        assert!(index.contains("| running |"));
+
+        // The end of the same turn rewrites that one file, not a second one.
+        let changed = vec![change()];
+        let finished = entry(&changed, &git);
+        let path_again = write_task(dir.path(), &finished).unwrap();
+        assert_eq!(path, path_again);
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\nstatus: \"done\"\n"));
+        assert!(!text.contains("running"));
+        let files: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|item| item.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".md") && name != INDEX_FILE)
+            .collect();
+        assert_eq!(files.len(), 1);
     }
 
     #[test]

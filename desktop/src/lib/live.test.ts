@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   LIVE_FLUSH_MAX_MS,
   LIVE_FLUSH_MIN_MS,
+  bottomKey,
   flushDelay,
+  type BottomParts,
 } from "./live";
 
 describe("streaming flush window", () => {
@@ -34,5 +36,54 @@ describe("streaming flush window", () => {
     // Past the ceiling the duty does rise; that is the trade the ceiling
     // makes, so the test pins it rather than hiding it.
     expect(flushDelay(300_000)).toBe(LIVE_FLUSH_MAX_MS);
+  });
+});
+
+describe("the transcript's bottom edge", () => {
+  const idle: BottomParts = {
+    answerChars: 0,
+    reasoningChars: 0,
+    turns: 12,
+    runningSeq: null,
+    runningInputChars: 0,
+    tools: 0,
+    background: 0,
+    error: "",
+  };
+
+  it("moves when a turn starts, though nothing else has changed yet", () => {
+    // The live card is appended with the user's text in it before the first
+    // delta. A send whose turn starts below the fold has to be followed, so the
+    // start alone must move the figure.
+    const started = { ...idle, runningSeq: 13, runningInputChars: 9 };
+    expect(bottomKey(started)).not.toBe(bottomKey(idle));
+  });
+
+  it("distinguishes a rebuilt card at another length", () => {
+    const short = { ...idle, runningSeq: 13, runningInputChars: 9 };
+    const long = { ...idle, runningSeq: 13, runningInputChars: 40 };
+    expect(bottomKey(long)).not.toBe(bottomKey(short));
+  });
+
+  it("moves for each thing that grows under the reader", () => {
+    const base = bottomKey(idle);
+    const moved = [
+      { ...idle, answerChars: 1 },
+      { ...idle, reasoningChars: 1 },
+      { ...idle, turns: 13 },
+      { ...idle, runningSeq: 13 },
+      { ...idle, tools: 1 },
+      { ...idle, background: 1 },
+      { ...idle, error: "boom" },
+    ].map(bottomKey);
+    for (const key of moved) expect(key).not.toBe(base);
+    // No two of them collide, so one change cannot mask another.
+    expect(new Set(moved).size).toBe(moved.length);
+  });
+
+  it("holds still while the store dispatches something else", () => {
+    // A redraw that changes nothing on screen must not queue a scroll: the
+    // figure is the effect's only dependency and it is unchanged.
+    expect(bottomKey({ ...idle })).toBe(bottomKey({ ...idle }));
   });
 });
