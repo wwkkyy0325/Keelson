@@ -39,9 +39,14 @@ be undone and a workspace cannot.
 
 ## Consequences
 
-- The first start after this lands removes 2 179 files and about 79.7 MB on this
-  machine. That is once, and it is not recoverable: the removed versions are
+- Applied to this machine's trash as it stood, the policy marks 2 179 files and
+  about 79.7 MB for removal. That removal is not recoverable: the versions are
   older than the five newest of their path.
+- It lands one project at a time. The store is per project, so the process that
+  prunes is the one that opened a project. The first start after this removed
+  380 files and 8 MB from `keelson`'s trash (19 MB → 11 MB, 1 146 → 766
+  versions), and the other ten projects keep 7 778 files and 124 MB until each
+  is opened once.
 - A long session does not re-prune. A process left open for a week keeps growing
   its trash; the next start bounds it again. That is the trade for not scanning
   on a timer.
