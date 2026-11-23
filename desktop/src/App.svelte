@@ -9,7 +9,7 @@
     reopenSession,
     setupState,
   } from "./lib/api";
-  import { dispatch, session } from "./lib/session-store";
+  import { openConversation, session } from "./lib/session-store";
   import { locale, t } from "./lib/i18n";
   import type { SetupState } from "./lib/protocol";
   import Chat from "./components/Chat.svelte";
@@ -122,7 +122,7 @@
         15000,
         $t("app.openTimeout"),
       );
-      dispatch({ type: "session-opened", view });
+      openConversation(view);
       phase = "app";
       return null;
     } catch (error) {
@@ -200,7 +200,7 @@
         15000,
         $t("app.openTimeout"),
       );
-      dispatch({ type: "session-opened", view });
+      openConversation(view);
       phase = "app";
       return null;
     } catch (error) {

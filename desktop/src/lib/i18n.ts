@@ -210,6 +210,7 @@ const zh = {
   "sidebar.unarchive": "取消归档",
   "sidebar.archived": "已归档",
   "sidebar.archivedEmpty": "还没有归档的对话",
+  "sidebar.running": "正在运行",
   "dialog.deleteTitle": "永久删除对话?",
   "dialog.deleteMessage": "「{title}」将被永久删除，无法恢复。",
   "dialog.confirm": "永久删除",
@@ -432,6 +433,7 @@ const en: Record<Key, string> = {
   "sidebar.unarchive": "Unarchive",
   "sidebar.archived": "Archived",
   "sidebar.archivedEmpty": "No archived conversations",
+  "sidebar.running": "Running",
   "dialog.deleteTitle": "Delete conversation permanently?",
   "dialog.deleteMessage":
     "“{title}” will be permanently deleted. This cannot be undone.",

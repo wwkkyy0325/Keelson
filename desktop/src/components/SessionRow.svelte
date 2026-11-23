@@ -7,7 +7,7 @@
     item,
     active,
     archived,
-    running,
+    working,
     onSelect,
     onRename,
     onArchive,
@@ -16,7 +16,7 @@
     item: SessionMeta;
     active: boolean;
     archived: boolean;
-    running: boolean;
+    working: boolean;
     onSelect: (id: string) => void;
     onRename: (id: string, title: string) => void;
     onArchive: (id: string, archived: boolean) => void;
@@ -27,10 +27,9 @@
   let draft = $state("");
   let input = $state<HTMLInputElement | null>(null);
 
-  /// Only the conversation on screen can be running, and only its own actions
-  /// have to wait for it. Another conversation's row stays usable: a turn in
-  /// one conversation must not lock the sidebar.
-  let busy = $derived(active && running);
+  /// A conversation with a turn or a background command in flight: its own
+  /// actions wait for it and its row says so. Every other row stays usable — a
+  /// turn in one conversation must not lock the sidebar.
 
   function startRename(): void {
     draft = item.title;
@@ -63,12 +62,12 @@
   }
 
   function toggleArchive(): void {
-    if (busy) return;
+    if (working) return;
     onArchive(item.id, !archived);
   }
 
   function requestDelete(): void {
-    if (busy) return;
+    if (working) return;
     onRequestDelete(item);
   }
 
@@ -104,6 +103,13 @@
       <span class="session-title">
         {item.title || $t("sidebar.untitled")}
       </span>
+      {#if working}
+        <span
+          class="session-dot"
+          title={$t("sidebar.running")}
+          aria-label={$t("sidebar.running")}
+        ></span>
+      {/if}
       <span class="session-time">{when(item.updatedAt)}</span>
     </button>
     <div class="session-actions">
@@ -130,7 +136,7 @@
       <button
         class="session-action"
         onclick={toggleArchive}
-        disabled={busy}
+        disabled={working}
         title={archived
           ? $t("sidebar.unarchive")
           : `${$t("sidebar.archive")} · ${$t("sidebar.archiveHint")}`}
@@ -172,7 +178,7 @@
         <button
           class="session-action delete"
           onclick={requestDelete}
-          disabled={busy}
+          disabled={working}
           title={$t("sidebar.delete")}
           aria-label={$t("sidebar.delete")}
         >

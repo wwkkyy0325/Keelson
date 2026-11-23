@@ -10,7 +10,7 @@
     projects,
     sessions,
     sessionId,
-    running,
+    busyIds,
     onNewChat,
     onSelect,
     onRename,
@@ -22,7 +22,7 @@
     projects: ProjectEntry[];
     sessions: SessionMeta[];
     sessionId: string;
-    running: boolean;
+    busyIds: ReadonlySet<string>;
     onNewChat: () => void;
     onSelect: (id: string) => void;
     onRename: (id: string, title: string) => void;
@@ -198,7 +198,7 @@
         {item}
         active={item.id === sessionId}
         archived={item.archived}
-        {running}
+        working={busyIds.has(item.id)}
         {onSelect}
         {onRename}
         {onArchive}

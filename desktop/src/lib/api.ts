@@ -28,7 +28,8 @@ import type {
   TurnStarted,
   TurnVerifying,
 } from "./protocol";
-import { dispatch, session } from "./session-store";
+import type { Action } from "./session";
+import { dispatch, dispatchTo, focus } from "./session-store";
 import { perf } from "./perf";
 
 export function setupState(): Promise<SetupState> {
@@ -153,9 +154,11 @@ export function sendMessage(input: string): Promise<void> {
   return invoke("send_message", { input, sessionId: shownSession() });
 }
 
-/// The conversation the window is showing, or null before one is open.
+/// The conversation the window is showing, or null before one is open. The
+/// focus holds the id the window was opened with, so this answer cannot lag the
+/// state it is read from.
 function shownSession(): string | null {
-  return get(session).sessionId || null;
+  return get(focus) || null;
 }
 
 /// Copies the picked files into this conversation's attachment folder and
@@ -248,79 +251,88 @@ export function pendingInteraction(): Promise<Interaction | null> {
 /// session so no early stream is missed.
 export async function listenToEvents(): Promise<UnlistenFn[]> {
   const unlisten: UnlistenFn[] = [];
-  /// Live events name the conversation they belong to. Several conversations can
-  /// have a turn running at once, and neither may paint into the other, so an
-  /// event tagged with a different id is dropped before it reaches the reducer.
-  const owned = (payload: EventTag): boolean =>
-    payload.sessionId === undefined || payload.sessionId === get(session).sessionId;
+  /// Live events name the conversation they belong to, and that name decides
+  /// where the action lands — not the conversation on screen. A turn keeps
+  /// running in the conversation the user switched away from; its transcript has
+  /// to be there, whole, when they switch back.
   const on = async <T extends EventTag>(
     name: string,
-    handle: (payload: T) => void,
+    action: (payload: T) => Action,
   ): Promise<void> => {
     unlisten.push(
       await listen<T>(name, (event) => {
-        if (!owned(event.payload)) return;
         perf.count(name);
-        handle(event.payload);
+        const id = event.payload.sessionId;
+        if (id === undefined || id === "") dispatch(action(event.payload));
+        else dispatchTo(id, action(event.payload));
       }),
     );
   };
-  await on<TurnStarted>("keelson:turn-started", (payload) =>
-    dispatch({ type: "turn-started", ...payload }),
+  await on<TurnStarted>("keelson:turn-started", (payload) => ({
+    type: "turn-started",
+    ...payload,
+  }));
+  await on<TextDelta>("keelson:text-delta", (payload) => ({
+    type: "text-delta",
+    ...payload,
+  }));
+  await on<ThinkingDelta>("keelson:thinking-delta", (payload) => ({
+    type: "thinking-delta",
+    ...payload,
+  }));
+  await on<ModelFinished>("keelson:model-finished", (payload) => ({
+    type: "model-finished",
+    ...payload,
+  }));
+  await on<ToolStartedEvent>("keelson:tool-started", (payload) => ({
+    type: "tool-started",
+    ...payload,
+  }));
+  await on<ToolFinishedEvent>("keelson:tool-finished", (payload) => ({
+    type: "tool-finished",
+    ...payload,
+  }));
+  await on<BackgroundStarted>("keelson:background-started", (payload) => ({
+    type: "background-started",
+    id: payload.id,
+    program: payload.program,
+  }));
+  await on<BackgroundFinished>("keelson:background-finished", (payload) => ({
+    type: "background-finished",
+    id: payload.id,
+    program: payload.program,
+    exitCode: payload.exitCode,
+    durationMs: payload.durationMs,
+    outputPath: payload.outputPath,
+    stopped: payload.stopped,
+  }));
+  await on<TurnVerifying>("keelson:turn-verifying", (payload) => ({
+    type: "turn-verifying",
+    ...payload,
+  }));
+  await on<TurnChanges>("keelson:turn-changes", (payload) => ({
+    type: "turn-changes",
+    seq: payload.seq,
+  }));
+  await on<TurnFinished>("keelson:turn-finished", (payload) => ({
+    type: "turn-finished",
+    turn: payload.turn,
+  }));
+  await on<TurnFailed>("keelson:turn-failed", (payload) => ({
+    type: "turn-failed",
+    ...payload,
+  }));
+  await on<Interaction & EventTag>(
+    "keelson:interaction-requested",
+    (payload) => ({ type: "interaction-requested", interaction: payload }),
   );
-  await on<TextDelta>("keelson:text-delta", (payload) =>
-    dispatch({ type: "text-delta", ...payload }),
+  await on<{ id: string } & EventTag>(
+    "keelson:interaction-resolved",
+    (payload) => ({ type: "interaction-resolved", id: payload.id }),
   );
-  await on<ThinkingDelta>("keelson:thinking-delta", (payload) =>
-    dispatch({ type: "thinking-delta", ...payload }),
-  );
-  await on<ModelFinished>("keelson:model-finished", (payload) =>
-    dispatch({ type: "model-finished", ...payload }),
-  );
-  await on<ToolStartedEvent>("keelson:tool-started", (payload) =>
-    dispatch({ type: "tool-started", ...payload }),
-  );
-  await on<ToolFinishedEvent>("keelson:tool-finished", (payload) =>
-    dispatch({ type: "tool-finished", ...payload }),
-  );
-  await on<BackgroundStarted>("keelson:background-started", (payload) =>
-    dispatch({
-      type: "background-started",
-      id: payload.id,
-      program: payload.program,
-    }),
-  );
-  await on<BackgroundFinished>("keelson:background-finished", (payload) =>
-    dispatch({
-      type: "background-finished",
-      id: payload.id,
-      program: payload.program,
-      exitCode: payload.exitCode,
-      durationMs: payload.durationMs,
-      outputPath: payload.outputPath,
-      stopped: payload.stopped,
-    }),
-  );
-  await on<TurnVerifying>("keelson:turn-verifying", (payload) =>
-    dispatch({ type: "turn-verifying", ...payload }),
-  );
-  await on<TurnChanges>("keelson:turn-changes", (payload) =>
-    dispatch({ type: "turn-changes", seq: payload.seq }),
-  );
-  await on<TurnFinished>("keelson:turn-finished", (payload) =>
-    dispatch({ type: "turn-finished", turn: payload.turn }),
-  );
-  await on<TurnFailed>("keelson:turn-failed", (payload) =>
-    dispatch({ type: "turn-failed", ...payload }),
-  );
-  await on<Interaction & EventTag>("keelson:interaction-requested", (payload) =>
-    dispatch({ type: "interaction-requested", interaction: payload }),
-  );
-  await on<{ id: string } & EventTag>("keelson:interaction-resolved", (payload) =>
-    dispatch({ type: "interaction-resolved", id: payload.id }),
-  );
-  await on<SessionUpdated & EventTag>("keelson:session-updated", (payload) =>
-    dispatch({ type: "session-updated", meta: payload.meta }),
-  );
+  await on<SessionUpdated & EventTag>("keelson:session-updated", (payload) => ({
+    type: "session-updated",
+    meta: payload.meta,
+  }));
   return unlisten;
 }

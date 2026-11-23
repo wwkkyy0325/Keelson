@@ -24,7 +24,13 @@
     turnChanges,
     undoLastTurn,
   } from "../lib/api";
-  import { dispatch, session } from "../lib/session-store";
+  import {
+    busy,
+    dispatch,
+    forget,
+    openConversation,
+    session,
+  } from "../lib/session-store";
   import { rigTitle, t } from "../lib/i18n";
   import { baseName } from "../lib/paths";
   import { perf } from "../lib/perf";
@@ -344,7 +350,7 @@
       const sessionId = $session.sessionId;
       if (sessionId) {
         const view = await reopenSession($session.workspace || null, sessionId);
-        dispatch({ type: "session-opened", view });
+        openConversation(view);
       }
       await onPresetsChanged();
     } catch (error) {
@@ -386,7 +392,7 @@
         $session.workspace || null,
         $session.sessionId,
       );
-      dispatch({ type: "session-opened", view });
+      openConversation(view);
     } catch (error) {
       uiError = errText(error);
     }
@@ -417,7 +423,7 @@
     uiError = null;
     try {
       const view = await openSession(path, null);
-      dispatch({ type: "session-opened", view });
+      openConversation(view);
     } catch (error) {
       uiError = errText(error);
     }
@@ -428,7 +434,7 @@
     prefillDraft = "";
     try {
       const view = await newSession($session.workspace);
-      dispatch({ type: "session-opened", view });
+      openConversation(view);
     } catch (error) {
       uiError = errText(error);
     }
@@ -443,7 +449,7 @@
     prefillDraft = "";
     try {
       const view = await openSession($session.workspace, id);
-      dispatch({ type: "session-opened", view });
+      openConversation(view);
     } catch (error) {
       uiError = errText(error);
     }
@@ -456,7 +462,7 @@
     try {
       const view = await branchSession(turn.seq);
       prefillDraft = turn.input;
-      dispatch({ type: "session-opened", view });
+      openConversation(view);
       await renameSession(view.workspace, view.sessionId, name);
       const sessions = await listSessions(view.workspace);
       dispatch({ type: "sessions-loaded", sessions });
@@ -466,15 +472,18 @@
   }
 
   async function removeConversation(id: string): Promise<void> {
-    if (id === $session.sessionId && $session.running) return;
+    if ($busy.has(id)) return;
     uiError = null;
     const wasCurrent = id === $session.sessionId;
     try {
       if (wasCurrent) {
         const view = await newSession($session.workspace);
-        dispatch({ type: "session-opened", view });
+        openConversation(view);
       }
       await deleteSession($session.workspace, id);
+      // The conversation is gone from the project; its state goes with it
+      // instead of lingering as a stale entry the rail no longer lists.
+      forget(id);
       const sessions = await listSessions($session.workspace);
       dispatch({ type: "sessions-loaded", sessions });
     } catch (error) {
@@ -497,7 +506,7 @@
     id: string,
     archived: boolean,
   ): Promise<void> {
-    if (id === $session.sessionId && $session.running) return;
+    if ($busy.has(id)) return;
     uiError = null;
     const wasCurrent = id === $session.sessionId;
     try {
@@ -506,7 +515,7 @@
       dispatch({ type: "sessions-loaded", sessions });
       if (wasCurrent && archived) {
         const view = await openSession($session.workspace, null);
-        dispatch({ type: "session-opened", view });
+        openConversation(view);
       }
     } catch (error) {
       uiError = errText(error);
@@ -572,7 +581,7 @@
     projects={$session.projects}
     sessions={$session.sessions}
     sessionId={$session.sessionId}
-    running={$session.running !== null}
+    busyIds={$busy}
     onNewChat={newConversation}
     onSelect={selectConversation}
     onRename={renameConversation}
