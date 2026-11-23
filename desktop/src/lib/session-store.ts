@@ -122,12 +122,7 @@ function mark(id: string, working: boolean): void {
 /// undo, a rename — use this; backend events name their conversation and go
 /// through `dispatchTo`.
 export function dispatch(action: Action): void {
-  const id = get(focus);
-  if (!PROJECT_WIDE.has(action.type)) {
-    write(id, action);
-    return;
-  }
-  for (const key of new Set([...entries.keys(), id])) write(key, action);
+  route(get(focus), action);
 }
 
 /// Writes to one named conversation. Backend events arrive here: the id on the
@@ -139,7 +134,29 @@ export function dispatch(action: Action): void {
 /// the open answers them.
 export function dispatchTo(sessionId: string, action: Action): void {
   if (!entries.has(sessionId)) return;
-  write(sessionId, action);
+  route(sessionId, action);
+}
+
+/// Lands one action where it belongs.
+///
+/// A transcript action belongs to the conversation it names and to no other. A
+/// conversation list belongs to the project, so it goes to every conversation
+/// held from that project — and to no others: a window with two projects open
+/// holds two lists, and writing one into the other would put one project's
+/// conversations under the other's rail.
+function route(source: string, action: Action): void {
+  if (!PROJECT_WIDE.has(action.type)) {
+    write(source, action);
+    return;
+  }
+  const held = entries.get(source);
+  const home = held === undefined ? null : get(held.store).workspace;
+  for (const [key, entry] of [...entries]) {
+    if (home !== null && key !== source && get(entry.store).workspace !== home) {
+      continue;
+    }
+    write(key, action);
+  }
 }
 
 /// Opens a conversation and draws it. The view is the whole of what the backend

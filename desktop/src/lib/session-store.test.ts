@@ -121,6 +121,34 @@ describe("a window that holds several conversations", () => {
     focus.set("b");
     expect(get(session).sessions.map((item) => item.id)).toEqual(["b", "a"]);
   });
+
+  it("keeps one project's conversation list out of another project", () => {
+    openConversation(view("one", { workspace: "/one" }));
+    openConversation(view("two", { workspace: "/two" }));
+    focus.set("one");
+
+    // A refresh of the project on screen rewrites the list held by the
+    // conversations of that project, and leaves the other project's copy
+    // alone: one project's conversations must not appear under the other.
+    dispatch({ type: "sessions-loaded", sessions: [meta("one")] });
+    focus.set("one");
+    expect(get(session).sessions.map((item) => item.id)).toEqual(["one"]);
+    focus.set("two");
+    expect(get(session).sessions).toEqual([]);
+  });
+
+  it("hears a project-wide event sent to one conversation in every one of them", () => {
+    openConversation(view("a"));
+    openConversation(view("b"));
+    focus.set("a");
+
+    // The backend names the conversation the event is about; the others in the
+    // same project hold the same list, so they hear it too.
+    dispatchTo("b", { type: "session-updated", meta: meta("fresh") });
+    expect(get(session).sessions.map((item) => item.id)).toEqual(["fresh"]);
+    focus.set("b");
+    expect(get(session).sessions.map((item) => item.id)).toEqual(["fresh"]);
+  });
 });
 
 describe("the state the window holds is bounded", () => {

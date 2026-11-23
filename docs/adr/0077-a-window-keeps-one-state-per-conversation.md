@@ -48,10 +48,14 @@ State is keyed by the conversation id the backend already puts on every event.
    throws away a stream the user is watching. Nothing watches for a conversation
    that was forgotten and nothing puts it back — forgetting costs one open, and
    only when it is opened again.
-6. **Project-wide answers go to every copy.** `sessions-loaded` and
-   `session-updated` rewrite the conversation list, and each entry carries its
-   own copy. Two copies that disagreed would show a rename in one conversation
-   and the old title in another, so these broadcast instead.
+6. **Project-wide answers go to every copy the project holds.** `sessions-loaded`
+   and `session-updated` rewrite the conversation list, and each entry carries
+   its own copy. Two copies that disagreed would show a rename in one
+   conversation and the old title in another, so these broadcast — to the
+   conversations of the project the answer came from, and to no others. A list
+   is the project's, not the window's: with two projects open, writing one
+   project's list into the other's entries would put its conversations under the
+   wrong rail.
 7. **The rail marks work, and that is all it does.** A conversation with a turn
    running gets a dot in the sidebar, and its own archive/delete controls wait
    for it; every other row stays usable. The mark is derived from each state on
@@ -84,3 +88,5 @@ when someone asks for it, and a large enough thing to leave out now.
   engine, so the card is rebuilt rather than lost.
 - `closeAll()` exists for recovery: the window forgets every conversation
   without asking the backend to drop an engine.
+- A conversation list is scoped to its project. Two projects open at once keep
+  two lists, and a refresh of one leaves the other's rail alone.
