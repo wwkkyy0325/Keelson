@@ -17,7 +17,7 @@ visible = ["read_file", "write_file", "edit_file", "multi_edit", "list_trash", "
 mode = "none"
 # `render_film` hands frames to ffmpeg, which can encode for minutes without a
 # progress line. The window is inactivity, so it only bounds silence.
-command_timeout_ms = 300000
+idle_window_ms = 300000
 
 [persona]
 system = "prompts/figure.md"

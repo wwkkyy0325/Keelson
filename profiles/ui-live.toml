@@ -24,7 +24,7 @@ visible = ["read_file", "write_file", "edit_file", "multi_edit", "apply_edits", 
 mode = "none"
 # A bundler prints a line per module, so a build keeps the window alive; a
 # browser that is settling a layout goes quiet for a while.
-command_timeout_ms = 120000
+idle_window_ms = 120000
 
 [persona]
 system = "prompts/ui.md"

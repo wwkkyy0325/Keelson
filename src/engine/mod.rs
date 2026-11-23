@@ -1745,7 +1745,7 @@ fn tools(
     registry.register(Arc::new(git::GitDiffTool::new()))?;
     registry.register(Arc::new(
         ShellTool::coding_defaults()
-            .with_timeout(config.limits().tool_timeout)
+            .with_idle_window(config.limits().call_deadline)
             .with_background(background),
     ))?;
     registry.register(Arc::new(

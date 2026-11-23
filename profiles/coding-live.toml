@@ -18,7 +18,7 @@ mode = "none"
 # A release link with LTO and a single slow test both run for minutes without
 # printing a line. The window is inactivity, not a deadline, so this only
 # bounds how long a silent command is given.
-command_timeout_ms = 300000
+idle_window_ms = 300000
 
 [persona]
 system = "prompts/coding.md"

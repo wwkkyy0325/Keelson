@@ -253,7 +253,7 @@ fn a_live_profile_inherits_the_endpoint_and_keeps_its_own_choices() {
             "{name} chose its own sampling"
         );
         assert_eq!(
-            config.verification_timeout,
+            config.verification_idle_window,
             std::time::Duration::from_millis(window),
             "{name} should have the window it declares or the default"
         );

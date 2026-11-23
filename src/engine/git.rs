@@ -143,7 +143,7 @@ impl Tool for GitDiffTool {
                 return ToolResult::failure(
                     ctx.call_id,
                     "git_diff",
-                    ToolError::timeout(GIT_TIMEOUT),
+                    ToolError::deadline(GIT_TIMEOUT),
                 )
             }
         };

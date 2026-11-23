@@ -24,8 +24,12 @@ pub fn run(discovery: &Discovery) -> u8 {
     for rig in &discovery.rigs {
         match keel_policy::load_profile(&rig.profile) {
             Ok(config) => println!(
-                "  {:<12}  profile {} ({:?})",
-                rig.name, config.profile_name, config.permission_level
+                "  {:<12}  profile {} ({:?})  call {}  check idle {}",
+                rig.name,
+                config.profile_name,
+                config.permission_level,
+                clock(config.limits().call_deadline),
+                clock(config.verification_idle_window),
             ),
             Err(error) => {
                 healthy = false;
@@ -54,5 +58,15 @@ pub fn run(discovery: &Discovery) -> u8 {
         0
     } else {
         1
+    }
+}
+
+/// A duration as the rig file spells it: whole seconds where it divides, so
+/// `300000` reads as `300 s` and does not invite a mental division.
+fn clock(value: std::time::Duration) -> String {
+    if value.subsec_millis() == 0 && value.as_secs() > 0 {
+        format!("{} s", value.as_secs())
+    } else {
+        format!("{} ms", value.as_millis())
     }
 }

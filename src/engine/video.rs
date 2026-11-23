@@ -113,10 +113,10 @@ impl Tool for RenderSceneTool {
         }])
     }
 
-    fn timeout(&self) -> Option<Duration> {
+    fn call_deadline(&self) -> Option<Duration> {
         // A 1080p frame costs a canvas draw and a PNG encode in a software
         // headless browser; hundreds of frames can exceed the session's
-        // default tool timeout without being hung.
+        // default call deadline without being hung.
         Some(Duration::from_secs(40 * 60))
     }
 
@@ -290,7 +290,7 @@ impl Tool for RenderFilmTool {
         }])
     }
 
-    fn timeout(&self) -> Option<Duration> {
+    fn call_deadline(&self) -> Option<Duration> {
         // A whole film is many scenes' worth of frames; see render_scene.
         Some(Duration::from_secs(40 * 60))
     }
@@ -1693,11 +1693,11 @@ mod tests {
         // A 30 fps scene can hold the dispatcher for minutes; the tool raises
         // its own ceiling above the session's default.
         assert_eq!(
-            RenderSceneTool::new().timeout(),
+            RenderSceneTool::new().call_deadline(),
             Some(Duration::from_secs(40 * 60))
         );
         assert_eq!(
-            RenderFilmTool::new().timeout(),
+            RenderFilmTool::new().call_deadline(),
             Some(Duration::from_secs(40 * 60))
         );
     }

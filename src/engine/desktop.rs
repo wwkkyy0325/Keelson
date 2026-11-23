@@ -328,7 +328,7 @@ impl Tool for WaitForWindowTool {
                 return ToolResult::failure(
                     ctx.call_id,
                     "wait_for_window",
-                    ToolError::timeout(std::time::Duration::from_millis(timeout)),
+                    ToolError::deadline(std::time::Duration::from_millis(timeout)),
                 );
             }
             tokio::time::sleep(std::time::Duration::from_millis(WAIT_STEP_MS)).await;
