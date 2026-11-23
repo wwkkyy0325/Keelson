@@ -86,6 +86,9 @@ export type ContextPoint = {
 
 /// What the composer's status line shows.
 export type SessionStatus = {
+  /// The conversation this answer describes; a late answer for another one is
+  /// dropped rather than painted over the current conversation.
+  sessionId: string;
   /// The persisted setting.
   permission: string;
   /// The level actually in force; differs while a full-auto grant is live.

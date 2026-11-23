@@ -51,3 +51,21 @@ the existing history and changing the persona mid-thread.
 - Making the setting the source of truth and pinning only in the UI: the
   document is what survives a restart, and the host has no reason to distrust
   it.
+
+## Amendment — the chosen rig is the one that runs
+
+`open_inner` returned the already-open engine for any conversation the window
+had open, and it did so before resolving the rig. `chooseRig` reopens the same
+id, so that early return kept the engine opened with the old rig: the status
+line named the old rig, the first turn ran with it, and the document recorded
+it, while the setting already held the new one. Point 2 of the decision was
+therefore true only on paper.
+
+A blank conversation — no document, no streaming turn, no background command —
+is now rebuilt under the same id, so the rig the status line names is the rig
+that runs the first turn. A conversation with a document, or with work in
+flight, keeps its engine, which is the rest of the rule.
+
+The status line's rig comes from the view that opened the conversation, not
+from a separately fetched status: a status answer also names the conversation
+it describes, and one that arrives after the window has moved on is dropped.

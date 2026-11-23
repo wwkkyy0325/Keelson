@@ -147,7 +147,15 @@ export function archiveSession(
 }
 
 export function sendMessage(input: string): Promise<void> {
-  return invoke("send_message", { input });
+  // The turn belongs to the conversation on screen, so the window names it
+  // rather than letting the host follow a pointer that a switch can leave
+  // behind: a turn that ran elsewhere streamed into a view that dropped it.
+  return invoke("send_message", { input, sessionId: shownSession() });
+}
+
+/// The conversation the window is showing, or null before one is open.
+function shownSession(): string | null {
+  return get(session).sessionId || null;
 }
 
 /// Copies the picked files into this conversation's attachment folder and
@@ -160,8 +168,13 @@ export function attachFiles(
   return invoke("attach_files", { workspace, sessionId, paths });
 }
 
-export function cancelTurn(): Promise<boolean> {
-  return invoke("cancel_turn");
+/// Cancels the turn of the conversation on screen. The boot screen passes
+/// `null`: it cancels whatever the host still has open, which is the turn that
+/// blocked the open in the first place.
+export function cancelTurn(
+  sessionId: string | null = shownSession(),
+): Promise<boolean> {
+  return invoke("cancel_turn", { sessionId });
 }
 
 export function undoLastTurn(): Promise<void> {
@@ -174,7 +187,7 @@ export function turnChanges(seq?: number | null): Promise<FileChange[]> {
 }
 
 export function sessionStatus(): Promise<SessionStatus> {
-  return invoke("session_status");
+  return invoke("session_status", { sessionId: shownSession() });
 }
 
 /// Saves the permission override; the caller reopens the session to apply it.

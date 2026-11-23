@@ -305,8 +305,15 @@
   }
 
   async function loadStatus(): Promise<void> {
+    // The answer names the conversation it describes: if the window moved on
+    // while it was in flight, or the same id was reopened, it is stale and must
+    // not paint its rig or context over the current conversation.
+    const id = $session.sessionId;
+    const epoch = $session.epoch;
     try {
-      status = await sessionStatus();
+      const next = await sessionStatus();
+      if (next.sessionId !== id || $session.epoch !== epoch) return;
+      status = next;
     } catch {
       status = null;
     }
@@ -358,8 +365,14 @@
     $session.turns.length === 0 && $session.running === null,
   );
 
+  /// The rig the open conversation actually runs. It comes back with the view,
+  /// which is the only place that knows which engine is behind the window; the
+  /// status fetch is a fallback, because it answers for whichever conversation
+  /// the backend had current when it was asked.
+  let rigName = $derived($session.rig || status?.rig || "");
+
   async function chooseRig(name: string): Promise<void> {
-    if (!emptyConversation || !$session.sessionId || status?.rig === name) {
+    if (!emptyConversation || !$session.sessionId || rigName === name) {
       return;
     }
     uiError = null;
@@ -606,7 +619,7 @@
 
       <StatusBar
         {status}
-        rigTitle={status ? $rigTitle(status.rig, status.rig) : ""}
+        rigTitle={rigName ? $rigTitle(rigName, rigName) : ""}
         rigs={rigs}
         rigSelectable={emptyConversation}
         {presets}

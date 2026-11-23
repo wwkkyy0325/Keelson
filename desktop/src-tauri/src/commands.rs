@@ -1176,7 +1176,11 @@ async fn open_inner(
     session_id: Option<String>,
     allow_missing: bool,
 ) -> Result<SessionView, String> {
-    ensure_idle(&state)?;
+    // Opening another conversation is allowed while one has a turn running: the
+    // engine that owns the turn is kept, and its events name their
+    // conversation. Refusing here keyed on `current` meant a reload during a
+    // turn could not get back in at all, which is how a boot ended up on the
+    // failure page.
     let config = state
         .config
         .lock()
@@ -1227,21 +1231,35 @@ async fn open_inner(
         let list = sessions::list(&state_dir, &workspace);
         (session_id, list)
     };
-    // Reopening a conversation the app already has open keeps its engine. A
-    // turn may still be streaming into it, and its background commands are
-    // running: rebuilding the engine would take both down with it.
+    // Reopening a conversation the app already has open usually keeps its
+    // engine; only a blank one is rebuilt, and the check below says why.
     remember_workspace(&state, &workspace);
-    if let Some(open) = state.open_of(&session_id) {
-        return Ok(open_view(
-            &state,
-            &open,
-            &workspace,
-            &session_id,
-            &session_list,
-        ));
-    }
+    // A conversation with a document or with work in flight keeps its engine:
+    // a turn may still be streaming into it and its background commands are
+    // running, so rebuilding would take both down. A blank conversation has
+    // neither, and its engine holds the rig it was first opened with — keeping
+    // it would mean the rig picked in the empty composer is saved as the
+    // default and never runs, while the status line keeps naming the old one
+    // (ADR 0039).
+    let has_document = session_list.iter().any(|meta| meta.id == session_id);
     // The send path reads this flag instead of loading the document again.
     let archived = archived_in(&session_list, &session_id);
+    if let Some(open) = state.open_of(&session_id) {
+        if has_document || conversation_busy(&open) {
+            // The window shows this conversation now, and every command that
+            // does not name one reads this pointer: returning the view without
+            // moving it is how a send ended up in the conversation the user had
+            // left, with its events dropped by the view (ADR 0076).
+            show_conversation(&state, &open, Some(archived));
+            return Ok(open_view(
+                &state,
+                &open,
+                &workspace,
+                &session_id,
+                &session_list,
+            ));
+        }
+    }
     let wanted = rig_for_session(&session_list, &session_id, &preferred);
     let discovery = rig::discover(&rig_dirs());
     let rig = discovery
@@ -1299,24 +1317,15 @@ async fn open_inner(
     }
     let open = Arc::new(OpenConversation {
         id: session_id.clone(),
+        workspace: workspace.clone(),
+        state_dir: state_dir.clone(),
         engine: Arc::new(engine),
         cancel: Mutex::new(None),
         seq: Arc::new(AtomicU32::new(0)),
         running: Mutex::new(None),
     });
     state.install_open(open.clone());
-    {
-        let mut current = state
-            .current
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *current = Some(CurrentSession {
-            id: session_id.clone(),
-            workspace: workspace.clone(),
-            state_dir: state_dir.clone(),
-            archived,
-        });
-    }
+    show_conversation(&state, &open, Some(archived));
     let session_app = SessionApp::new(app.clone(), session_id.clone());
     let seq = open.seq.clone();
     tauri::async_runtime::spawn(async move {
@@ -1625,6 +1634,9 @@ pub fn save_permission(state: State<'_, SharedState>, level: String) -> Result<(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStatus {
+    /// The conversation this answer describes. A status that arrives late must
+    /// not be read as the one the window is showing now.
+    pub session_id: String,
     /// The persisted setting.
     pub permission: String,
     /// The level actually in force; differs while a full-auto grant is live.
@@ -1688,7 +1700,10 @@ pub async fn background_tasks(
 }
 
 #[tauri::command]
-pub async fn session_status(state: State<'_, SharedState>) -> Result<SessionStatus, String> {
+pub async fn session_status(
+    state: State<'_, SharedState>,
+    session_id: Option<String>,
+) -> Result<SessionStatus, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let config = state
@@ -1696,8 +1711,21 @@ pub async fn session_status(state: State<'_, SharedState>) -> Result<SessionStat
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        let engine = state.current_open()?.engine.clone();
+        // The window names the conversation the status describes. Falling back
+        // to the pointer is only for a boot that has not opened one yet.
+        let session_id = match session_id.filter(|id| !id.is_empty()) {
+            Some(id) => id,
+            None => state
+                .current_id()
+                .ok_or_else(|| "还没有打开会话".to_owned())?,
+        };
+        let engine = state
+            .open_of(&session_id)
+            .ok_or_else(|| "会话已关闭，请重新打开".to_owned())?
+            .engine
+            .clone();
         Ok(SessionStatus {
+            session_id,
             permission: engine.base_permission().as_str().to_owned(),
             permission_effective: engine.permission().as_str().to_owned(),
             rig: engine.rig_name(),
@@ -1830,6 +1858,71 @@ fn ensure_idle(state: &DesktopState) -> Result<(), String> {
     ensure_conversation_idle(conversation.as_deref())
 }
 
+/// Whether a conversation is working right now: a turn streaming into it, or a
+/// background command it started. Both belong to the engine that started them,
+/// so that engine may not be replaced under them.
+fn conversation_busy(conversation: &OpenConversation) -> bool {
+    let streaming = conversation
+        .cancel
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .is_some()
+        || conversation
+            .running
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some();
+    streaming || !conversation.engine.background_tasks().is_empty()
+}
+
+/// Makes a conversation the one the window shows.
+///
+/// The pointer is the window's: it moves whenever the window moves, not only
+/// when an engine is built. `archived` is the flag the send path reads; `None`
+/// asks the index, which is what a command naming a conversation that is already
+/// open but no longer on screen has to do.
+fn show_conversation(
+    state: &DesktopState,
+    conversation: &OpenConversation,
+    archived: Option<bool>,
+) {
+    let archived = match archived {
+        Some(archived) => archived,
+        None => {
+            let known = {
+                let current = state
+                    .current
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                current
+                    .as_ref()
+                    .filter(|current| {
+                        current.id == conversation.id
+                            && current.workspace == conversation.workspace
+                            && current.state_dir == conversation.state_dir
+                    })
+                    .map(|current| current.archived)
+            };
+            known.unwrap_or_else(|| {
+                archived_in(
+                    &sessions::list(&conversation.state_dir, &conversation.workspace),
+                    &conversation.id,
+                )
+            })
+        }
+    };
+    let mut current = state
+        .current
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *current = Some(CurrentSession {
+        id: conversation.id.clone(),
+        workspace: conversation.workspace.clone(),
+        state_dir: conversation.state_dir.clone(),
+        archived,
+    });
+}
+
 /// No conversation open is idle, not an error: the boot path asks this before
 /// anything is current, and answering "还没有打开会话" here made the first
 /// open of every launch fail.
@@ -1874,13 +1967,30 @@ pub async fn send_message(
     app: AppHandle,
     state: State<'_, SharedState>,
     input: String,
+    session_id: Option<String>,
 ) -> Result<(), String> {
     let state = state.inner().clone();
     let input = input.trim().to_owned();
     if input.is_empty() {
         return Err("消息不能为空".to_owned());
     }
-    let conversation = state.current_open()?;
+    // The window names the conversation it shows (ADR 0076). Following the
+    // window's pointer instead meant that after a switch the pointer had left
+    // behind, the turn ran in the conversation the user was not looking at:
+    // its events carry that id and the view drops them, so the message appeared
+    // only after a reload, and only in the other conversation.
+    let conversation = match session_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => {
+            let conversation = state
+                .open_of(id)
+                .ok_or_else(|| "这个对话没有打开，请重新选择".to_owned())?;
+            // A send is proof of what the window shows, so the pointer follows
+            // it: the record, the checkpoint and the status line all read it.
+            show_conversation(&state, &conversation, None);
+            conversation
+        }
+        None => state.current_open()?,
+    };
     let engine = conversation.engine.clone();
     // The turn belongs to the conversation that was open when it started,
     // even if the window switches before the row is refreshed.
@@ -2236,9 +2346,15 @@ pub async fn send_message(
 }
 
 #[tauri::command]
-pub fn cancel_turn(state: State<'_, SharedState>) -> bool {
+pub fn cancel_turn(state: State<'_, SharedState>, session_id: Option<String>) -> bool {
     let state = state.inner();
-    let Ok(conversation) = state.current_open() else {
+    // The cancel belongs to the conversation the window shows, which names
+    // itself; the pointer is only the fallback for a boot that has none yet.
+    let conversation = match session_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => state.open_of(id),
+        None => state.current_open().ok(),
+    };
+    let Some(conversation) = conversation else {
         return false;
     };
     let token = conversation

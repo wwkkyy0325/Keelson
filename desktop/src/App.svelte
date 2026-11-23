@@ -139,7 +139,7 @@
   async function cancelAndRetry(): Promise<void> {
     phase = "loading";
     bootError = null;
-    await cancelTurn().catch(() => false);
+    await cancelTurn(null).catch(() => false);
     let failure = "";
     for (let attempt = 0; attempt < 6; attempt += 1) {
       failure = (await enterApp()) ?? "";

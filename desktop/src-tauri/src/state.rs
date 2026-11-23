@@ -49,6 +49,11 @@ pub struct RunningTurn {
 
 pub struct OpenConversation {
     pub id: String,
+    /// Where the conversation's document and turns live. A command that names
+    /// this conversation can do its bookkeeping from here, without reading the
+    /// window's pointer, which may already have moved on.
+    pub workspace: PathBuf,
+    pub state_dir: PathBuf,
     pub engine: Arc<Engine>,
     pub cancel: Mutex<Option<CancelToken>>,
     pub seq: Arc<AtomicU32>,
