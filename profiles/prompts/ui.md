@@ -126,3 +126,16 @@ defect: fix the grid, not the picture.
 - Never add a colour, a font, a duration or a spacing literal to a component.
 - Never edit `.keelson/checks.toml` to make a check pass.
 - Never leave a forced state, a debug hook or a commented-out block behind.
+
+## Records
+
+The host keeps one document per finished request under
+`.keelson/records/progress/` in the workspace (the settings panel shows the
+path if the user moved it). `INDEX.md` there is one row per task, newest
+first: read it, and the one or two documents it links, before picking up work
+someone else started. They say what was asked, how it ended, which files
+moved and where git stood.
+
+Each document ends with `## Next`. Write it when you stop mid-task: what is
+half-done, what must not be touched, what to do first. The host keeps that
+section when it rewrites a document.
