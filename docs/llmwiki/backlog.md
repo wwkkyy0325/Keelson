@@ -57,7 +57,9 @@ What is left:
   per conversation since ADR 0061, so two conversations no longer overwrite each
   other, but the kernel keeps only the newest 200 `turn-*-call-*.txt` in it and
   an older marker then points at a file that is gone. Spills written before the
-  split sit in `outputs/` itself and are never pruned. What the model sees of a
+  split sit in `outputs/` itself and are never pruned: 118 files, 0.86 MB
+  across the six projects (2026-11-23), which is small but is also the only set
+  that no code path ever looks at again. What the model sees of a
   tool output is `TOOL_HEAD_CHARS` + `TOOL_TAIL_CHARS` (3 000 characters,
   `keel-runtime/src/summary.rs`); 4 KiB is the host's live preview
   (`UI_PREVIEW_BYTES`), and 8 000 characters is the document's cap.
@@ -68,66 +70,87 @@ What is left:
 
 ## The archive grows, the memory does not
 
-Measured over the nine conversations in this project's state directory
-(`~/.keelson/sessions`, 2026-11-17), 21.8 MB in total:
+Measured over the 32 conversations in this state directory (`~/.keelson/sessions`,
+11 project folders, 2026-11-23), 61.5 MB in total:
 
-- Turn rows, 19.2 MB — 88%. `s-<id>.turns/<seq>.json`, one file per turn,
-  written once and never pruned. One 52-turn conversation is 10.3 MB of them.
-- Segment files, 2.3 MB. Terms dominate: 0.45 MB across all nine, and 97% of
-  this project's own 221 KB — one segment recorded before the term cap holds
-  15,578 of them.
-- State files, 0.30 MB: the memo, the facts and the counters. The largest is
-  32.7 KB, the smallest 191 bytes.
+- Turn rows, 57.7 MB — 94%. `s-<id>.turns/<seq>.json`, one file per turn,
+  written once and never pruned. One 94-turn conversation is 15.7 MB of them
+  in 94 files. A row is mostly its tool calls: in the largest single row
+  (275 KB) the `tools` list is 256 KB, and that is 119 stored `output`
+  previews — 1.9 KB on average, up to 4.1 KB where the host's preview cap
+  stops them — of an output the kernel showed the model 3 000 characters of.
+- Segment files, 3.6 MB. The largest file is 1.4 MB: one segment holding
+  1.1 MB of entries and 15,578 terms, recorded before the per-turn term cap
+  (ADR 0069 in the Keel repository). The same 15,578 terms appear again in a
+  second segment of this project, a 140 KB file with two entries.
+- Snapshots and headers, 0.43 MB: 0.21 MB of `s-<id>.snapshot.json` and
+  0.22 MB of `s-<id>.json`. The largest snapshot is 52 KB, the smallest 4 KB.
+
+Opening a conversation parses every row file it has (`Store::load_unchecked`
+→ `read_turns`, `src/engine/store.rs:473`), and the page the desktop asks for
+is sliced out of that in-memory list (`Engine::history`), so the per-conversation
+cost lands at open: 15.7 MB of JSON for the 94-turn conversation, not 30 rows
+of it. Paging bounds what crosses into the frontend, not what is read.
 
 The memory the model reads is bounded where the archive is not:
 
 - The memo is capped at `working_set / 10`, clamped to 256..4096 tokens, and
   rewritten every third seal (`keel-runtime/src/summarizer.rs`).
-- The facts are not capped. The largest conversation carries 130 of them,
-  21 902 bytes, and the memory stage puts all of them into every prompt. This
-  is the one memory item that grows with the conversation.
+- The facts block stops at a quarter of the stage allowance, and it fills
+  oldest first, so the newest facts are the first to fall out and nothing says
+  they did. The largest conversation carries 197 facts, 39 KB, about 9.8 k
+  tokens against a quarter of what the stages ahead of it leave, 16 k at most
+  in a 64 k working set; this conversation carries 125, about 6 k
+  (measured 2026-11-23). This is the one memory item that grows with the
+  conversation.
 - Turn rows never enter a prompt. The kernel rebuilds history from segments and
   clears the entries of a segment once a summary covers it; after that the row
   file is the only verbatim copy of what was said.
 
 So the three candidate changes cost different things:
 
-- Compacting the state buys under 33 KB and risks the least recoverable data. A
-  fact is a user statement extracted once; dropping it loses it, because recall
-  matches segment terms and never facts.
-- Pruning turn rows buys 88% of the disk and costs the scrollback: the app
+- Compacting the state buys 0.2 MB of snapshots, the largest 52 KB, and risks
+  the least recoverable data. A fact is a user statement extracted once;
+  dropping it loses it, because recall matches segment terms and never facts.
+- Pruning turn rows buys 94% of the disk and costs the scrollback: the app
   restores a conversation from those rows, and nothing else holds the text of
-  an absorbed segment.
-- Capping the facts buys prompt tokens on every turn. Of the three, it is the
-  only one that is a context win rather than a disk win.
+  an absorbed segment. Shrinking the stored `tools[].output` preview bounds the
+  same number without losing a row, at the cost of a transcript that shows less
+  of an old command than it does today.
+- Reordering the facts block buys nothing on disk and keeps the newest facts in
+  the prompt. It is the only one of the three that is a context change.
 
-The first step is a retention policy with a visible limit, not a compaction
-pass: keep the last N turn rows verbatim and mark on the conversation that
-older rows are gone, and cap the facts at N with confirmed and user-explicit
-entries kept first. Both are destructive, so both need a number the user can
-see and change, not a silent sweep.
+For the turn rows the first step is a retention policy with a visible limit,
+not a compaction pass: keep the last N rows verbatim and mark on the
+conversation that older rows are gone. That is destructive, so it needs a
+number the user can see and change, not a silent sweep.
 
-Wanted: no (2026-11-17). All three are left as they are. 21.8 MB across nine
-conversations is accepted: the largest state file is 32.7 KB, the memo is
-already bounded, and the one unbounded memory item — the facts list — costs
-roughly 5.5 k tokens of a 64 k working set in the largest conversation. Each
-candidate trades something unrecoverable for a number that is not hurting: a
-fact is extracted once and cannot be re-derived, and a pruned turn row is the
-only verbatim copy of a segment the kernel has absorbed. The numbers that would
-reopen this are a state file past a few hundred KB, or facts past about a tenth
-of the working set; neither is close. The 15 578-term segment recorded before
-the term cap (ADR 0069 in the Keel repository) stays as history.
+Wanted: no for the disk items (2026-11-23). 61.5 MB across 32 conversations is
+accepted: the largest snapshot is 52 KB and the memo is already bounded. Each
+of the two disk changes trades something unrecoverable for a number that is not
+hurting — a pruned turn row is the only verbatim copy of a segment the kernel
+has absorbed. The numbers that would reopen them are a conversation past about
+50 MB of rows, or an open a user notices waiting for; neither is close. The two
+segments recorded before the term cap (ADR 0069 in the Keel repository) stay as
+history.
+
+Reopened (2026-11-23): the facts block is bounded already at a quarter of the
+stage allowance, so the fix is not a cap but the order and the report — keep
+the newest facts and any confirmed or user-explicit one ahead of the rest, and
+say on the transcript how many were left out. Dropping them from the snapshot
+would trade something unrecoverable for a number that is not hurting;
+truncating the block needs no such trade.
 
 ## The trash keeps every version forever
 
 Every write, edit, move and delete backs the old file up into
 `projects/<hash>/trash/` before touching it, and nothing ever removes one.
-Measured over the six projects in this state directory (2026-11-17, version files
-plus their `meta/` sidecars): 31 MB in the trash, 1 012 backed-up versions,
-against 21.8 MB of conversations — one project holds 19 MB of it and 727
-versions, this one 8.4 MB and 204. Screenshots in the neighbouring `screens/`
-folder are pruned twice, by count and by age (`KEEP_SCREENS`,
-`prune_old_screens`, seven days); the trash has neither.
+Measured over the six projects in this state directory (2026-11-23, version
+files plus their `meta/` sidecars): 121.6 MB in the trash, 8 798 files, against
+61.5 MB of conversations — this project alone holds 17 MB of it and 502
+versions. Screenshots in the neighbouring `screens/` folder are pruned twice,
+by count and by age (`KEEP_SCREENS`, `prune_old_screens`, seven days); the
+trash has neither.
 
 The undo file is the whole reason `write_file` may overwrite a file the agent
 has not read, so this is not a candidate for removal. What is missing is a
