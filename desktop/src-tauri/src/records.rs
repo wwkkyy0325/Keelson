@@ -287,6 +287,16 @@ impl StepLog {
     }
 }
 
+/// How much of a call's arguments and output the step log keeps.
+///
+/// The live event carries the dispatcher's `UI_PREVIEW_BYTES` so the
+/// conversation shows what the call actually printed. The log is a different
+/// reader: it is read when something went wrong, and one tool call in three
+/// returned kilobytes of output that no one re-reads. A quarter of the live
+/// preview keeps the shape of a diff or a failing assertion and leaves the
+/// line readable.
+const ROW_PREVIEW_CHARS: usize = 1024;
+
 /// The event body without its single-key wrapper, plus the previews the kernel
 /// skips when it serializes an event for the store.
 ///
@@ -307,14 +317,26 @@ fn payload(event: &Event) -> Value {
     };
     match event {
         Event::ToolStarted { args_preview, .. } => {
-            fields.insert("args".to_owned(), json!(args_preview));
+            fields.insert("args".to_owned(), json!(clip(args_preview.as_deref())));
         }
         Event::ToolFinished { output_preview, .. } => {
-            fields.insert("output".to_owned(), json!(output_preview));
+            fields.insert("output".to_owned(), json!(clip(output_preview.as_deref())));
         }
         _ => {}
     }
     body
+}
+
+/// Cuts on a character boundary and says so, so a short preview stays byte for
+/// byte what the model saw.
+fn clip(text: Option<&str>) -> Option<String> {
+    let text = text?;
+    if text.chars().count() <= ROW_PREVIEW_CHARS {
+        return Some(text.to_owned());
+    }
+    let mut out: String = text.chars().take(ROW_PREVIEW_CHARS).collect();
+    out.push_str("\n… truncated in the step log");
+    Some(out)
 }
 
 #[cfg(test)]
@@ -408,6 +430,38 @@ mod tests {
             })
             .unwrap();
         assert!(finished.contains("\"reused\":true"));
+    }
+
+    #[test]
+    fn the_step_log_shortens_a_long_output_but_not_a_short_one() {
+        let short = Event::ToolFinished {
+            turn_id: TurnId::new(1),
+            call_id: ToolCallId::new(1),
+            tool: "shell".to_owned(),
+            ok: true,
+            error: None,
+            duration_ms: 3,
+            output_preview: Some("ok".to_owned()),
+            reused: false,
+        };
+        let kept = payload(&short);
+        assert_eq!(kept["output"], json!("ok"));
+
+        let long = Event::ToolFinished {
+            turn_id: TurnId::new(1),
+            call_id: ToolCallId::new(2),
+            tool: "shell".to_owned(),
+            ok: true,
+            error: None,
+            duration_ms: 3,
+            output_preview: Some("x".repeat(4_000)),
+            reused: false,
+        };
+        let cut = payload(&long);
+        let text = cut["output"].as_str().expect("the output stays a string");
+        assert!(text.starts_with(&"x".repeat(ROW_PREVIEW_CHARS)));
+        assert!(!text.starts_with(&"x".repeat(ROW_PREVIEW_CHARS + 1)));
+        assert!(text.ends_with("truncated in the step log"), "{text:.40}");
     }
 
     #[test]
