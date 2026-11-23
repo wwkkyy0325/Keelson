@@ -120,6 +120,10 @@ pub struct StoredUsage {
 pub struct StoredContext {
     pub used: u32,
     pub ceiling: u32,
+    /// Memory entries the `[memory]` block left out of this turn. Absent in
+    /// documents written before the field existed.
+    #[serde(default)]
+    pub facts_clipped: u32,
 }
 
 /// One finished turn as the session file keeps it.

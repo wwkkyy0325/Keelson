@@ -279,6 +279,13 @@
                   {compact(point.used)} / {compact(window)}
                 </span>
               </div>
+              {#if point.factsClipped > 0}
+                <!-- The model answered from a partial memory; say so rather
+                     than let the number look complete. -->
+                <p class="status-note">
+                  {$t("status.contextClipped", { count: point.factsClipped })}
+                </p>
+              {/if}
             {/each}
           {/if}
           <p class="status-hint">

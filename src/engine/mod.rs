@@ -121,6 +121,9 @@ pub struct ContextPoint {
     pub seq: u32,
     pub used: u32,
     pub ceiling: u32,
+    /// Memory entries the `[memory]` block left out of this turn. Zero for a
+    /// turn that did not fill the block.
+    pub facts_clipped: u32,
 }
 
 /// One finished turn as a read model. It carries the compact turn history, not
@@ -327,6 +330,7 @@ fn cap_tool_lines(lines: &mut [ToolLine]) {
 
 /// The last context point an old document's event stream carries.
 fn context_from_events(turn: &StoredTurn) -> Option<StoredContext> {
+    let clipped = facts_clipped_from_events(turn);
     turn.events.iter().rev().find_map(|event| {
         let pressure = event.payload.get("context_pressure")?;
         Some(StoredContext {
@@ -338,8 +342,25 @@ fn context_from_events(turn: &StoredTurn) -> Option<StoredContext> {
                 .get("ceiling")?
                 .as_u64()
                 .and_then(|v| u32::try_from(v).ok())?,
+            facts_clipped: clipped,
         })
     })
+}
+
+/// How many memory entries the `[memory]` block left out, from a document that
+/// still carries its event stream. A turn reports this once, at the point it
+/// built its context; the last such event in the turn is the one that counts.
+fn facts_clipped_from_events(turn: &StoredTurn) -> u32 {
+    turn.events
+        .iter()
+        .rev()
+        .find_map(|event| {
+            let body = event.payload.get("facts_clipped")?;
+            body.get("skipped")?
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+        })
+        .unwrap_or(0)
 }
 
 /// The context point a turn reports: the stored field, or the last event in a
@@ -350,6 +371,7 @@ fn context_point(turn: &StoredTurn) -> Option<ContextPoint> {
         seq: turn.seq,
         used: context.used,
         ceiling: context.ceiling,
+        facts_clipped: context.facts_clipped,
     })
 }
 
@@ -766,10 +788,19 @@ impl Engine {
         // a bounded copy with a note, so a long transcript cannot grow the
         // file without limit.
         cap_tool_lines(&mut tools);
+        let facts_clipped = records
+            .iter()
+            .rev()
+            .find_map(|record| match &record.event {
+                Event::FactsClipped { skipped, .. } => Some(*skipped),
+                _ => None,
+            })
+            .unwrap_or(0);
         let context = records.iter().rev().find_map(|record| match &record.event {
             Event::ContextPressure { used, ceiling, .. } => Some(StoredContext {
                 used: *used,
                 ceiling: *ceiling,
+                facts_clipped,
             }),
             _ => None,
         });
@@ -2175,6 +2206,7 @@ system = "prompt.md"
             Some(StoredContext {
                 used: 40,
                 ceiling: 64,
+                facts_clipped: 0,
             })
         );
     }
@@ -3615,6 +3647,7 @@ system = "prompt.md"
         turn.context = Some(StoredContext {
             used: 7,
             ceiling: 9,
+            facts_clipped: 0,
         });
         turn.events.push(StoredEvent {
             name: "context_pressure".to_owned(),
@@ -3629,6 +3662,7 @@ system = "prompt.md"
                 seq: 1,
                 used: 7,
                 ceiling: 9,
+                facts_clipped: 0,
             })
         );
     }
@@ -3649,7 +3683,32 @@ system = "prompt.md"
                 seq: 1,
                 used: 40,
                 ceiling: 64,
+                facts_clipped: 0,
             })
+        );
+    }
+
+    #[test]
+    fn a_context_point_names_the_entries_the_memory_left_out() {
+        let mut turn = stored_turn();
+        turn.events = vec![
+            StoredEvent {
+                name: "facts_clipped".to_owned(),
+                payload: serde_json::json!({
+                    "facts_clipped": { "turn_id": 1, "kept": 9, "skipped": 4 }
+                }),
+            },
+            StoredEvent {
+                name: "context_pressure".to_owned(),
+                payload: serde_json::json!({
+                    "context_pressure": { "used": 40, "ceiling": 64 }
+                }),
+            },
+        ];
+
+        assert_eq!(
+            context_point(&turn).map(|point| point.facts_clipped),
+            Some(4)
         );
     }
 
@@ -3693,6 +3752,7 @@ system = "prompt.md"
             Some(StoredContext {
                 used: 40,
                 ceiling: 64,
+                facts_clipped: 0,
             })
         );
         assert_eq!(TurnView::from(&turn).usage, turn.usage);
@@ -3702,6 +3762,7 @@ system = "prompt.md"
                 seq: 1,
                 used: 40,
                 ceiling: 64,
+                facts_clipped: 0,
             })
         );
     }
@@ -3717,6 +3778,7 @@ system = "prompt.md"
         turn.context = Some(StoredContext {
             used: 7,
             ceiling: 9,
+            facts_clipped: 0,
         });
         turn.events = vec![
             StoredEvent {
@@ -3755,6 +3817,7 @@ system = "prompt.md"
             Some(StoredContext {
                 used: 7,
                 ceiling: 9,
+                facts_clipped: 0,
             })
         );
     }
@@ -3789,6 +3852,7 @@ system = "prompt.md"
         turn.context = Some(StoredContext {
             used: 1,
             ceiling: 2,
+            facts_clipped: 0,
         });
 
         let text = serde_json::to_string(&turn).expect("the turn serializes");

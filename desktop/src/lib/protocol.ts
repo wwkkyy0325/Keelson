@@ -80,6 +80,8 @@ export type ContextPoint = {
   seq: number;
   used: number;
   ceiling: number;
+  /// Memory entries the `[memory]` block left out of that turn.
+  factsClipped: number;
 };
 
 /// What the composer's status line shows.
