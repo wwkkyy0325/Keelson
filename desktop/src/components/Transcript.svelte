@@ -1,6 +1,18 @@
 <script lang="ts">
-  import { onDestroy, tick, untrack } from "svelte";
+  import { flushSync, onDestroy, tick, untrack } from "svelte";
   import { loadTurns, stopBackground } from "../lib/api";
+  import { flushDelay } from "../lib/live";
+  import {
+    DENSITY_KEY,
+    DENSITY_SAMPLES,
+    INITIAL_DENSITY,
+    learnDensity,
+    parseDensity,
+  } from "../lib/cull";
+  import { AnchorKeeper } from "../lib/anchor";
+  import { followAfterScroll } from "../lib/follow";
+  import { perf } from "../lib/perf";
+  import { visible } from "../lib/visible";
   import { dispatch, session } from "../lib/session-store";
   import { t } from "../lib/i18n";
   import Turn from "./Turn.svelte";
@@ -29,8 +41,43 @@
   } = $props();
 
   let scroller = $state<HTMLDivElement | null>(null);
-  let stick = true;
+  let stick = $state(true);
   let suppressAutoScroll = false;
+
+  /// Pixels of rendered answer per character, so the turns that have not
+  /// rendered are reserved at the right height (lib/cull.ts). A figure measured
+  /// by an earlier session is used from the first paint: the stand-ins then
+  /// match the rendering, and the thread does not grow under the reader as the
+  /// bodies fill in.
+  let density = $state(storedDensity());
+  let measured = $state(0);
+
+  function storedDensity(): number {
+    try {
+      return parseDensity(localStorage.getItem(DENSITY_KEY)) ?? INITIAL_DENSITY;
+    } catch {
+      // A webview with storage disabled still renders; it just starts from the
+      // default figure.
+      return INITIAL_DENSITY;
+    }
+  }
+
+  function learn(chars: number, renderedPx: number): void {
+    if (measured >= DENSITY_SAMPLES || chars < 400 || renderedPx <= 0) return;
+    const next = learnDensity(measured, chars, renderedPx, density);
+    measured += 1;
+    if (next === density) return;
+    density = next;
+    if (measured >= DENSITY_SAMPLES) rememberDensity(next);
+  }
+
+  function rememberDensity(value: number): void {
+    try {
+      localStorage.setItem(DENSITY_KEY, String(value));
+    } catch {
+      // The figure is a cache; the next launch measures again.
+    }
+  }
 
   function mark(ok: boolean | null): string {
     return ok === false ? "✗" : ok === true ? "✓" : "·";
@@ -57,9 +104,14 @@
   /// A long-running command (a dev server, a watcher) has no natural end; the
   /// user can end it here. The engine still hands its result to the model.
   async function stopTask(id: string): Promise<void> {
+    // The row answers the click at once: the poll that reports the kernel's
+    // view runs once a second, and a control that looks dead for that long is
+    // read as broken. A failure puts the control back.
+    dispatch({ type: "background-stop", id, stopped: true });
     try {
       await stopBackground(id);
     } catch (cause) {
+      dispatch({ type: "background-stop", id, stopped: false });
       onError(String(cause));
     }
   }
@@ -81,31 +133,63 @@
   );
 
   // Streaming output is sampled, not followed. Each delta rewrites the text of
-  // a block that is still growing, and every rewrite costs a layout pass over
-  // the transcript, so the stream is read once per window instead. The answer
-  // is markdown too: re-parsing it on every chunk flickers.
-  const LIVE_FLUSH_MS = 80;
+  // a block that is still growing, and every rewrite parses the markdown,
+  // sanitizes the HTML and lays the block out again, so the stream is read
+  // once per window instead. The window grows with the answer: a long answer
+  // at a fixed 80 ms spends the core re-rendering itself (lib/live.ts).
   let answerSource = $state("");
   let thinkingShown = $state("");
   /// The reasoning fold is closed by default and its text is not laid out while
   /// it is, so nothing is copied into it until someone looks.
   let reasoningOpen = $state(false);
+
+  /// A collapsed `<details>` is not laid out, but its text is still a node in
+  /// the DOM, and a running turn carries a row and a result for every call it
+  /// makes — one busy turn put 97 KB of tool output in the page before the
+  /// answer arrived. A row's payload is rendered when it is opened instead
+  /// (Turn.svelte already does this for a turn that has finished).
+  let openTools = $state<Set<number>>(new Set());
+
+  function setToolOpen(callId: number, open: boolean): void {
+    const next = new Set(openTools);
+    if (open) next.add(callId);
+    else next.delete(callId);
+    openTools = next;
+  }
   let liveTimer: ReturnType<typeof setTimeout> | null = null;
 
   function flushLive(): void {
     liveTimer = null;
     const running = $session.running;
+    // The cost being measured is the render, not the assignment: the markdown
+    // behind `answerSource` is parsed during the flush, so the flush is forced
+    // here and timed whole.
+    const started = performance.now();
     answerSource = running?.text ?? "";
     if (reasoningOpen) thinkingShown = running?.thinking ?? "";
+    flushSync();
+    perf.mark("live.flush", performance.now() - started);
   }
 
   $effect(() => {
     // Reading the lengths subscribes to the stream; `flushLive` samples the
     // values themselves, so one timer serves both blocks.
-    void $session.running?.text.length;
-    void $session.running?.thinking.length;
+    const chars =
+      ($session.running?.text.length ?? 0) +
+      (reasoningOpen ? ($session.running?.thinking.length ?? 0) : 0);
+    // Nothing is being looked at while the window is hidden or the user has
+    // scrolled away from the newest turn: a sample then costs a core and shows
+    // nobody. The stream keeps arriving in the store; it is painted again as
+    // soon as it is on screen.
+    if (!$visible || !stick) {
+      if (liveTimer !== null) {
+        clearTimeout(liveTimer);
+        liveTimer = null;
+      }
+      return;
+    }
     if (liveTimer !== null) return;
-    liveTimer = setTimeout(flushLive, LIVE_FLUSH_MS);
+    liveTimer = setTimeout(flushLive, flushDelay(chars));
   });
 
   // A fold opened mid-turn shows what has streamed so far, not the snapshot it
@@ -118,8 +202,15 @@
     });
   });
 
+  // A row id belongs to one turn; a finished turn's rows live in its own
+  // component, so nothing here has to remember them.
+  $effect(() => {
+    if ($session.running === null && openTools.size > 0) openTools = new Set();
+  });
+
   onDestroy(() => {
     if (liveTimer !== null) clearTimeout(liveTimer);
+    keeper.destroy();
   });
 
   // The running card shows elapsed time and cost as they accumulate. The
@@ -128,15 +219,14 @@
   let runningTurn = $derived($session.running !== null);
   let liveNow = $state(Date.now());
   $effect(() => {
-    if (!runningTurn) return;
+    if (!runningTurn || !$visible) return;
     liveNow = Date.now();
     const timer = setInterval(() => (liveNow = Date.now()), 1000);
     return () => clearInterval(timer);
   });
 
-  // Keep the last message in view unless the user scrolled up. The effect
-  // runs for every delta; one scroll per frame is enough and keeps the
-  // scrollbar smooth while the answer grows.
+  // Keep the last message in view unless the user scrolled up. One scroll per
+  // frame is enough and keeps the scrollbar smooth while the answer grows.
   let followQueued = false;
 
   function follow(): void {
@@ -150,16 +240,75 @@
     });
   }
 
+  /// What can move the bottom of the transcript: a block that was just
+  /// rendered, a new tool row, a new turn, a new background row, or an error.
+  /// Reading the store here would read `scrollHeight` — a layout over every
+  /// rendered turn — once per delta instead of once per rendered change.
+  let bottomKey = $derived(
+    `${answerSource.length}:${thinkingShown.length}:${
+      $session.turns.length
+    }:${$session.running?.tools.length ?? 0}:${$session.background.length}:${
+      error ?? ""
+    }`,
+  );
+
   $effect(() => {
-    const current = $session;
-    const failure = error;
+    void bottomKey;
     if (suppressAutoScroll || !stick || !scroller) return;
-    void current;
-    void failure;
     follow();
   });
 
-  let lastTop = 0;
+  let lastScroll = { top: 0, height: 0 };
+
+  /* ---- the reading position --------------------------------------------
+     Every change to the thread's height — a body rendering in place of its
+     stand-in, a page of older turns, a narrower window — moves the text under
+     the reader unless something puts it back. One keeper does that, for all of
+     them (lib/anchor.ts); nothing else writes `scrollTop` except the follow
+     scroll and a page load. */
+  let anchorEl: HTMLElement | null = null;
+
+  function anchorTop(): number | null {
+    if (!scroller || !anchorEl || !anchorEl.isConnected) return null;
+    return (
+      anchorEl.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top
+    );
+  }
+
+  /// The turn under the top edge. The thread has gaps between turns, so a few
+  /// offsets are tried before giving up for this frame.
+  function pickAnchor(): void {
+    if (!scroller) return;
+    const box = scroller.getBoundingClientRect();
+    for (const dy of [0, 8, 24, 48, 90, 160]) {
+      const point = document.elementFromPoint(
+        box.left + box.width / 2,
+        box.top + dy,
+      );
+      const turn = point instanceof Element ? point.closest(".turn") : null;
+      if (turn instanceof HTMLElement && scroller.contains(turn)) {
+        anchorEl = turn;
+        return;
+      }
+    }
+  }
+
+  const keeper = new AnchorKeeper({
+    read: anchorTop,
+    shift: (delta) => {
+      if (scroller) scroller.scrollTop += delta;
+    },
+  });
+
+  // A narrower window reflows the markdown: every rendered turn changes height
+  // at once, with no reveal involved.
+  $effect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = (): void => keeper.nudge();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  });
 
   // A session switch replaces the whole transcript. The browser resets the
   // scroll position, and the scroll handler reads that reset as the user
@@ -171,24 +320,35 @@
     if (id === lastSessionId) return;
     lastSessionId = id;
     stick = true;
+    // The figure belongs to the rendering, not to one conversation, so it is
+    // carried across a switch; only the sample count restarts.
+    measured = 0;
+    keeper.own(true);
     requestAnimationFrame(() => {
       if (!scroller) return;
       scroller.scrollTop = scroller.scrollHeight;
-      lastTop = scroller.scrollTop;
+      lastScroll = { top: scroller.scrollTop, height: scroller.scrollHeight };
       stick = true;
+      keeper.own(false);
     });
   });
 
   function onScroll(): void {
     if (!scroller) return;
     const top = scroller.scrollTop;
-    const atBottom =
-      scroller.scrollHeight - top - scroller.clientHeight < 80;
+    const height = scroller.scrollHeight;
     // A wheel notch is smaller than the 80 px band, so reaching the band is
     // not enough to tell "still following" from "tried to look back". Any
     // upward move releases the follow; moving down follows again at the end.
-    stick = top < lastTop ? false : atBottom;
-    lastTop = top;
+    // Content that shrank under the view clamps the position up the same way,
+    // and that is not the user looking back (lib/follow.ts).
+    stick = followAfterScroll(lastScroll, top, height, scroller.clientHeight);
+    lastScroll = { top, height };
+    // Where the anchor is now is where the reader put it. A position the
+    // follow owns is not the keeper's to defend.
+    pickAnchor();
+    keeper.own(stick);
+    keeper.record();
   }
 
   /// The wheel releases the follow before the browser scrolls, so an
@@ -203,6 +363,7 @@
     const previousHeight = scroller.scrollHeight;
     const previousTop = scroller.scrollTop;
     suppressAutoScroll = true;
+    keeper.own(true);
     dispatch({ type: "loading-older", value: true });
     try {
       const page = await loadTurns(before, 30);
@@ -217,6 +378,9 @@
     } finally {
       dispatch({ type: "loading-older", value: false });
       suppressAutoScroll = false;
+      // The page was spliced in above the reader and the position was already
+      // corrected for it; the keeper takes that position as the reader's.
+      keeper.own(false);
     }
   }
 
@@ -255,6 +419,10 @@
     <Turn
       {turn}
       isLatest={index === $session.turns.length - 1}
+      scrollRoot={scroller}
+      density={density}
+      onMeasured={learn}
+      onRendered={() => keeper.nudge()}
       changes={index === $session.turns.length - 1
         ? changes
         : (turn.changes ?? [])}
@@ -289,17 +457,26 @@
                 >
               </summary>
               <div class="tool-detail">
-                {#if thinkingShown}
-                  <pre>{thinkingShown}</pre>
+                {#if reasoningOpen}
+                  {#if thinkingShown}
+                    <pre>{thinkingShown}</pre>
+                  {/if}
+                  {#each $session.running.process as part}
+                    <pre>{part}</pre>
+                  {/each}
                 {/if}
-                {#each $session.running.process as part}
-                  <pre>{part}</pre>
-                {/each}
               </div>
             </details>
           {/if}
           {#each $session.running.tools as tool (tool.callId)}
-            <details class="tool">
+            <details
+              class="tool"
+              ontoggle={(event) =>
+                setToolOpen(
+                  tool.callId,
+                  (event.currentTarget as HTMLDetailsElement).open,
+                )}
+            >
               <summary>
                 <span
                   class:fail={tool.ok === false}
@@ -312,20 +489,31 @@
                   <span class="tool-args">{tool.args}</span>
                 {/if}
                 {#if tool.ok !== null}
-                  <span class="tool-time">{took(tool.durationMs, tool.ok)}</span>
+                  {#if tool.reused}
+                    <span
+                      class="tool-reused"
+                      title={$t("turn.toolReusedHint", {
+                        duration: took(tool.durationMs, tool.ok),
+                      })}>{$t("turn.toolReused")}</span
+                    >
+                  {:else}
+                    <span class="tool-time">{took(tool.durationMs, tool.ok)}</span>
+                  {/if}
                 {/if}
               </summary>
-              {#if tool.args}
-                <div class="tool-detail">
-                  <span class="tool-label">{$t("turn.toolArgs")}</span>
-                  <pre>{tool.args}</pre>
-                </div>
-              {/if}
-              {#if tool.output}
-                <div class="tool-detail">
-                  <span class="tool-label">{$t("turn.toolOutput")}</span>
-                  <pre>{tool.output}</pre>
-                </div>
+              {#if openTools.has(tool.callId)}
+                {#if tool.args}
+                  <div class="tool-detail">
+                    <span class="tool-label">{$t("turn.toolArgs")}</span>
+                    <pre>{tool.args}</pre>
+                  </div>
+                {/if}
+                {#if tool.output}
+                  <div class="tool-detail">
+                    <span class="tool-label">{$t("turn.toolOutput")}</span>
+                    <pre>{tool.output}</pre>
+                  </div>
+                {/if}
               {/if}
             </details>
           {/each}
@@ -376,9 +564,10 @@
       {#each $session.background as task (task.id)}
         <div class="tool background-row">
           <span
-            class:fail={task.ok === false}
+            class:fail={task.ok === false && !task.stopped}
             class:ok={task.ok === true}
             class:pending={task.ok === null}
+            class:stopped={task.stopped}
             class="tool-mark">{mark(task.ok)}</span
           >
           <span class="tool-name">{task.id}</span>
@@ -387,15 +576,25 @@
           >
           {#if task.ok === null}
             <span class="tool-time">{elapsed(task.durationMs)}</span>
-            <button
-              class="tool-stop"
-              onclick={() => void stopTask(task.id)}
-              title={$t("turn.backgroundStopHint")}
-            >
-              {$t("turn.backgroundStop")}
-            </button>
+            {#if task.stopped}
+              <!-- The stop was accepted; the process tree ends when the
+                   kernel reaps it. Offering the control again would only send
+                   a second signal and read as a dead button. -->
+              <span class="tool-stopping">{$t("turn.backgroundStopping")}</span>
+            {:else}
+              <button
+                class="tool-stop"
+                onclick={() => void stopTask(task.id)}
+                title={$t("turn.backgroundStopHint")}
+              >
+                {$t("turn.backgroundStop")}
+              </button>
+            {/if}
           {:else}
             <span class="tool-time">{took(task.durationMs, task.ok)}</span>
+            {#if task.stopped}
+              <span class="tool-stopped">{$t("turn.backgroundStopped")}</span>
+            {/if}
           {/if}
         </div>
         {#if task.outputPath}

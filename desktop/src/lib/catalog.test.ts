@@ -76,6 +76,8 @@ function setup(overrides: Partial<SetupState> = {}): SetupState {
     keySlot: "",
     presets: [],
     activePreset: null,
+    journalMode: "project",
+    journalPath: "",
     rig: "coding-live",
     rigs: [],
     problems: [],

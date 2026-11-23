@@ -158,7 +158,7 @@
     {/if}
   </div>
 
-  <button class="new-chat" onclick={startChat} disabled={running}>
+  <button class="new-chat" onclick={startChat}>
     <span class="plus" aria-hidden="true">+</span>
     {$t("sidebar.newChat")}
   </button>

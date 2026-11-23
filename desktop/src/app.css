@@ -1258,6 +1258,12 @@ header .title {
   display: flex;
   flex-direction: column;
   gap: 1.1rem;
+  /* The transcript keeps the reading position itself (lib/anchor.ts): the
+     element under the top edge is put back after any change to the thread's
+     height. Leaving the browser's anchoring on would apply that correction
+     twice, and a body growing at the newest turn would fight the follow
+     scroll. */
+  overflow-anchor: none;
 }
 
 .empty {
@@ -1289,6 +1295,19 @@ header .title {
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
+}
+
+/* The stand-in for a turn whose body has not rendered yet. Its height comes
+   from the answer's length, so the scrollbar stays where the reader expects it;
+   it is gone as soon as the turn nears the viewport. */
+.turn-placeholder {
+  border-radius: 8px;
+  background: linear-gradient(
+    180deg,
+    var(--panel-2) 0%,
+    var(--panel) 100%
+  );
+  opacity: 0.45;
 }
 
 .user {
@@ -1749,6 +1768,19 @@ header .title {
   font-variant-numeric: tabular-nums;
 }
 
+/* A call the kernel answered from an identical call earlier in the same turn:
+   it ran nothing, so it shows no duration of its own. */
+.tool-reused {
+  flex: none;
+  margin-left: auto;
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 0.75rem;
+  cursor: help;
+}
+
 .tool-stop {
   flex: none;
   margin-left: 0.15rem;
@@ -1766,6 +1798,24 @@ header .title {
 .tool-stop:hover {
   border-color: var(--muted);
   color: var(--text);
+}
+
+/* The stop was accepted but the process tree is not reaped yet, and a stopped
+   command that already exited. Neither is a failure, so neither is red. */
+.tool-stopping,
+.tool-stopped {
+  flex: none;
+  margin-left: 0.15rem;
+  padding: 0.02rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.tool-mark.stopped {
+  color: var(--muted);
 }
 
 .tool-detail {
@@ -2261,6 +2311,12 @@ footer {
   box-shadow: 0 0 0 1px var(--border) inset;
 }
 
+.diag-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
 .meta {
   margin: 0;
   display: flex;
@@ -2277,6 +2333,12 @@ footer {
 
 .meta dt {
   color: var(--muted);
+}
+
+.diag-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
 }
 
 .meta dd {

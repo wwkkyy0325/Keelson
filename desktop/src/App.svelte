@@ -3,6 +3,7 @@
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import {
     cancelTurn,
+    forceRecover,
     listenToEvents,
     openSession,
     setupState,
@@ -31,6 +32,8 @@
     keySlot: "",
     presets: [],
     activePreset: null,
+    journalMode: "project",
+    journalPath: "",
     rig: "",
     rigs: [],
     problems: [],
@@ -41,6 +44,9 @@
   let bootError = $state<string | null>(null);
   let showSettings = $state(false);
   let unlisteners: UnlistenFn[] = [];
+  /// Seconds since the window started waiting. Shown after a few seconds so a
+  /// slow boot reads as slow instead of dead, next to the way out of it.
+  let bootElapsed = $state(0);
 
   /// A backend that never answers must not leave the boot screen up forever.
   function withTimeout<T>(
@@ -58,6 +64,10 @@
 
   onMount(() => {
     let disposed = false;
+    const started = Date.now();
+    const clock = setInterval(() => {
+      bootElapsed = Math.floor((Date.now() - started) / 1000);
+    }, 500);
     (async () => {
       try {
         unlisteners = await withTimeout(
@@ -88,11 +98,15 @@
       } catch (error) {
         if (disposed) return;
         bootError = errText(error);
-        phase = "wizard";
+        // Only a first run belongs in the wizard. If the setup read itself
+        // failed we cannot tell, and the retry screen is the safe guess: the
+        // wizard has no way back and no recovery.
+        phase = setup?.onboarded === false ? "wizard" : "failed";
       }
     })();
     return () => {
       disposed = true;
+      clearInterval(clock);
       for (const unlisten of unlisteners) unlisten();
     };
   });
@@ -127,11 +141,32 @@
     bootError = null;
     await cancelTurn().catch(() => false);
     let failure = "";
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
       failure = (await enterApp()) ?? "";
       if (!failure || !failure.includes("还在运行")) break;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
+    // A turn that ignores the cancel must not hold the workspace hostage: the
+    // engine is dropped and rebuilt, and the abandoned turn still writes its
+    // own result into the document.
+    if (failure && failure.includes("还在运行")) {
+      await forceRecover().catch(() => false);
+      failure = (await enterApp()) ?? "";
+    }
+    if (failure) {
+      bootError = failure;
+      phase = "failed";
+    }
+  }
+
+  /// The last resort: the backend forgets every open conversation (cancelling
+  /// whatever streams into them) and the window opens again with a fresh
+  /// engine. It also works after a reload that stranded a turn.
+  async function recoverNow(): Promise<void> {
+    phase = "loading";
+    bootError = null;
+    await forceRecover().catch(() => false);
+    const failure = await enterApp();
     if (failure) {
       bootError = failure;
       phase = "failed";
@@ -177,6 +212,22 @@
   <div class="boot">
     <div class="brand">Keelson</div>
     <p class="muted">{$t("app.loadingApp")}</p>
+    {#if bootElapsed >= 3}
+      <p class="muted">
+        {$t("app.loadingElapsed", { seconds: bootElapsed })}
+      </p>
+      <div class="boot-actions">
+        <button
+          onclick={() => {
+            bootError = $t("app.bootTimeout");
+            phase = "failed";
+          }}>{$t("app.skipWait")}</button
+        >
+        <button class="primary" onclick={recoverNow}>
+          {$t("app.recover")}
+        </button>
+      </div>
+    {/if}
   </div>
 {:else if phase === "wizard"}
   <Wizard
@@ -194,7 +245,9 @@
         {$t("app.cancelTurnRetry")}
       </button>
       <button onclick={retryBoot}>{$t("app.retry")}</button>
+      <button onclick={recoverNow}>{$t("app.recover")}</button>
     </div>
+    <p class="hint">{$t("app.recoverHint")}</p>
   </div>
 {:else}
   <Chat

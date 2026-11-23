@@ -4,6 +4,8 @@
     applyPreset,
     deletePreset,
     modelCatalog,
+    recordPaths,
+    saveJournal,
     saveKey,
     saveLocale,
     saveModel,
@@ -12,7 +14,8 @@
   } from "../lib/api";
   import { defaultSelection, findSelection, type ModelRow } from "../lib/catalog";
   import { locale, t } from "../lib/i18n";
-  import type { ModelCatalog, SetupState } from "../lib/protocol";
+  import { perf, type PerfReport } from "../lib/perf";
+  import type { ModelCatalog, RecordPaths, SetupState } from "../lib/protocol";
   import ModelPicker from "./ModelPicker.svelte";
 
   let {
@@ -61,6 +64,11 @@
   let keyDraft = $state("");
   /// A SearXNG base URL, the last web-search backend after the model's own.
   let searchUrl = $state("");
+  /// Where the per-turn records go (ADR 0063), and the two paths that setting
+  /// resolves to for the open project.
+  let journalMode = $state("project");
+  let journalPath = $state("");
+  let recordFiles = $state<RecordPaths>({ log: "", progressDir: "" });
   let revealKey = $state(false);
   let busy = $state(false);
   /// Saving and reconnecting are two visible steps: the button says which one
@@ -68,6 +76,29 @@
   let phase = $state<"idle" | "saving" | "reconnecting">("idle");
   let loading = $state(true);
   let error = $state<string | null>(null);
+  /// What the window spent its time on. Read on open and on demand: after a
+  /// freeze the only useful evidence is what was counted while it happened.
+  let diagnostics = $state<PerfReport | null>(null);
+  function refreshDiagnostics(): void {
+    diagnostics = perf.report();
+  }
+  function resetDiagnostics(): void {
+    perf.reset();
+    refreshDiagnostics();
+  }
+  function diagMs(ms: number): string {
+    return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
+  }
+  let slowTimers = $derived(
+    Object.entries(diagnostics?.timers ?? {})
+      .sort((a, b) => b[1].totalMs - a[1].totalMs)
+      .slice(0, 6),
+  );
+  let busyCounters = $derived(
+    Object.entries(diagnostics?.counters ?? {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8),
+  );
 
   let selectedProvider = $derived(
     catalog?.providers.find((provider) => provider.id === selectedProviderId) ??
@@ -149,6 +180,7 @@
   }
 
   onMount(async () => {
+    refreshDiagnostics();
     // The model list does not depend on the setup state, so it starts first;
     // a slow or restarting backend cannot hold the picker hostage.
     const catalogTask = loadCatalog(false);
@@ -173,6 +205,9 @@
         searchUrl: state.searchUrl ?? "",
       };
       searchUrl = state.searchUrl ?? "";
+      journalMode = state.journalMode || "project";
+      journalPath = state.journalPath ?? "";
+      void refreshRecordPaths();
       providerKind =
         state.provider === "anthropic-compatible"
           ? "anthropic-compatible"
@@ -278,6 +313,31 @@
       await saveLocale(next);
     } catch (cause) {
       error = $t("wizard.error.save", { message: errText(cause) });
+    }
+  }
+
+  /// The journal setting applies at once, like the permission override: it
+  /// changes where the *next* turn writes, not what the current one does.
+  async function changeJournal(mode: string): Promise<void> {
+    journalMode = mode;
+    await writeJournal();
+  }
+
+  async function writeJournal(): Promise<void> {
+    error = null;
+    try {
+      await saveJournal(journalMode, journalPath.trim());
+      await refreshRecordPaths();
+    } catch (cause) {
+      error = errText(cause);
+    }
+  }
+
+  async function refreshRecordPaths(): Promise<void> {
+    try {
+      recordFiles = await recordPaths();
+    } catch {
+      recordFiles = { log: "", progressDir: "" };
     }
   }
 
@@ -603,6 +663,53 @@
       </section>
 
       <section>
+        <h3>{$t("settings.journal")}</h3>
+        <p class="muted">{$t("settings.journalHint")}</p>
+        <div class="segmented">
+          <button
+            class:active={journalMode === "project"}
+            onclick={() => void changeJournal("project")}
+          >
+            {$t("settings.journalProject")}
+          </button>
+          <button
+            class:active={journalMode === "state"}
+            onclick={() => void changeJournal("state")}
+          >
+            {$t("settings.journalState")}
+          </button>
+          <button
+            class:active={journalMode === "custom"}
+            onclick={() => void changeJournal("custom")}
+          >
+            {$t("settings.journalCustom")}
+          </button>
+        </div>
+        {#if journalMode === "custom"}
+          <div class="preset-create">
+            <input
+              bind:value={journalPath}
+              placeholder={$t("settings.journalPathPlaceholder")}
+              spellcheck="false"
+            />
+            <button class="ghost" onclick={() => void writeJournal()}>
+              {$t("settings.journalApply")}
+            </button>
+          </div>
+        {/if}
+        <dl class="meta">
+          <div>
+            <dt>{$t("settings.journalLog")}</dt>
+            <dd title={recordFiles.log}>{recordFiles.log || "—"}</dd>
+          </div>
+          <div>
+            <dt>{$t("settings.journalProgress")}</dt>
+            <dd title={recordFiles.progressDir}>{recordFiles.progressDir || "—"}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section>
         <h3>{$t("settings.language")}</h3>
         <div class="segmented">
           <button class:active={$locale === "zh"} onclick={() => changeLocale("zh")}>
@@ -623,6 +730,49 @@
           </div>
         </dl>
         <p class="hint">{$t("settings.sessionHint")}</p>
+      </section>
+
+      <section>
+        <h3>{$t("settings.diagnostics")}</h3>
+        {#if diagnostics}
+          <dl class="meta">
+            <div>
+              <dt>{$t("settings.diagnosticsUptime")}</dt>
+              <dd>{diagMs(diagnostics.uptimeMs)}</dd>
+            </div>
+            <div>
+              <dt>{$t("settings.diagnosticsStalls")}</dt>
+              <dd>
+                {diagnostics.stalls.count} · {diagMs(diagnostics.stalls.maxMs)}
+              </dd>
+            </div>
+            {#each slowTimers as [name, stat]}
+              <div>
+                <dt>{name}</dt>
+                <dd>
+                  {stat.count}× · max {diagMs(stat.maxMs)} · {diagMs(stat.totalMs)}
+                </dd>
+              </div>
+            {/each}
+            {#each busyCounters as [name, value]}
+              <div>
+                <dt>{name}</dt>
+                <dd>{value}</dd>
+              </div>
+            {/each}
+          </dl>
+        {:else}
+          <p class="hint">{$t("settings.diagnosticsEmpty")}</p>
+        {/if}
+        <p class="hint">{$t("settings.diagnosticsHint")}</p>
+        <div class="diag-actions">
+          <button class="ghost" onclick={refreshDiagnostics}>
+            {$t("settings.diagnosticsRefresh")}
+          </button>
+          <button class="ghost" onclick={resetDiagnostics}>
+            {$t("settings.diagnosticsReset")}
+          </button>
+        </div>
       </section>
 
       {#if error}

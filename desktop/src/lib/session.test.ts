@@ -39,6 +39,7 @@ describe("session reducer", () => {
         rig: "coding",
         workspace: "/w",
         sessionId: "s",
+        running: null,
         sessions: [],
         projects: [],
         turns: [turn(3), turn(1), turn(2)],
@@ -145,6 +146,40 @@ describe("session reducer", () => {
     });
   });
 
+  it("marks a call the kernel answered from an earlier one in the turn", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 1,
+      input: "hi",
+    });
+    state = reduce(state, {
+      type: "tool-finished",
+      seq: 1,
+      callId: 2,
+      name: "shell",
+      ok: true,
+      durationMs: 0,
+      error: null,
+      output: "same listing",
+      reused: true,
+    });
+
+    expect(state.running?.tools[0].reused).toBe(true);
+
+    // A turn stored before the field existed reads as not reused.
+    state = reduce(state, {
+      type: "tool-finished",
+      seq: 1,
+      callId: 3,
+      name: "read_file",
+      ok: true,
+      durationMs: 3,
+      error: null,
+      output: "one",
+    });
+    expect(state.running?.tools[1].reused).toBe(false);
+  });
+
   it("replaces the running turn when it finishes and ignores duplicates", () => {
     let state = reduce(initialSession(), {
       type: "turn-started",
@@ -167,6 +202,7 @@ describe("session reducer", () => {
         rig: "r",
         workspace: "/w",
         sessionId: "s",
+        running: null,
         sessions: [],
         projects: [],
         turns: [turn(4), turn(5)],
@@ -252,6 +288,7 @@ describe("session reducer", () => {
         rig: "r",
         workspace: "/w",
         sessionId: "s",
+        running: null,
         sessions: [],
         projects: [],
         turns: [turn(1)],
@@ -271,6 +308,7 @@ describe("session reducer", () => {
         rig: "r",
         workspace: "/w",
         sessionId: "a",
+        running: null,
         sessions: [meta("a", 1), meta("b", 2)],
         projects: [{ path: "/w", name: "w", openedAt: 1 }],
         turns: [],
@@ -289,6 +327,7 @@ describe("session reducer", () => {
         rig: "r",
         workspace: "/w",
         sessionId: "a",
+        running: null,
         sessions: [meta("a", 1), meta("b", 2)],
         projects: [],
         turns: [],
@@ -354,6 +393,7 @@ describe("session reducer", () => {
         rig: "r",
         workspace: "/w",
         sessionId: "a",
+        running: null,
         sessions: [meta("a", 1)],
         projects: [],
         turns: [],
@@ -377,6 +417,7 @@ describe("session reducer", () => {
         rig: "r",
         workspace: "/w",
         sessionId: "a",
+        running: null,
         sessions: [meta("a", 1)],
         projects: [],
         turns: [turn(1)],
@@ -448,6 +489,7 @@ describe("session reducer", () => {
           command: "npm run dev",
           ok: null,
           durationMs: 4000,
+          stopped: false,
           outputPath: "/out",
         },
       ],
@@ -461,6 +503,7 @@ describe("session reducer", () => {
           command: "npm run dev",
           ok: null,
           durationMs: 8000,
+          stopped: false,
           outputPath: "/out",
         },
       ],
@@ -475,6 +518,7 @@ describe("session reducer", () => {
       program: "sh",
       command: "sh -c npm run build",
       ok: false,
+      stopped: false,
       durationMs: 2400,
       outputPath: "/out/bg-1.log",
     };
@@ -491,5 +535,53 @@ describe("session reducer", () => {
       tasks: [{ ...task }],
     });
     expect(repeated).toBe(state);
+  });
+
+  // The reconcile of background rows runs in an effect that reads the store,
+  // and it dispatches. Those two facts are safe together only because the
+  // guard is the epoch: a poll that moves a running row's clock replaces the
+  // state (so the effect re-runs) without opening a conversation (so the
+  // guard holds). A `background-synced` that bumped the epoch would turn the
+  // poll into a loop — measured in WebKit before the guard existed: 2001 host
+  // calls in 1.09 s and the renderer at 117%.
+  it("moves a running row's clock without opening a new conversation", () => {
+    const task = {
+      id: "bg-1",
+      program: "npm",
+      command: "npm run dev",
+      ok: null,
+      stopped: false,
+      durationMs: 1000,
+      outputPath: "/out/bg-1.log",
+    };
+    const state = reduce(initialSession(), {
+      type: "background-synced",
+      tasks: [task],
+    });
+    const ticked = reduce(state, {
+      type: "background-synced",
+      tasks: [{ ...task, durationMs: 2000 }],
+    });
+
+    expect(ticked).not.toBe(state);
+    expect(ticked.background[0].durationMs).toBe(2000);
+    expect(ticked.epoch).toBe(state.epoch);
+
+    // The one action that does open a conversation: the reconcile has to run
+    // again because a task started before a switch is never replayed.
+    const reopened = reduce(ticked, {
+      type: "session-opened",
+      view: {
+        rig: "coding",
+        workspace: "/tmp",
+        sessionId: "s-2",
+        sessions: [],
+        projects: [],
+        turns: [],
+        running: null,
+        nextBefore: null,
+      },
+    });
+    expect(reopened.epoch).toBe(state.epoch + 1);
   });
 });

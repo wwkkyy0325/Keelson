@@ -27,6 +27,11 @@
   let draft = $state("");
   let input = $state<HTMLInputElement | null>(null);
 
+  /// Only the conversation on screen can be running, and only its own actions
+  /// have to wait for it. Another conversation's row stays usable: a turn in
+  /// one conversation must not lock the sidebar.
+  let busy = $derived(active && running);
+
   function startRename(): void {
     draft = item.title;
     renaming = true;
@@ -58,12 +63,12 @@
   }
 
   function toggleArchive(): void {
-    if (running) return;
+    if (busy) return;
     onArchive(item.id, !archived);
   }
 
   function requestDelete(): void {
-    if (running) return;
+    if (busy) return;
     onRequestDelete(item);
   }
 
@@ -94,7 +99,6 @@
     <button
       class="session-main"
       onclick={() => onSelect(item.id)}
-      disabled={running}
       aria-current={active ? "true" : undefined}
     >
       <span class="session-title">
@@ -126,7 +130,7 @@
       <button
         class="session-action"
         onclick={toggleArchive}
-        disabled={running}
+        disabled={busy}
         title={archived
           ? $t("sidebar.unarchive")
           : `${$t("sidebar.archive")} · ${$t("sidebar.archiveHint")}`}
@@ -168,7 +172,7 @@
         <button
           class="session-action delete"
           onclick={requestDelete}
-          disabled={running}
+          disabled={busy}
           title={$t("sidebar.delete")}
           aria-label={$t("sidebar.delete")}
         >

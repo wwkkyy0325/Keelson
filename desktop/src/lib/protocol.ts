@@ -6,6 +6,9 @@ export type ToolLine = {
   durationMs: number;
   args: string | null;
   output: string | null;
+  /// True when an identical call earlier in the same turn answered this one,
+  /// so no command ran. Absent on turns stored before the field.
+  reused?: boolean;
 };
 
 export type VerificationEvidence = {
@@ -118,6 +121,9 @@ export type SessionView = {
   rig: string;
   workspace: string;
   sessionId: string;
+  /// The turn this conversation is running right now, so switching back to it
+  /// shows the live card instead of an empty transcript.
+  running: { seq: number; input: string } | null;
   turns: Turn[];
   nextBefore: number | null;
   sessions: SessionMeta[];
@@ -150,9 +156,19 @@ export type SetupState = {
   activePreset: string | null;
   /// A SearXNG base URL, the last web-search backend after the model's own.
   searchUrl?: string | null;
+  /// Where the per-turn records go (ADR 0063): `project`, `state` or `custom`.
+  journalMode: string;
+  journalPath: string;
   rig: string;
   rigs: RigOption[];
   problems: string[];
+};
+
+/// Where the two records of a turn land for the open project: the step log's
+/// database and the directory of task documents.
+export type RecordPaths = {
+  log: string;
+  progressDir: string;
 };
 
 /// A named setup. It records the key slot, never the key itself, so several
@@ -224,25 +240,31 @@ export type LiveTool = {
   durationMs: number;
   error: string | null;
   output: string | null;
+  /// The answer came from an identical call earlier in the same turn.
+  reused?: boolean;
 };
 
-export type TurnStarted = { seq: number; input: string };
-export type TextDelta = { seq: number; text: string };
-export type ThinkingDelta = { seq: number; text: string };
+/// Live events name the conversation they belong to. Several conversations can
+/// have a turn running at once, so a view drops the events of the others.
+export type EventTag = { sessionId?: string };
+
+export type TurnStarted = EventTag & { seq: number; input: string };
+export type TextDelta = EventTag & { seq: number; text: string };
+export type ThinkingDelta = EventTag & { seq: number; text: string };
 /// One finished model call; the running turn adds it to its live cost line.
-export type ModelFinished = {
+export type ModelFinished = EventTag & {
   seq: number;
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
 };
-export type ToolStartedEvent = {
+export type ToolStartedEvent = EventTag & {
   seq: number;
   callId: number;
   name: string;
   args: string | null;
 };
-export type ToolFinishedEvent = {
+export type ToolFinishedEvent = EventTag & {
   seq: number;
   callId: number;
   name: string;
@@ -250,21 +272,24 @@ export type ToolFinishedEvent = {
   durationMs: number;
   error: string | null;
   output: string | null;
+  reused?: boolean;
 };
 /// A shell command the running turn moved to the background.
-export type BackgroundStarted = {
+export type BackgroundStarted = EventTag & {
   seq: number;
   id: string;
   program: string;
   pid: number;
 };
-export type BackgroundFinished = {
+export type BackgroundFinished = EventTag & {
   seq: number;
   id: string;
   program: string;
   exitCode: number | null;
   durationMs: number;
   outputPath: string;
+  /// The user stopped it; a non-zero exit code is the stop, not a failure.
+  stopped: boolean;
 };
 
 /// One background command as the session shows it. `durationMs` is the
@@ -278,6 +303,9 @@ export type LiveBackground = {
   ok: boolean | null;
   durationMs: number;
   outputPath: string | null;
+  /// The user asked to stop it. While the command still runs the row says so
+  /// and stops offering the control.
+  stopped: boolean;
 };
 
 /// The engine's view of a background command, without consuming its result.
@@ -290,11 +318,14 @@ export type BackgroundTaskView = {
   exitCode: number | null;
   durationMs: number;
   outputPath: string;
+  /// The user stopped it. While it still runs the row says so and offers no
+  /// control.
+  stopped: boolean;
 };
 
 /// The answer is written; the turn is running its acceptance checks.
-export type TurnVerifying = { seq: number; checks: number };
-export type TurnChanges = { seq: number };
-export type TurnFinished = { turn: Turn };
-export type TurnFailed = { seq: number; message: string };
+export type TurnVerifying = EventTag & { seq: number; checks: number };
+export type TurnChanges = EventTag & { seq: number };
+export type TurnFinished = EventTag & { turn: Turn };
+export type TurnFailed = EventTag & { seq: number; message: string };
 export type SessionUpdated = { meta: SessionMeta };

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
   import {
     applyPreset,
     archiveSession,
@@ -27,6 +27,9 @@
   import { dispatch, session } from "../lib/session-store";
   import { rigTitle, t } from "../lib/i18n";
   import { baseName } from "../lib/paths";
+  import { perf } from "../lib/perf";
+  import { ACCOUNT_EVERY_MS, reportTurn } from "../lib/report";
+  import { visible } from "../lib/visible";
   import AppHeader from "./AppHeader.svelte";
   import Composer from "./Composer.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -79,7 +82,9 @@
   async function syncBackground(): Promise<void> {
     const epoch = $session.epoch;
     try {
-      const tasks = await backgroundTasks();
+      const tasks = await perf.timeAsync("background.sync", () =>
+        backgroundTasks(),
+      );
       // A switch mid-request must not paint the previous session's rows.
       if ($session.epoch !== epoch) return;
       dispatch({
@@ -91,6 +96,7 @@
           ok: task.running ? null : task.exitCode === 0,
           durationMs: task.durationMs,
           outputPath: task.outputPath,
+          stopped: task.stopped,
         })),
       });
     } catch {
@@ -106,40 +112,117 @@
   function pollBackground(): void {
     if (backgroundTimer !== null) return;
     backgroundTick = 0;
+    // Read once here, not in the effect that arms the poll: `syncBackground`
+    // brackets its request with the epoch, and a store read inside a tracked
+    // scope makes that scope depend on every dispatch (ADR 0072).
     void syncBackground();
     backgroundTimer = setInterval(() => {
       backgroundTick += 1;
+      perf.count("background.tick");
       const running = $session.background.some((task) => task.ok === null);
       if (running || backgroundTick % 5 === 0) void syncBackground();
     }, 1000);
   }
 
+  function stopPoll(): void {
+    if (backgroundTimer !== null) {
+      clearInterval(backgroundTimer);
+      backgroundTimer = null;
+    }
+  }
+
   // A background command outlives the view. On every session open, reconcile
   // first: a task started before a switch or a reconnect has to reappear, and
   // its start event will never be replayed.
+  //
+  // The epoch guard is not an optimisation (ADR 0072). This effect read the
+  // store, so every dispatch re-ran it, and it dispatched on every run — the
+  // same loop the poll below was in, and both had to be closed. A re-run of
+  // this effect is not a new conversation; only an epoch that changed is.
+  let reconciledEpoch = -1;
   $effect(() => {
-    void backgroundEpoch;
+    const epoch = $session.epoch;
     untrack(() => {
+      if (reconciledEpoch === epoch) return;
+      reconciledEpoch = epoch;
       void syncBackground();
     });
   });
 
+  // The poll is armed by a boolean, and nothing the poll does is tracked. Both
+  // halves are load-bearing (ADR 0072). The body used to call `pollBackground`
+  // directly, which reads the store synchronously; the effect therefore
+  // re-ran on every dispatch, and its cleanup cleared the interval it had just
+  // armed, so the next run armed it again and polled again. With one running
+  // row on screen that was 1999 arms and 2001 host calls in four seconds, and
+  // the renderer at 117% (measured in WebKit, real component).
   $effect(() => {
-    if (backgroundVisible) {
-      pollBackground();
-    } else if (backgroundTimer !== null) {
-      // A new session, or a drained task, clears the rows; the poll goes
-      // with them.
-      clearInterval(backgroundTimer);
-      backgroundTimer = null;
-    }
-    return () => {
-      // The conversation closed: no more reads against a gone engine.
-      if (backgroundTimer !== null) {
-        clearInterval(backgroundTimer);
-        backgroundTimer = null;
+    const wanted = backgroundVisible && $visible;
+    untrack(() => {
+      if (wanted) {
+        pollBackground();
+      } else {
+        // A new session, a drained task, or a window nobody can see: the rows
+        // are not on screen, so the poll goes quiet. The kernel keeps the
+        // command running; the rows are read again when the window returns.
+        stopPoll();
       }
-    };
+    });
+  });
+
+  // The conversation closed: no more reads against a gone engine. This effect
+  // has no tracked dependency, so it runs once and cleans up only at destroy.
+  $effect(() => () => stopPoll());
+
+  /// Every turn leaves an account on disk (lib/report.ts, ADR 0071). The effect
+  /// tracks the sequence number alone: reading the running card itself would
+  /// re-run it on every streamed delta, which is the thing being measured.
+  let runningSeq = $derived($session.running?.seq ?? -1);
+  let accountTimer: ReturnType<typeof setInterval> | null = null;
+  let accountedSeq = -1;
+  let accountedWorkspace = "";
+
+  function stopAccounting(): void {
+    if (accountTimer !== null) {
+      clearInterval(accountTimer);
+      accountTimer = null;
+    }
+    if (accountedSeq >= 0) {
+      const seq = accountedSeq;
+      accountedSeq = -1;
+      void reportTurn(accountedWorkspace, seq, "end");
+    }
+  }
+
+  $effect(() => {
+    const seq = runningSeq;
+    const workspace = $session.workspace;
+    untrack(() => {
+      if (seq < 0) {
+        stopAccounting();
+        return;
+      }
+      if (accountedSeq !== seq) {
+        accountedSeq = seq;
+        accountedWorkspace = workspace;
+        void reportTurn(workspace, seq, "start");
+      }
+      if (accountTimer === null) {
+        // The account of a turn in flight is written over itself, so a spike is
+        // bracketed by the sample that follows it without growing a file per
+        // tick.
+        accountTimer = setInterval(() => {
+          void reportTurn(accountedWorkspace, seq, "during");
+        }, ACCOUNT_EVERY_MS);
+      }
+    });
+  });
+
+  onDestroy(() => {
+    if (accountTimer !== null) {
+      clearInterval(accountTimer);
+      accountTimer = null;
+    }
   });
   let undoable = $derived(
     !$session.running && !undoDone && latestChanges.length > 0,
@@ -314,7 +397,6 @@
   }
 
   async function openProject(path: string): Promise<void> {
-    if ($session.running) return;
     uiError = null;
     try {
       const view = await openSession(path, null);
@@ -325,7 +407,6 @@
   }
 
   async function newConversation(): Promise<void> {
-    if ($session.running) return;
     uiError = null;
     prefillDraft = "";
     try {
@@ -337,7 +418,10 @@
   }
 
   async function selectConversation(id: string): Promise<void> {
-    if (id === $session.sessionId || $session.running) return;
+    // Switching is allowed while a turn runs: the turn belongs to its own
+    // conversation and keeps streaming there, and its events are tagged so they
+    // never paint into this one.
+    if (id === $session.sessionId) return;
     uiError = null;
     prefillDraft = "";
     try {
@@ -365,7 +449,7 @@
   }
 
   async function removeConversation(id: string): Promise<void> {
-    if ($session.running) return;
+    if (id === $session.sessionId && $session.running) return;
     uiError = null;
     const wasCurrent = id === $session.sessionId;
     try {
@@ -396,7 +480,7 @@
     id: string,
     archived: boolean,
   ): Promise<void> {
-    if ($session.running) return;
+    if (id === $session.sessionId && $session.running) return;
     uiError = null;
     const wasCurrent = id === $session.sessionId;
     try {

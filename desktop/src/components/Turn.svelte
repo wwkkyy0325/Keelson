@@ -1,6 +1,12 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { t } from "../lib/i18n";
   import type { FileChange, Turn } from "../lib/protocol";
+  import {
+    INITIAL_DENSITY,
+    cull,
+    estimateTurnHeight,
+  } from "../lib/cull";
   import Markdown from "./Markdown.svelte";
 
   let {
@@ -10,6 +16,10 @@
     undoable = false,
     onUndo = () => {},
     onBranch = () => {},
+    scrollRoot = null,
+    density = INITIAL_DENSITY,
+    onMeasured = () => {},
+    onRendered = () => {},
   }: {
     turn: Turn;
     /// Undo belongs to the latest turn only; the icon still shows on it when
@@ -19,14 +29,100 @@
     undoable?: boolean;
     onUndo?: () => void;
     onBranch?: () => void;
+    /// The scrolling transcript. A turn far above it is not visible, so its
+    /// body waits until it comes near (lib/cull.ts).
+    scrollRoot?: HTMLElement | null;
+    /// Pixels of rendered answer per character, learned by the transcript, read
+    /// once when the stand-in is created.
+    density?: number;
+    /// Reports this turn's rendered height, so the stand-ins of the turns
+    /// above it can be sized from real markup instead of a guess.
+    onMeasured?: (chars: number, renderedPx: number) => void;
+    /// A stand-in was just replaced by the real body, which changed the height
+    /// of everything below it.
+    onRendered?: () => void;
   } = $props();
 
   let passed = $derived(turn.verification?.passed ?? turn.verificationPassed);
   let copied = $state<string | null>(null);
+  /// The body is built once the turn nears the viewport. The newest turn is
+  /// where the user is looking, so it starts rendered.
+  // svelte-ignore state_referenced_locally
+  let revealed = $state(isLatest);
+  /// The height reserved while the body has not rendered. It is taken once, at
+  /// mount, and never recomputed: a figure that keeps changing resizes the
+  /// turns above the reader, and the text they are reading moves with it. The
+  /// learned figure still reaches the turns that mount later (a page of older
+  /// turns), which is where it can help.
+  // svelte-ignore state_referenced_locally
+  let placeholder = $state(
+    estimateTurnHeight(
+      turn.answer.length,
+      turn.tools.length,
+      changes.length > 0 || passed !== null,
+      density,
+    ),
+  );
+
+  let article = $state<HTMLElement | null>(null);
+  /// The stand-in this turn is holding right now, so the part of the article
+  /// that is never given back can be measured against it.
+  let standIn = $state<HTMLElement | null>(null);
+  /// The height this body really had when it rendered, article and all. A body
+  /// that is given back uses the body part of it as its stand-in, so collapsing
+  /// does not resize the thread.
+  let measuredPx = 0;
+  /// The part that stays when the body is given back: the user's message, its
+  /// action row, an error line. It is measured once, at mount, as the article
+  /// minus the stand-in it holds then. Taking the whole article as the stand-in
+  /// instead would add this height back on every collapse: measured on the
+  /// 45-turn harness, one turn went 4356 px rendered → 4454 px collapsed, and
+  /// the extra is the header.
+  let headerPx = 0;
+
+  $effect(() => {
+    if (headerPx > 0 || revealed) return;
+    untrack(() => {
+      if (article === null || standIn === null) return;
+      const height =
+        article.getBoundingClientRect().height - standIn.getBoundingClientRect().height;
+      if (height > 0) headerPx = height;
+    });
+  });
+
+  function reveal(): void {
+    revealed = true;
+    onRendered();
+  }
+
+  /// The body is far behind the reader (lib/cull.ts). The newest turn is where
+  /// the reader is looking, so it is never given back.
+  function collapse(): void {
+    if (isLatest || !revealed) return;
+    if (measuredPx > 0) placeholder = Math.max(22, Math.round(measuredPx - headerPx));
+    revealed = false;
+  }
+
+  // What the stand-ins were guessing at, now measured: the transcript averages
+  // it into its own figure. Reading the height is untracked so the layout read
+  // does not become a dependency of this effect.
+  $effect(() => {
+    if (!revealed) return;
+    untrack(() => {
+      const node = article;
+      if (node === null) return;
+      const height = node.getBoundingClientRect().height;
+      if (height > 0) measuredPx = height;
+      onMeasured(turn.answer.length, height);
+    });
+  });
   /// A collapsed `<details>` still puts its text in the DOM, and a long turn
   /// carries hundreds of tool rows. Render a row's payload only once it is
   /// opened.
   let openTools = $state<Set<number>>(new Set());
+/// The reasoning fold holds the turn's whole train of thought — tens of KB on a
+/// long turn — so it is put in the page when it is opened, like a tool row.
+let thinkingOpen = $state(false);
 
   function setToolOpen(index: number, open: boolean): void {
     const next = new Set(openTools);
@@ -103,7 +199,16 @@
   }
 </script>
 
-<article class="turn">
+<article
+  class="turn"
+  bind:this={article}
+  use:cull={{
+    root: scrollRoot,
+    onReveal: reveal,
+    onCollapse: collapse,
+    isRevealed: () => revealed,
+  }}
+>
   <div class="turn-block">
     <div class="user">{turn.input}</div>
     <div class="turn-actions user-actions">
@@ -124,12 +229,17 @@
     </div>
   </div>
 
+  {#if revealed}
   <!-- Thinking and tool calls share one indented group: both are how the
        turn got to the answer, collapsed until asked for. -->
   {#if turn.thinking || turn.tools.length > 0}
     <div class="tools">
       {#if turn.thinking}
-        <details class="tool">
+        <details
+          class="tool"
+          ontoggle={(event) =>
+            (thinkingOpen = (event.currentTarget as HTMLDetailsElement).open)}
+        >
           <summary>
             <span class="tool-mark">·</span>
             <span class="tool-name">{$t("turn.thinking")}</span>
@@ -139,9 +249,11 @@
               })}</span
             >
           </summary>
-          <div class="tool-detail">
-            <pre>{turn.thinking}</pre>
-          </div>
+          {#if thinkingOpen}
+            <div class="tool-detail">
+              <pre>{turn.thinking}</pre>
+            </div>
+          {/if}
         </details>
       {/if}
       {#each turn.tools as tool, index}
@@ -165,7 +277,16 @@
               <span class="tool-args">{tool.args}</span>
             {/if}
             {#if tool.ok !== null}
-              <span class="tool-time">{took(tool.durationMs, tool.ok)}</span>
+              {#if tool.reused}
+                <span
+                  class="tool-reused"
+                  title={$t("turn.toolReusedHint", {
+                    duration: took(tool.durationMs, tool.ok),
+                  })}>{$t("turn.toolReused")}</span
+                >
+              {:else}
+                <span class="tool-time">{took(tool.durationMs, tool.ok)}</span>
+              {/if}
             {/if}
           </summary>
           {#if openTools.has(index)}
@@ -315,6 +436,13 @@
         </div>
       </div>
     </div>
+  {/if}
+  {:else}
+    <div
+      class="turn-placeholder"
+      bind:this={standIn}
+      style:height={`${placeholder}px`}
+    ></div>
   {/if}
 
   {#if turn.error}

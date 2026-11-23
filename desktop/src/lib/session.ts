@@ -104,6 +104,8 @@ export type Action =
       durationMs: number;
       error: string | null;
       output: string | null;
+      /// The kernel answered from an identical earlier call in this turn.
+      reused?: boolean;
     }
   | { type: "background-started"; id: string; program: string }
   | {
@@ -113,8 +115,11 @@ export type Action =
       exitCode: number | null;
       durationMs: number;
       outputPath: string;
+      /// The user stopped it; a non-zero exit code is the stop, not a failure.
+      stopped: boolean;
     }
   | { type: "background-synced"; tasks: LiveBackground[] }
+  | { type: "background-stop"; id: string; stopped: boolean }
   | {
       type: "model-finished";
       seq: number;
@@ -145,9 +150,29 @@ function sameBackground(
       task.command === other.command &&
       task.ok === other.ok &&
       task.durationMs === other.durationMs &&
-      task.outputPath === other.outputPath
+      task.outputPath === other.outputPath &&
+      task.stopped === other.stopped
     );
   });
+}
+
+/// A turn that started and has not finished. The live card is rebuilt from
+/// `seq` and `input` when the window switches back to a running conversation,
+/// so elapsed time counts from the switch and the streamed text resumes from
+/// the next delta on.
+function liveTurn(seq: number, input: string): RunningTurn {
+  return {
+    seq,
+    input,
+    startedAt: Date.now(),
+    usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+    modelCalls: 0,
+    text: "",
+    thinking: "",
+    process: [],
+    tools: [],
+    verifying: null,
+  };
 }
 
 export function reduce(state: SessionState, action: Action): SessionState {
@@ -161,6 +186,12 @@ export function reduce(state: SessionState, action: Action): SessionState {
         sessionId: action.view.sessionId,
         sessions: sortSessions(action.view.sessions),
         projects: action.view.projects,
+        // A conversation can still be running when the window comes back to
+        // it. The stream resumes on the next delta, and the input is what the
+        // user sent, so the live card is rebuilt from the engine's view.
+        running: action.view.running
+          ? liveTurn(action.view.running.seq, action.view.running.input)
+          : null,
         turns: normalize(action.view.turns),
         nextBefore: action.view.nextBefore,
       };
@@ -195,18 +226,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
       }
       return {
         ...state,
-        running: {
-          seq: action.seq,
-          input: action.input,
-          startedAt: Date.now(),
-          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
-          modelCalls: 0,
-          text: "",
-          thinking: "",
-          process: [],
-          tools: [],
-          verifying: null,
-        },
+        running: liveTurn(action.seq, action.input),
         pendingInteraction: null,
         lastError: null,
       };
@@ -291,6 +311,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
         durationMs: action.durationMs,
         error: action.error,
         output: action.output,
+        reused: action.reused === true,
       };
       const known = state.running.tools.some(
         (tool) => tool.callId === action.callId,
@@ -314,6 +335,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
         ok: null,
         durationMs: 0,
         outputPath: null,
+        stopped: false,
       };
       return { ...state, background: [...state.background, task] };
     }
@@ -329,6 +351,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
                   ok,
                   durationMs: action.durationMs,
                   outputPath: action.outputPath,
+                  stopped: action.stopped,
                 }
               : task,
           )
@@ -341,10 +364,23 @@ export function reduce(state: SessionState, action: Action): SessionState {
               ok,
               durationMs: action.durationMs,
               outputPath: action.outputPath,
+              stopped: action.stopped,
             },
           ];
       return { ...state, background };
     }
+
+    case "background-stop":
+      // The click is answered before the kernel reports the stop: the row says
+      // "stopping" and the control goes away.
+      return {
+        ...state,
+        background: state.background.map((task) =>
+          task.id === action.id && task.ok === null
+            ? { ...task, stopped: action.stopped }
+            : task,
+        ),
+      };
 
     case "background-synced":
       // The engine's measured runtime is the row's only clock: the poll

@@ -1,14 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { get } from "svelte/store";
 import type {
   Attachment,
   BackgroundFinished,
   BackgroundStarted,
   BackgroundTaskView,
+  EventTag,
   FileChange,
   Interaction,
   ModelCatalog,
   ModelFinished,
+  RecordPaths,
   SessionMeta,
   SessionStatus,
   SessionUpdated,
@@ -25,7 +28,8 @@ import type {
   TurnStarted,
   TurnVerifying,
 } from "./protocol";
-import { dispatch } from "./session-store";
+import { dispatch, session } from "./session-store";
+import { perf } from "./perf";
 
 export function setupState(): Promise<SetupState> {
   return invoke("setup_state");
@@ -86,6 +90,13 @@ export function openSession(
   sessionId: string | null = null,
 ): Promise<SessionView> {
   return invoke("open_session", { workspace, sessionId });
+}
+
+/// Forgets every open conversation in the backend, cancelling the turns still
+/// streaming into them. The next open builds a fresh engine, so a workspace
+/// closes only on work the user asked for, never on a stranded turn.
+export function forceRecover(): Promise<boolean> {
+  return invoke("force_recover");
 }
 
 /// Reopens a conversation, blank or not, under the current settings.
@@ -171,6 +182,18 @@ export function savePermission(level: string): Promise<void> {
   return invoke("save_permission", { level });
 }
 
+/// Where the per-turn step journal goes: `project`, `state` or `custom`.
+export function saveJournal(mode: string, path: string): Promise<void> {
+  return invoke("save_journal", { mode, path });
+}
+
+/// Where the next turn writes its two records (ADR 0063, 0064), for the
+/// settings panel: the step log's database and the directory of task
+/// documents.
+export function recordPaths(): Promise<RecordPaths> {
+  return invoke("record_paths");
+}
+
 /// Running and finished-but-unreported background commands. Reading this
 /// never consumes a result; the engine hands those to the model itself.
 export function backgroundTasks(): Promise<BackgroundTaskView[]> {
@@ -212,91 +235,79 @@ export function pendingInteraction(): Promise<Interaction | null> {
 /// session so no early stream is missed.
 export async function listenToEvents(): Promise<UnlistenFn[]> {
   const unlisten: UnlistenFn[] = [];
-  unlisten.push(
-    await listen<TurnStarted>("keelson:turn-started", (event) =>
-      dispatch({ type: "turn-started", ...event.payload }),
-    ),
-  );
-  unlisten.push(
-    await listen<TextDelta>("keelson:text-delta", (event) =>
-      dispatch({ type: "text-delta", ...event.payload }),
-    ),
-  );
-  unlisten.push(
-    await listen<ThinkingDelta>("keelson:thinking-delta", (event) =>
-      dispatch({ type: "thinking-delta", ...event.payload }),
-    ),
-  );
-  unlisten.push(
-    await listen<ModelFinished>("keelson:model-finished", (event) =>
-      dispatch({ type: "model-finished", ...event.payload }),
-    ),
-  );
-  unlisten.push(
-    await listen<ToolStartedEvent>("keelson:tool-started", (event) =>
-      dispatch({ type: "tool-started", ...event.payload }),
-    ),
-  );
-  unlisten.push(
-    await listen<ToolFinishedEvent>("keelson:tool-finished", (event) =>
-      dispatch({ type: "tool-finished", ...event.payload }),
-    ),
-  );
-  unlisten.push(
-    await listen<BackgroundStarted>("keelson:background-started", (event) =>
-      dispatch({
-        type: "background-started",
-        id: event.payload.id,
-        program: event.payload.program,
+  /// Live events name the conversation they belong to. Several conversations can
+  /// have a turn running at once, and neither may paint into the other, so an
+  /// event tagged with a different id is dropped before it reaches the reducer.
+  const owned = (payload: EventTag): boolean =>
+    payload.sessionId === undefined || payload.sessionId === get(session).sessionId;
+  const on = async <T extends EventTag>(
+    name: string,
+    handle: (payload: T) => void,
+  ): Promise<void> => {
+    unlisten.push(
+      await listen<T>(name, (event) => {
+        if (!owned(event.payload)) return;
+        perf.count(name);
+        handle(event.payload);
       }),
-    ),
+    );
+  };
+  await on<TurnStarted>("keelson:turn-started", (payload) =>
+    dispatch({ type: "turn-started", ...payload }),
   );
-  unlisten.push(
-    await listen<BackgroundFinished>("keelson:background-finished", (event) =>
-      dispatch({
-        type: "background-finished",
-        id: event.payload.id,
-        program: event.payload.program,
-        exitCode: event.payload.exitCode,
-        durationMs: event.payload.durationMs,
-        outputPath: event.payload.outputPath,
-      }),
-    ),
+  await on<TextDelta>("keelson:text-delta", (payload) =>
+    dispatch({ type: "text-delta", ...payload }),
   );
-  unlisten.push(
-    await listen<TurnVerifying>("keelson:turn-verifying", (event) =>
-      dispatch({ type: "turn-verifying", ...event.payload }),
-    ),
+  await on<ThinkingDelta>("keelson:thinking-delta", (payload) =>
+    dispatch({ type: "thinking-delta", ...payload }),
   );
-  unlisten.push(
-    await listen<TurnChanges>("keelson:turn-changes", (event) =>
-      dispatch({ type: "turn-changes", seq: event.payload.seq }),
-    ),
+  await on<ModelFinished>("keelson:model-finished", (payload) =>
+    dispatch({ type: "model-finished", ...payload }),
   );
-  unlisten.push(
-    await listen<TurnFinished>("keelson:turn-finished", (event) =>
-      dispatch({ type: "turn-finished", turn: event.payload.turn }),
-    ),
+  await on<ToolStartedEvent>("keelson:tool-started", (payload) =>
+    dispatch({ type: "tool-started", ...payload }),
   );
-  unlisten.push(
-    await listen<TurnFailed>("keelson:turn-failed", (event) =>
-      dispatch({ type: "turn-failed", ...event.payload }),
-    ),
+  await on<ToolFinishedEvent>("keelson:tool-finished", (payload) =>
+    dispatch({ type: "tool-finished", ...payload }),
   );
-  unlisten.push(
-    await listen<Interaction>("keelson:interaction-requested", (event) =>
-      dispatch({ type: "interaction-requested", interaction: event.payload }),
-    ),
+  await on<BackgroundStarted>("keelson:background-started", (payload) =>
+    dispatch({
+      type: "background-started",
+      id: payload.id,
+      program: payload.program,
+    }),
   );
-  unlisten.push(
-    await listen<{ id: string }>("keelson:interaction-resolved", (event) =>
-      dispatch({ type: "interaction-resolved", id: event.payload.id }),
-    ),
+  await on<BackgroundFinished>("keelson:background-finished", (payload) =>
+    dispatch({
+      type: "background-finished",
+      id: payload.id,
+      program: payload.program,
+      exitCode: payload.exitCode,
+      durationMs: payload.durationMs,
+      outputPath: payload.outputPath,
+      stopped: payload.stopped,
+    }),
   );
-  unlisten.push(
-    await listen<SessionUpdated>("keelson:session-updated", (event) =>
-      dispatch({ type: "session-updated", meta: event.payload.meta }),
-    ),
+  await on<TurnVerifying>("keelson:turn-verifying", (payload) =>
+    dispatch({ type: "turn-verifying", ...payload }),
+  );
+  await on<TurnChanges>("keelson:turn-changes", (payload) =>
+    dispatch({ type: "turn-changes", seq: payload.seq }),
+  );
+  await on<TurnFinished>("keelson:turn-finished", (payload) =>
+    dispatch({ type: "turn-finished", turn: payload.turn }),
+  );
+  await on<TurnFailed>("keelson:turn-failed", (payload) =>
+    dispatch({ type: "turn-failed", ...payload }),
+  );
+  await on<Interaction & EventTag>("keelson:interaction-requested", (payload) =>
+    dispatch({ type: "interaction-requested", interaction: payload }),
+  );
+  await on<{ id: string } & EventTag>("keelson:interaction-resolved", (payload) =>
+    dispatch({ type: "interaction-resolved", id: payload.id }),
+  );
+  await on<SessionUpdated & EventTag>("keelson:session-updated", (payload) =>
+    dispatch({ type: "session-updated", meta: payload.meta }),
   );
   return unlisten;
 }
