@@ -6,6 +6,7 @@
     forceRecover,
     listenToEvents,
     openSession,
+    reopenSession,
     setupState,
   } from "./lib/api";
   import { dispatch, session } from "./lib/session-store";
@@ -183,11 +184,28 @@
     }
   }
 
+  /// A setting that decides what the next turn calls (the connection, its key,
+  /// the rig) has just been written. Reopening under the same id is what lets
+  /// the host rebuild an idle engine from it: `openSession` refuses a blank
+  /// conversation (it has no document yet) and keeps the engine of one that
+  /// has, which is exactly the engine the new setting has to replace.
   async function reconnect(): Promise<string | null> {
-    return enterApp(
-      $session.workspace || undefined,
-      $session.sessionId || undefined,
-    );
+    const workspace = $session.workspace || null;
+    const sessionId = $session.sessionId;
+    try {
+      const view = await withTimeout(
+        sessionId
+          ? reopenSession(workspace, sessionId)
+          : openSession(workspace, null),
+        15000,
+        $t("app.openTimeout"),
+      );
+      dispatch({ type: "session-opened", view });
+      phase = "app";
+      return null;
+    } catch (error) {
+      return errText(error);
+    }
   }
 
   /// The status bar's preset list is read from the config after a save,

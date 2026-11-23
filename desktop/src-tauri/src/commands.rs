@@ -1,6 +1,8 @@
 //! Tauri commands: setup, the desktop's only write path into the engine, and
 //! the session read model.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,7 +20,7 @@ use crate::checkpoints;
 use crate::config::{self, ProjectEntry};
 use crate::records;
 use crate::sessions::{self, SessionMeta};
-use crate::state::{CurrentSession, DesktopState, OpenConversation, RunningTurn};
+use crate::state::{Connection, CurrentSession, DesktopState, OpenConversation, RunningTurn};
 use crate::taskdoc;
 
 pub const EV_TURN_STARTED: &str = "keelson:turn-started";
@@ -1205,6 +1207,27 @@ async fn open_inner(
     let fallback = rig_name_for(&provider);
     let preferred = chosen_rig(&config, fallback);
 
+    // What a conversation opened now would be built with. An idle conversation
+    // whose engine was built from anything else is rebuilt when it opens, so
+    // the model the status line names is the model the next turn calls — and a
+    // changed key or endpoint reaches conversations that are already here
+    // (ADR 0039).
+    let connection = Connection {
+        provider,
+        provider_name: config.provider_name.clone(),
+        model: config.model.clone(),
+        base_url: config.base_url.trim().to_owned(),
+        context_window: config.model_context,
+        search_url: config
+            .search_url
+            .clone()
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
+        search_key: fingerprint(search_key.as_deref()),
+        key: fingerprint(key.as_deref()),
+    };
+
     let state_dir = state_dir_for(&workspace);
     let (session_id, session_list) = {
         let _guard = state
@@ -1234,20 +1257,21 @@ async fn open_inner(
         (session_id, list)
     };
     // Reopening a conversation the app already has open usually keeps its
-    // engine; only a blank one is rebuilt, and the check below says why.
+    // engine; `rebuild_wanted` says when it does not.
     remember_workspace(&state, &workspace);
-    // A conversation with a document or with work in flight keeps its engine:
-    // a turn may still be streaming into it and its background commands are
-    // running, so rebuilding would take both down. A blank conversation has
-    // neither, and its engine holds the rig it was first opened with — keeping
-    // it would mean the rig picked in the empty composer is saved as the
-    // default and never runs, while the status line keeps naming the old one
-    // (ADR 0039).
+    // A conversation with work in flight always keeps its engine: a turn may
+    // still be streaming into it and its background commands are running, so
+    // rebuilding would take both down. An idle one keeps it only when nothing
+    // asked for a new one: a blank conversation holds the rig it was first
+    // opened with, and a connection change holds the model the engine calls —
+    // keeping either would mean the setting the status line shows is not the
+    // one running (ADR 0039).
     let has_document = session_list.iter().any(|meta| meta.id == session_id);
     // The send path reads this flag instead of loading the document again.
     let archived = archived_in(&session_list, &session_id);
     if let Some(open) = state.open_of(&session_id) {
-        if has_document || conversation_busy(&open) {
+        let other = open.connection != connection;
+        if !rebuild_wanted(has_document, conversation_busy(&open), other) {
             // The window shows this conversation now, and every command that
             // does not name one reads this pointer: returning the view without
             // moving it is how a send ended up in the conversation the user had
@@ -1284,11 +1308,11 @@ async fn open_inner(
     }
 
     let model = key.map(|api_key| ModelOverride {
-        provider,
-        model: config.model.clone(),
+        provider: connection.provider.clone(),
+        model: connection.model.clone(),
         base_url: Some(config.base_url.clone()).filter(|url| !url.trim().is_empty()),
         api_key,
-        context_window: config.model_context,
+        context_window: connection.context_window,
     });
 
     let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel(256);
@@ -1325,6 +1349,7 @@ async fn open_inner(
         cancel: Mutex::new(None),
         seq: Arc::new(AtomicU32::new(0)),
         running: Mutex::new(None),
+        connection,
     });
     state.install_open(open.clone());
     show_conversation(&state, &open, Some(archived));
@@ -1624,9 +1649,7 @@ pub fn save_permission(state: State<'_, SharedState>, level: String) -> Result<(
         config.permission = Some(parsed.as_str().to_owned());
         config::save_config(&config)?;
     }
-    if let Ok(conversation) = state.current_open() {
-        conversation.engine.set_permission(parsed);
-    }
+    state.each_open(|conversation| conversation.engine.set_permission(parsed));
     Ok(())
 }
 
@@ -1715,11 +1738,6 @@ pub async fn session_status(
 ) -> Result<SessionStatus, String> {
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let config = state
-            .config
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
         // The window names the conversation the status describes. Falling back
         // to the pointer is only for a boot that has not opened one yet.
         let session_id = match session_id.filter(|id| !id.is_empty()) {
@@ -1728,19 +1746,21 @@ pub async fn session_status(
                 .current_id()
                 .ok_or_else(|| "还没有打开会话".to_owned())?,
         };
-        let engine = state
+        let conversation = state
             .open_of(&session_id)
-            .ok_or_else(|| "会话已关闭，请重新打开".to_owned())?
-            .engine
-            .clone();
+            .ok_or_else(|| "会话已关闭，请重新打开".to_owned())?;
+        let engine = conversation.engine.clone();
         Ok(SessionStatus {
             session_id,
             permission: engine.base_permission().as_str().to_owned(),
             permission_effective: engine.permission().as_str().to_owned(),
             rig: engine.rig_name(),
-            model: config.model.clone(),
-            provider: config.provider.clone(),
-            provider_name: config.provider_name.clone(),
+            // What this engine calls, not what the settings now hold: an
+            // engine cannot change connection under itself, and naming the
+            // setting would describe a turn that never runs.
+            model: conversation.connection.model.clone(),
+            provider: conversation.connection.provider.clone(),
+            provider_name: conversation.connection.provider_name.clone(),
             context_budget: engine.context_budget(),
             context_window: Some(engine.config().context_window).filter(|window| *window > 0),
             recent: engine.context_history(),
@@ -1879,6 +1899,25 @@ fn conversation_named(
             .ok_or_else(|| "这个对话没有打开，请重新选择".to_owned()),
         None => state.current_open(),
     }
+}
+
+/// Whether opening a conversation has to replace the engine it already holds.
+///
+/// Work in flight is never interrupted: its engine started it. An idle
+/// conversation is rebuilt when it has no document yet — a blank one carries
+/// the rig it was first opened with, and the picker's choice has to become the
+/// one that runs — or when the connection it was built with is no longer the
+/// one the settings describe (ADR 0039).
+fn rebuild_wanted(has_document: bool, busy: bool, connection_changed: bool) -> bool {
+    !busy && (!has_document || connection_changed)
+}
+
+/// A stable number for a secret, so a changed key can be told from an unchanged
+/// one without the snapshot holding the key itself.
+fn fingerprint(secret: Option<&str>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    secret.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Whether a conversation is working right now: a turn streaming into it, or a
@@ -2624,6 +2663,34 @@ mod tests {
     fn a_conversation_keeps_the_rig_it_started_with() {
         let list = vec![meta("s-1", "general"), meta("s-2", "")];
         assert_eq!(rig_for_session(&list, "s-1", "coding-live"), "general");
+    }
+
+    /// The four cases of the open decision, in the order they were wrong: a
+    /// blank conversation could not take the rig that was picked, a changed
+    /// model never reached the conversation on screen, and work in flight must
+    /// outrank both.
+    #[test]
+    fn an_engine_is_rebuilt_only_when_nothing_is_working_in_it() {
+        let build = super::rebuild_wanted;
+        // Blank and idle: the rig picked in the composer has to become the one
+        // that runs (ADR 0039).
+        assert!(build(false, false, false));
+        // A document and an unchanged connection: the engine stays, so a turn
+        // that streams in is not taken down with it.
+        assert!(!build(true, false, false));
+        // A changed connection reaches an idle conversation, document or not.
+        assert!(build(true, false, true));
+        // Nothing interrupts a running turn or a live background command.
+        assert!(!build(true, true, true));
+        assert!(!build(false, true, false));
+    }
+
+    #[test]
+    fn a_changed_key_is_a_different_connection() {
+        let first = super::fingerprint(Some("sk-a"));
+        assert_eq!(first, super::fingerprint(Some("sk-a")));
+        assert_ne!(first, super::fingerprint(Some("sk-b")));
+        assert_ne!(first, super::fingerprint(None));
     }
 
     #[test]

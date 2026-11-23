@@ -1,6 +1,6 @@
 # 并行内核、记录时序与 rig 显示：四项调整
 
-Status: 第 1、3 项与第 2 项的 A 步已实现并提交（ADR 0039 增补、0064/0067 增补、0076），待打包替换后做运行时确认；第 2 项的 B/C/D 步未开始。
+Status: 第 1、3 项、第 2 项的 A 步与附二/附三/附四已实现。第 1、3 项与附二/附三已在运行时确认（19:42 启动的新版）；附四待打包替换后确认。第 2 项的 B/D 步与 C 步的一半未开始。
 
 四项来自同一条反馈，改造量差三个数量级，所以分开定案、分开合并。
 
@@ -218,8 +218,8 @@ A 步收尾之后，寻址不再有例外：`turn_changes` / `load_turns` / `bac
 - `delete_session` / `archive_session` 同样只查目标对话；`archive_session` 还顺带修了一个洞——
   以前只有“当前”对话会通知引擎改 `archived`，别的已打开对话归档后引擎仍以为可写。
 
-还没做：`DesktopConfig` 仍全局一份（两个项目不能各用一套模型/权限/rig），`state.open` 的键
-仍只有 session id，`session_io` 仍是一把全局锁。这些是 B/C/D 步。
+还没做：`DesktopConfig` 仍全局一份（两个项目不能各用一套模型/权限/rig，见附四），`state.open` 的键
+仍只有 session id，`session_io` 仍是一把全局锁。B/D 步未开始。
 
 ---
 
@@ -243,3 +243,37 @@ A 步收尾之后，寻址不再有例外：`turn_changes` / `load_turns` / `bac
 与 `turn-0065` 混在同一目录）。现在文件名是 `turn-<session>-NNNN-<phase>.json`，`perf_report`
 与 `report.ts` / `Chat.svelte` 传 `sessionId`；两条测试钉住“两个对话互不覆盖”和“对话出现在
 文件名里”。
+
+运行时的证据（改成新版后第一轮）：`turn-s-18e8b20ffa85b980-0067-start.json`，同目录里旧版的
+`turn-0066-*` 都还留着，名字的差别一眼可见。
+
+---
+
+## 附四：C 步做完一半——状态行说的是引擎的连接，不是设置里的（ADR 0039 增补）
+
+C 步原写的是“打开时把 model / provider / baseUrl / rig / permission 解析进 `OpenConversation`，
+之后改设置只影响新会话”。做完之后发现后半句不对，而且它掩盖着一条真 bug：
+
+- 引擎确实一直是快照（`ModelOverride` 在 `open_inner` 里组装），但**状态行不是**：
+  `SessionStatus.model / provider / provider_name` 读的是 `DesktopConfig`。在设置里换模型后，
+  状态行立刻显示新模型，而屏幕上这个对话仍然调旧模型；换 key 更彻底，屏幕上什么都不变。
+- `save_model` 只写配置，随后的 `reconnect()` 走 `openSession` → 老对话有文档 → 保留引擎。
+  于是“换了模型”这件事从来没生效过，与 rig 那条是同一类。
+
+改法：
+
+1. `Connection { provider, provider_name, model, base_url, context_window, search_url,
+   search_key, key }` 记在 `OpenConversation` 里；key 与 search key 只存指纹（换 key 必须重建，
+   快照不是放密钥的地方）。`SessionStatus` 从这里取名。
+2. `rebuild_wanted(has_document, busy, connection_changed) = !busy && (!has_document ||
+   connection_changed)`：空闲对话在连接变化时重建，所以状态行永远不说假话；在跑的回合或背景
+   命令优先，那份引擎由它启动，不许被换掉。
+3. `reconnect()` 改走 `reopenSession`：`openSession` 对空对话会报“对话不存在”，对老对话又保留
+   引擎——两条都不对。
+4. `save_permission` 以前只通知 `current_open()`，现在 `each_open` 通知每一个，因为权限是每轮
+   的决定（ADR 0034），不是连接的属性。
+
+测试：`an_engine_is_rebuilt_only_when_nothing_is_working_in_it`（四种情形）、
+`a_changed_key_is_a_different_connection`。
+
+仍缺：`DesktopConfig` 全局一份（两个项目各用一套模型/权限/rig），那是 C 步的剩下一半。

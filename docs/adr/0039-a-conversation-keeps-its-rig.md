@@ -69,3 +69,30 @@ flight, keeps its engine, which is the rest of the rule.
 The status line's rig comes from the view that opened the conversation, not
 from a separately fetched status: a status answer also names the conversation
 it describes, and one that arrives after the window has moved on is dropped.
+
+## Amendment — the connection is named by the engine, not by the setting
+
+The rig was not the only thing the status line read from the setting. The
+connection — provider, model, endpoint, context window, search endpoint, key —
+was read from `DesktopConfig` on every status call, while the engine had been
+built from the config at the moment it opened. Changing the model in settings
+therefore left the conversation on screen calling the old one and said
+otherwise, and nothing rebuilt it: `save_model` writes the config, and the
+reconnect that follows opens the same conversation, which has a document and
+keeps its engine. Changing the key was worse — no display changed at all.
+
+An engine cannot change connection under itself, so the snapshot it was built
+with is recorded in `OpenConversation` and the status line names that. The
+key and the search key are kept as fingerprints, because a changed key has to
+count as a changed connection and a snapshot is not a place to keep a secret.
+
+An idle conversation is rebuilt when its snapshot differs from the setting, so
+the change reaches the conversation on screen: the status line never has to
+report a connection that is not the one the next turn calls. Work in flight
+still outranks it — a turn streaming, or a background command running, keeps
+the engine that started it, and the status line then names the old connection
+truthfully until the conversation is idle again.
+
+The permission level is the exception and stays live: it is applied to every
+open engine at once (`set_permission`), because it is a per-turn decision
+rather than a property of the connection (ADR 0034).

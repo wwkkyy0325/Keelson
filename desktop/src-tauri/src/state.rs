@@ -47,6 +47,29 @@ pub struct RunningTurn {
     pub input: String,
 }
 
+/// The connection a conversation's engine was built with.
+///
+/// An engine cannot change provider or model under itself, so a conversation
+/// opened under the old model keeps running it until its engine is rebuilt. The
+/// status line reads this snapshot, not the setting: reporting the model the
+/// settings now hold while the engine still calls the old one is the same lie
+/// that made the rig look stuck for months (ADR 0039).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Connection {
+    pub provider: String,
+    pub provider_name: String,
+    pub model: String,
+    pub base_url: String,
+    pub context_window: Option<u32>,
+    /// The web tools' endpoint and key, which decide whether they exist at all.
+    pub search_url: String,
+    pub search_key: u64,
+    /// The key the engine was built with, reduced to a fingerprint: a changed
+    /// key has to rebuild the engine, but a snapshot is not a place to keep a
+    /// secret.
+    pub key: u64,
+}
+
 pub struct OpenConversation {
     pub id: String,
     /// Where the conversation's document and turns live. A command that names
@@ -59,6 +82,8 @@ pub struct OpenConversation {
     pub seq: Arc<AtomicU32>,
     /// The turn streaming into this conversation, if one is.
     pub running: Mutex<Option<RunningTurn>>,
+    /// What the engine in here calls: the setting at the moment it was built.
+    pub connection: Connection,
 }
 
 /// How many conversations may keep an engine, including the visible one. A
@@ -103,6 +128,19 @@ impl DesktopState {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(id)
             .cloned()
+    }
+
+    /// Applies a setting to every conversation the window holds open. A
+    /// setting that belongs to the app is heard by the engines already built
+    /// from it, not only by the next one.
+    pub fn each_open(&self, mut apply: impl FnMut(&Arc<OpenConversation>)) {
+        let open = self
+            .open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for conversation in open.values() {
+            apply(conversation);
+        }
     }
 
     /// The open conversation the window shows, or the reason there is none.
