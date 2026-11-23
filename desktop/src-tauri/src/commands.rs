@@ -2111,6 +2111,31 @@ pub async fn send_message(
         },
     );
     let checkpoint_session = current.clone();
+    // The conversation lands in the project's history now, not when the turn
+    // ends (ADR 0078). A new conversation used to stay out of the list for the
+    // whole first turn — a minute is an ordinary turn here — and a first turn
+    // that failed left nothing at all.
+    {
+        let workspace = conversation.workspace.clone();
+        let id = conversation.id.clone();
+        let rig = engine.rig_name().to_owned();
+        let first = input.clone();
+        let app = app.clone();
+        let state = state.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let state_dir = state_dir_for(&workspace);
+            let meta = {
+                let _guard = state
+                    .session_io
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                sessions::begin(&state_dir, &workspace, &id, &rig, &first)
+            };
+            if let Some(meta) = meta {
+                SessionApp::new(app, id).emit(EV_SESSION_UPDATED, SessionUpdated { meta });
+            }
+        });
+    }
     // Where this turn's records go (ADR 0063): the setting decides, and the
     // turn's workspace decides which project owns them.
     let config = state

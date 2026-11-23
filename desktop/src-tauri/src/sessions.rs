@@ -249,6 +249,52 @@ pub fn sync(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta>
     Some(meta)
 }
 
+/// Makes a conversation part of the project's history when its first message is
+/// sent, instead of when the turn that message started ends.
+///
+/// A blank conversation still writes nothing: pressing 新对话 and leaving must
+/// not litter the list. A sent message is the difference — the document is
+/// created named after what was asked, with no turns yet, and `is_listed` keeps
+/// a named empty document visible for the same reason a branch relies on it. A
+/// first turn that ran for a minute used to leave the conversation out of the
+/// history for that whole minute, and a first turn that failed left no trace of
+/// what was asked.
+pub fn begin(
+    state_dir: &Path,
+    workspace: &Path,
+    id: &str,
+    rig: &str,
+    input: &str,
+) -> Option<SessionMeta> {
+    if !valid_id(id) {
+        return None;
+    }
+    let dir = project_dir(state_dir, workspace);
+    let path = dir.join(format!("{id}.json"));
+    let store = Store::open(path);
+    if store.read_header().ok().flatten().is_none() {
+        let title = clean_title(input);
+        if title.is_empty() {
+            return None;
+        }
+        fs::create_dir_all(&dir).ok()?;
+        store
+            .save(&StoredSession {
+                workspace: workspace.to_path_buf(),
+                rig: rig.to_owned(),
+                title,
+                archived: false,
+                snapshot: Default::default(),
+                todos: None,
+                turns: Vec::new(),
+            })
+            .ok()?;
+    }
+    // Whether this call made the document or found one, the row reports what is
+    // on disk: a conversation that already has turns keeps its count.
+    sync(state_dir, workspace, id)
+}
+
 fn update_document(
     state_dir: &Path,
     workspace: &Path,
@@ -578,6 +624,60 @@ mod tests {
         assert_eq!(touched.turns, 3);
         assert!(touched.updated_at >= meta.updated_at);
         assert_eq!(list(&state, &workspace)[0].title, "a title");
+    }
+
+    #[test]
+    fn a_first_message_lists_the_conversation_before_any_turn_is_written() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let id = fresh_id();
+
+        // The turn has not written anything yet; this is the moment the message
+        // is sent.
+        let row = begin(&state, &workspace, &id, "coding", "  修一下  按钮  ").expect("begin");
+
+        assert_eq!(row.id, id);
+        assert_eq!(row.title, "修一下  按钮");
+        assert_eq!(row.turns, 0);
+        assert_eq!(row.rig, "coding");
+
+        // The list agrees, and stays agreed after a reconcile: a named document
+        // with no turns is a conversation, not litter.
+        let rows = list(&state, &workspace);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, id);
+        assert!(session_path(&state, &workspace, &id).is_file());
+    }
+
+    #[test]
+    fn beginning_a_conversation_that_has_turns_keeps_its_count() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let meta = create(&state, &workspace, "coding").expect("create");
+        Store::open(session_path(&state, &workspace, &meta.id))
+            .save(&document(&workspace, "first question", 4))
+            .expect("save");
+
+        let row = begin(&state, &workspace, &meta.id, "coding", "second question").expect("begin");
+
+        assert_eq!(row.turns, 4);
+        assert_eq!(row.title, "first question");
+        // One row, not two: begin never appends a second row for one document.
+        assert_eq!(list(&state, &workspace).len(), 1);
+    }
+
+    #[test]
+    fn a_message_with_nothing_in_it_writes_nothing() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let id = fresh_id();
+
+        assert!(begin(&state, &workspace, &id, "coding", "   \n ").is_none());
+        assert!(list(&state, &workspace).is_empty());
+        assert!(!session_path(&state, &workspace, &id).is_file());
     }
 
     #[test]
