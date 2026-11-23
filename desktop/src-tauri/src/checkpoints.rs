@@ -338,9 +338,14 @@ pub fn changes(
     diff_changes(&git_dir, workspace, &entry.before, &entry.after)
 }
 
-/// Every recorded turn of one session, keyed by seq. A history page reads
-/// this once instead of diffing each turn separately.
-pub fn changes_for_session(
+/// Every turn of one session that already has its change list recorded, keyed
+/// by seq.
+///
+/// Opening a conversation reads this instead of diffing each turn: a missing
+/// list means two git runs per turn, and a 30-turn page used to start sixty
+/// git processes on the window's thread. The fallback stayed in `changes`,
+/// where one turn asks for one list on demand.
+pub fn recorded_changes_for_session(
     state_dir: &Path,
     workspace: &Path,
     session_id: &str,
@@ -351,7 +356,6 @@ pub fn changes_for_session(
     let Ok(records) = load_records(&records_path(state_dir, workspace)) else {
         return BTreeMap::new();
     };
-    let git_dir = repo_dir(state_dir, workspace).join(".git");
     let mut out = BTreeMap::new();
     for (key, entry) in &records.turns {
         let Some((sid, seq)) = key.rsplit_once(':') else {
@@ -366,13 +370,10 @@ pub fn changes_for_session(
         if entry.undone {
             continue;
         }
-        let changes = match &entry.changes {
-            Some(changes) => filter_generated(changes.clone()),
-            None => {
-                diff_changes(&git_dir, workspace, &entry.before, &entry.after).unwrap_or_default()
-            }
+        let Some(changes) = &entry.changes else {
+            continue;
         };
-        out.insert(seq, changes);
+        out.insert(seq, filter_generated(changes.clone()));
     }
     out
 }

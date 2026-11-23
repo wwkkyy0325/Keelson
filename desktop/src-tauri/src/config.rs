@@ -102,6 +102,14 @@ pub struct DesktopConfig {
     /// A SearXNG base URL, the last web-search backend after the connected
     /// model's own search. Not a secret.
     pub search_url: Option<String>,
+    /// Where the per-turn step journal goes (ADR 0062): `project` follows the
+    /// repository, `state` keeps it beside the sessions, `custom` writes under
+    /// `journal_path`.
+    #[serde(default = "default_journal_mode")]
+    pub journal_mode: String,
+    /// The directory a `custom` journal writes under.
+    #[serde(default)]
+    pub journal_path: String,
 }
 
 impl Default for DesktopConfig {
@@ -126,8 +134,15 @@ impl Default for DesktopConfig {
             rig: String::new(),
             permission: None,
             search_url: None,
+            journal_mode: default_journal_mode(),
+            journal_path: String::new(),
         }
     }
+}
+
+/// A journal writes beside the project unless the user moved it.
+fn default_journal_mode() -> String {
+    "project".to_owned()
 }
 
 /// Moves a workspace to the front of the recent list.
@@ -325,7 +340,7 @@ mod tests {
         let config: DesktopConfig = serde_json::from_str(
             r#"{"manual":{"provider":"openai-compatible",
                 "baseUrl":"http://192.168.3.132:18081/v1",
-                "model":"qwen3.8-flash-next-iq3_s"}}"#,
+                "model":"iq3s"}}"#,
         )
         .unwrap();
 

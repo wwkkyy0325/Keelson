@@ -36,11 +36,34 @@ pub struct CurrentSession {
     pub archived: bool,
 }
 
-pub struct DesktopState {
-    pub engine: Mutex<Option<Arc<Engine>>>,
+/// One conversation the app has open: its engine, its cancel token and the
+/// sequence of the turn streaming into it.
+///
+/// These travel together on purpose. A conversation owns its work: the
+/// background commands it started belong to its engine, so looking at another
+/// conversation must not take them down with it.
+pub struct RunningTurn {
+    pub seq: u32,
+    pub input: String,
+}
+
+pub struct OpenConversation {
+    pub id: String,
+    pub engine: Arc<Engine>,
     pub cancel: Mutex<Option<CancelToken>>,
-    /// The turn currently streaming; the delta forwarder reads it.
-    pub current_seq: Arc<AtomicU32>,
+    pub seq: Arc<AtomicU32>,
+    /// The turn streaming into this conversation, if one is.
+    pub running: Mutex<Option<RunningTurn>>,
+}
+
+/// How many conversations may keep an engine, including the visible one. A
+/// conversation with a running turn or a live background command is never
+/// evicted; it is counted again once that work ends.
+const OPEN_LIMIT: usize = 8;
+
+pub struct DesktopState {
+    /// Every conversation this window has opened, by id.
+    pub open: Mutex<HashMap<String, Arc<OpenConversation>>>,
     pub interactions: Arc<DesktopInteractions>,
     pub config: Mutex<DesktopConfig>,
     pub current: Mutex<Option<CurrentSession>>,
@@ -52,14 +75,94 @@ pub struct DesktopState {
 impl DesktopState {
     pub fn new(app: AppHandle) -> Self {
         Self {
-            engine: Mutex::new(None),
-            cancel: Mutex::new(None),
-            current_seq: Arc::new(AtomicU32::new(0)),
+            open: Mutex::new(HashMap::new()),
             interactions: Arc::new(DesktopInteractions::new(app)),
             config: Mutex::new(config::load_config()),
             current: Mutex::new(None),
             session_io: Mutex::new(()),
         }
+    }
+
+    /// The conversation the window is showing.
+    pub fn current_id(&self) -> Option<String> {
+        self.current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(|current| current.id.clone())
+    }
+
+    pub fn open_of(&self, id: &str) -> Option<Arc<OpenConversation>> {
+        self.open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(id)
+            .cloned()
+    }
+
+    /// The open conversation the window shows, or the reason there is none.
+    pub fn current_open(&self) -> Result<Arc<OpenConversation>, String> {
+        let id = self
+            .current_id()
+            .ok_or_else(|| "还没有打开会话".to_owned())?;
+        self.open_of(&id)
+            .ok_or_else(|| "会话已关闭，请重新打开".to_owned())
+    }
+
+    /// Keeps a conversation open. A conversation that is still working is never
+    /// evicted; when the map is full the eviction looks for an idle one.
+    pub fn install_open(&self, conversation: Arc<OpenConversation>) {
+        let mut open = self
+            .open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let id = conversation.id.clone();
+        open.insert(id.clone(), conversation);
+        if open.len() <= OPEN_LIMIT {
+            return;
+        }
+        let idle = open
+            .iter()
+            .find(|(other, conversation)| {
+                *other != &id
+                    && conversation
+                        .cancel
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .is_none()
+                    && conversation.engine.background_tasks().is_empty()
+            })
+            .map(|(other, _)| other.clone());
+        if let Some(idle) = idle {
+            open.remove(&idle);
+        }
+    }
+    /// Forgets every open conversation and the current one, cancelling a turn
+    /// that is still streaming. A forced recovery drops the engines instead of
+    /// waiting for a turn that will not unwind; the next open rebuilds them,
+    /// and the abandoned turn writes its result into the document as always.
+    pub fn forget_open(&self) -> bool {
+        let had_current = self
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+            .is_some();
+        let mut open = self
+            .open
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for (_, conversation) in open.drain() {
+            if let Some(token) = conversation
+                .cancel
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+            {
+                token.cancel();
+            }
+        }
+        had_current
     }
 }
 

@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use keel_core::{CancelToken, Event, PermissionLevel};
 use keelson::engine::{
@@ -16,8 +16,10 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::checkpoints;
 use crate::config::{self, ProjectEntry};
+use crate::records;
 use crate::sessions::{self, SessionMeta};
-use crate::state::{CurrentSession, DesktopState};
+use crate::state::{CurrentSession, DesktopState, OpenConversation, RunningTurn};
+use crate::taskdoc;
 
 pub const EV_TURN_STARTED: &str = "keelson:turn-started";
 pub const EV_TEXT_DELTA: &str = "keelson:text-delta";
@@ -34,6 +36,38 @@ pub const EV_TURN_FAILED: &str = "keelson:turn-failed";
 pub const EV_SESSION_UPDATED: &str = "keelson:session-updated";
 
 type SharedState = Arc<DesktopState>;
+
+/// An emitter that names the conversation it speaks for.
+///
+/// Several conversations can have a turn running at once, so every event
+/// carries the session it belongs to and the view drops the ones that are not
+/// the conversation on screen. Wrapping the handle keeps the emit sites free of
+/// that detail: `app.emit(...)` reads the same as before.
+#[derive(Clone)]
+struct SessionApp {
+    app: AppHandle,
+    session: String,
+}
+
+impl SessionApp {
+    fn new(app: AppHandle, session: impl Into<String>) -> Self {
+        Self {
+            app,
+            session: session.into(),
+        }
+    }
+
+    fn emit<S: Serialize>(&self, event: &str, payload: S) {
+        let mut value = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
+        if let serde_json::Value::Object(map) = &mut value {
+            map.insert(
+                "sessionId".to_owned(),
+                serde_json::Value::String(self.session.clone()),
+            );
+        }
+        let _ = self.app.emit(event, value);
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +93,10 @@ pub struct SetupState {
     pub active_preset: Option<String>,
     /// A SearXNG base URL, the last web-search backend after the model's own.
     pub search_url: Option<String>,
+    /// Where the per-turn step journal goes (ADR 0062): `project`, `state` or
+    /// `custom`, plus the path a `custom` journal writes under.
+    pub journal_mode: String,
+    pub journal_path: String,
     /// The rig that will run, and every rig the host found.
     pub rig: String,
     pub rigs: Vec<RigOption>,
@@ -95,11 +133,23 @@ pub struct SessionView {
     pub rig: String,
     pub workspace: String,
     pub session_id: String,
+    /// The turn this conversation is running right now, so a view that opens
+    /// onto a live turn shows it instead of an empty transcript.
+    pub running: Option<RunningTurnView>,
     pub turns: Vec<TurnWithChanges>,
     pub next_before: Option<u32>,
     /// Every conversation in the project, newest first.
     pub sessions: Vec<SessionMeta>,
     pub projects: Vec<ProjectEntry>,
+}
+
+/// A turn that has started and has not finished. The input is what the user
+/// sent; the view shows it while the answer streams.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunningTurnView {
+    pub seq: u32,
+    pub input: String,
 }
 
 fn with_changes(
@@ -108,7 +158,7 @@ fn with_changes(
     session_id: &str,
     turns: Vec<TurnView>,
 ) -> Vec<TurnWithChanges> {
-    let changes = checkpoints::changes_for_session(state_dir, workspace, session_id);
+    let changes = checkpoints::recorded_changes_for_session(state_dir, workspace, session_id);
     turns
         .into_iter()
         .map(|turn| {
@@ -206,7 +256,7 @@ async fn drain_deltas(
 }
 
 /// Sends what the batch holds and empties it.
-fn emit_batch(app: &AppHandle, current_seq: &AtomicU32, batch: &mut DeltaBatch) {
+fn emit_batch(app: &SessionApp, current_seq: &AtomicU32, batch: &mut DeltaBatch) {
     let text = std::mem::take(&mut batch.text);
     let thinking = std::mem::take(&mut batch.thinking);
     if text.is_empty() && thinking.is_empty() {
@@ -219,10 +269,10 @@ fn emit_batch(app: &AppHandle, current_seq: &AtomicU32, batch: &mut DeltaBatch) 
         return;
     }
     if !text.is_empty() {
-        let _ = app.emit(EV_TEXT_DELTA, TextDelta { seq, text });
+        app.emit(EV_TEXT_DELTA, TextDelta { seq, text });
     }
     if !thinking.is_empty() {
-        let _ = app.emit(
+        app.emit(
             EV_THINKING_DELTA,
             ThinkingDelta {
                 seq,
@@ -253,6 +303,9 @@ struct ToolFinishedEvent {
     duration_ms: u64,
     error: Option<String>,
     output: Option<String>,
+    /// The answer came from an identical call earlier in the same turn
+    /// (ADR 0070), so this call ran no command of its own.
+    reused: bool,
 }
 
 /// A shell command the turn moved to the background. The result arrives later
@@ -275,6 +328,8 @@ struct BackgroundFinishedEvent {
     exit_code: Option<i32>,
     duration_ms: u64,
     output_path: String,
+    /// The user stopped it rather than the command failing.
+    stopped: bool,
 }
 
 /// One model call finished; the running turn's cost line adds this usage.
@@ -586,8 +641,18 @@ fn copy_folder(dir: &Path, source: &Path) -> Result<Attachment, String> {
     })
 }
 
+/// The settings the window needs before it can paint. The rig discovery walks
+/// directories, so it runs on the blocking pool: Tauri executes a plain `fn`
+/// command on the thread that paints, and a walk there freezes the window.
 #[tauri::command]
-pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
+pub async fn setup_state(state: State<'_, SharedState>) -> Result<SetupState, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || setup_state_now(&state))
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn setup_state_now(state: &DesktopState) -> SetupState {
     let config = state
         .config
         .lock()
@@ -627,6 +692,8 @@ pub fn setup_state(state: State<'_, SharedState>) -> SetupState {
         presets: config.presets,
         active_preset: config.active_preset,
         search_url: config.search_url,
+        journal_mode: config.journal_mode,
+        journal_path: config.journal_path,
         rig,
         rigs,
         problems: discovery
@@ -936,18 +1003,25 @@ pub async fn attach_files(
     Ok(added)
 }
 
+/// The index reconcile reads every conversation header, so it belongs on the
+/// blocking pool rather than on the window's thread.
 #[tauri::command]
-pub fn list_sessions(
+pub async fn list_sessions(
     state: State<'_, SharedState>,
     workspace: String,
 ) -> Result<Vec<SessionMeta>, String> {
-    let workspace = resolve_workspace(state.inner(), Some(workspace));
-    let state_dir = state_dir_for(&workspace);
-    let _guard = state
-        .session_io
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    Ok(sessions::list(&state_dir, &workspace))
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let workspace = resolve_workspace(&state, Some(workspace));
+        let state_dir = state_dir_for(&workspace);
+        let _guard = state
+            .session_io
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        sessions::list(&state_dir, &workspace)
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1012,11 +1086,10 @@ pub fn rename_session(
         .is_some_and(|current| current.id == session_id.as_str() && current.workspace == workspace);
     let meta = if is_current {
         let engine = state
+            .open_of(&session_id)
+            .ok_or_else(|| "还没有打开会话".to_owned())?
             .engine
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-            .ok_or_else(|| "还没有打开会话".to_owned())?;
+            .clone();
         engine
             .set_title(&title)
             .map_err(|error| error.to_string())?;
@@ -1061,11 +1134,10 @@ pub fn archive_session(
         .is_some_and(|current| current.id == session_id.as_str() && current.workspace == workspace);
     let meta = if is_current {
         let engine = state
+            .open_of(&session_id)
+            .ok_or_else(|| "还没有打开会话".to_owned())?
             .engine
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-            .ok_or_else(|| "还没有打开会话".to_owned())?;
+            .clone();
         engine
             .set_archived(archived)
             .map_err(|error| error.to_string())?;
@@ -1155,6 +1227,19 @@ async fn open_inner(
         let list = sessions::list(&state_dir, &workspace);
         (session_id, list)
     };
+    // Reopening a conversation the app already has open keeps its engine. A
+    // turn may still be streaming into it, and its background commands are
+    // running: rebuilding the engine would take both down with it.
+    remember_workspace(&state, &workspace);
+    if let Some(open) = state.open_of(&session_id) {
+        return Ok(open_view(
+            &state,
+            &open,
+            &workspace,
+            &session_id,
+            &session_list,
+        ));
+    }
     // The send path reads this flag instead of loading the document again.
     let archived = archived_in(&session_list, &session_id);
     let wanted = rig_for_session(&session_list, &session_id, &preferred);
@@ -1186,7 +1271,6 @@ async fn open_inner(
         context_window: config.model_context,
     });
 
-    let rig_label = rig.name.clone();
     let (delta_tx, mut delta_rx) = tokio::sync::mpsc::channel(256);
     let engine = Engine::open(OpenRequest {
         rig,
@@ -1213,17 +1297,14 @@ async fn open_inner(
     {
         eprintln!("attachments root was not added: {}", attachments.display());
     }
-    let engine = Arc::new(engine);
-    let workspace_label = display_path(engine.workspace());
-    let page = engine.history(None, 30);
-    state.current_seq.store(0, Ordering::Relaxed);
-    {
-        let mut slot = state
-            .engine
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        *slot = Some(engine);
-    }
+    let open = Arc::new(OpenConversation {
+        id: session_id.clone(),
+        engine: Arc::new(engine),
+        cancel: Mutex::new(None),
+        seq: Arc::new(AtomicU32::new(0)),
+        running: Mutex::new(None),
+    });
+    state.install_open(open.clone());
     {
         let mut current = state
             .current
@@ -1236,32 +1317,69 @@ async fn open_inner(
             archived,
         });
     }
-    let projects = {
-        let mut config = state
-            .config
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        config.last_workspace = workspace_label.clone();
-        config::remember_project(&mut config, &workspace_label, sessions::now_ms());
-        let _ = config::save_config(&config);
-        config::recent_projects(&config)
-    };
-
-    let app_handle = app.clone();
-    let seq = state.current_seq.clone();
+    let session_app = SessionApp::new(app.clone(), session_id.clone());
+    let seq = open.seq.clone();
     tauri::async_runtime::spawn(async move {
-        drain_deltas(&mut delta_rx, |batch| emit_batch(&app_handle, &seq, batch)).await;
+        drain_deltas(&mut delta_rx, |batch| emit_batch(&session_app, &seq, batch)).await;
     });
 
-    Ok(SessionView {
-        rig: rig_label,
-        workspace: workspace_label,
-        session_id: session_id.clone(),
-        turns: with_changes(&state_dir, &workspace, &session_id, page.turns),
+    Ok(open_view(
+        &state,
+        &open,
+        &workspace,
+        &session_id,
+        &session_list,
+    ))
+}
+
+fn open_view(
+    state: &DesktopState,
+    conversation: &OpenConversation,
+    workspace: &Path,
+    session_id: &str,
+    session_list: &[sessions::SessionMeta],
+) -> SessionView {
+    let state_dir = state_dir_for(workspace);
+    let engine = &conversation.engine;
+    let page = engine.history(None, 30);
+    SessionView {
+        rig: engine.rig_name().to_owned(),
+        workspace: display_path(engine.workspace()),
+        session_id: session_id.to_owned(),
+        running: conversation
+            .running
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map(|running| RunningTurnView {
+                seq: running.seq,
+                input: running.input.clone(),
+            }),
+        turns: with_changes(&state_dir, workspace, session_id, page.turns),
         next_before: page.next_before,
-        sessions: session_list,
-        projects,
-    })
+        sessions: session_list.to_vec(),
+        projects: {
+            let config = state
+                .config
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            config::recent_projects(&config)
+        },
+    }
+}
+
+/// Records the project the window opened under as the one to reopen. Switching
+/// back to a conversation that is already open persists it too, so this runs on
+/// both paths instead of only when an engine is built.
+fn remember_workspace(state: &DesktopState, workspace: &Path) {
+    let label = display_path(workspace);
+    let mut config = state
+        .config
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    config.last_workspace = label.clone();
+    config::remember_project(&mut config, &label, sessions::now_ms());
+    let _ = config::save_config(&config);
 }
 
 fn resolve_workspace(state: &DesktopState, workspace: Option<String>) -> PathBuf {
@@ -1495,13 +1613,8 @@ pub fn save_permission(state: State<'_, SharedState>, level: String) -> Result<(
         config.permission = Some(parsed.as_str().to_owned());
         config::save_config(&config)?;
     }
-    let engine = state
-        .engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    if let Some(engine) = engine {
-        engine.set_permission(parsed);
+    if let Ok(conversation) = state.current_open() {
+        conversation.engine.set_permission(parsed);
     }
     Ok(())
 }
@@ -1538,70 +1651,193 @@ pub struct BackgroundTaskView {
     pub exit_code: Option<i32>,
     pub duration_ms: u64,
     pub output_path: String,
+    /// The user stopped it. While it still runs the row shows "stopping".
+    pub stopped: bool,
 }
 
 #[tauri::command]
 pub fn stop_background(state: State<'_, SharedState>, id: String) -> Result<bool, String> {
-    let engine = state
-        .engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    let engine = state.current_open()?.engine.clone();
     Ok(engine.stop_background(&id))
 }
 
 #[tauri::command]
-pub fn background_tasks(state: State<'_, SharedState>) -> Result<Vec<BackgroundTaskView>, String> {
-    let engine = state
-        .engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "还没有打开会话".to_owned())?;
-    Ok(engine
-        .background_tasks()
-        .into_iter()
-        .map(|task| BackgroundTaskView {
-            id: task.id,
-            program: task.program,
-            command: task.command,
-            running: task.running,
-            exit_code: task.exit_code,
-            duration_ms: task.duration_ms,
-            output_path: task.output_path,
-        })
-        .collect())
+pub async fn background_tasks(
+    state: State<'_, SharedState>,
+) -> Result<Vec<BackgroundTaskView>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = state.current_open()?.engine.clone();
+        Ok(engine
+            .background_tasks()
+            .into_iter()
+            .map(|task| BackgroundTaskView {
+                id: task.id,
+                program: task.program,
+                command: task.command,
+                running: task.running,
+                exit_code: task.exit_code,
+                duration_ms: task.duration_ms,
+                output_path: task.output_path,
+                stopped: task.stopped,
+            })
+            .collect())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
-pub fn session_status(state: State<'_, SharedState>) -> Result<SessionStatus, String> {
-    let config = state
+pub async fn session_status(state: State<'_, SharedState>) -> Result<SessionStatus, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let config = state
+            .config
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let engine = state.current_open()?.engine.clone();
+        Ok(SessionStatus {
+            permission: engine.base_permission().as_str().to_owned(),
+            permission_effective: engine.permission().as_str().to_owned(),
+            rig: engine.rig_name(),
+            model: config.model.clone(),
+            provider: config.provider.clone(),
+            provider_name: config.provider_name.clone(),
+            context_budget: engine.context_budget(),
+            context_window: Some(engine.config().context_window).filter(|window| *window > 0),
+            recent: engine.context_history(),
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// The records' home (ADRs 0062, 0063): `project` follows the repository,
+/// `state` keeps them beside the sessions, `custom` writes under a path the
+/// user names.
+#[tauri::command]
+pub fn save_journal(
+    state: State<'_, SharedState>,
+    mode: String,
+    path: String,
+) -> Result<(), String> {
+    let mode = match mode.trim() {
+        "state" => "state",
+        "custom" => "custom",
+        _ => "project",
+    };
+    let path = path.trim().to_owned();
+    if mode == "custom" && path.is_empty() {
+        return Err("自定义目录需要一个路径".to_owned());
+    }
+    let mut config = state
         .config
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    let engine = state
-        .engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "还没有打开会话".to_owned())?;
-    Ok(SessionStatus {
-        permission: engine.base_permission().as_str().to_owned(),
-        permission_effective: engine.permission().as_str().to_owned(),
-        rig: engine.rig_name(),
-        model: config.model.clone(),
-        provider: config.provider.clone(),
-        provider_name: config.provider_name.clone(),
-        context_budget: engine.context_budget(),
-        context_window: Some(engine.config().context_window).filter(|window| *window > 0),
-        recent: engine.context_history(),
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    config.journal_mode = mode.to_owned();
+    config.journal_path = path;
+    config::save_config(&config)
+}
+
+/// The two places a turn writes (ADR 0063, 0064), so the settings panel can
+/// show the user where their records actually go: the step log's database and
+/// the directory of task documents.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordPaths {
+    pub log: String,
+    pub progress_dir: String,
+}
+
+/// What the window spent on one turn, recorded beside the turn's own records
+/// (ADR 0071).
+///
+/// The account is written by the window, because only the window knows how many
+/// streamed batches it received and how long a markdown sample took. The host's
+/// part is to put it somewhere bounded and inspectable.
+#[tauri::command]
+pub async fn perf_report(
+    workspace: String,
+    seq: u32,
+    phase: String,
+    report: String,
+) -> Result<String, String> {
+    let dir = crate::perf::dir(&state_dir_for(Path::new(&workspace)));
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::perf::write(&dir, seq, &phase, &report)
+            .map(|path| path.display().to_string())
+            .map_err(|error| error.to_string())
     })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn record_paths(state: State<'_, SharedState>) -> Result<RecordPaths, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let empty = || RecordPaths {
+            log: String::new(),
+            progress_dir: String::new(),
+        };
+        let config = state
+            .config
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let current = state
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let Some(current) = current else {
+            return Ok(empty());
+        };
+        let Some(base) = records::base(
+            records::Mode::parse(&config.journal_mode),
+            &config.journal_path,
+            &current.workspace,
+            &current.state_dir,
+        ) else {
+            return Ok(empty());
+        };
+        let (log, index) = records::paths(&base);
+        Ok(RecordPaths {
+            log: log.display().to_string(),
+            progress_dir: index
+                .parent()
+                .map_or_else(String::new, |dir| dir.display().to_string()),
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Refuses a change while the conversation on screen has a turn running.
+///
+/// Drops the window's grip on every open conversation and cancels the turns
+/// still streaming into them. The next open builds a fresh engine, so a turn
+/// that will not unwind can no longer keep a workspace closed. This is the
+/// boot screen's last resort; the app menu reaches it through `recover`.
+#[tauri::command]
+pub fn force_recover(state: State<'_, SharedState>) -> bool {
+    state.inner().forget_open()
 }
 
 fn ensure_idle(state: &DesktopState) -> Result<(), String> {
-    if state
+    let conversation = state.current_id().and_then(|id| state.open_of(&id));
+    ensure_conversation_idle(conversation.as_deref())
+}
+
+/// No conversation open is idle, not an error: the boot path asks this before
+/// anything is current, and answering "还没有打开会话" here made the first
+/// open of every launch fail.
+fn ensure_conversation_idle(conversation: Option<&OpenConversation>) -> Result<(), String> {
+    let Some(conversation) = conversation else {
+        return Ok(());
+    };
+    if conversation
         .cancel
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1644,12 +1880,8 @@ pub async fn send_message(
     if input.is_empty() {
         return Err("消息不能为空".to_owned());
     }
-    let engine = state
-        .engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    let conversation = state.current_open()?;
+    let engine = conversation.engine.clone();
     // The turn belongs to the conversation that was open when it started,
     // even if the window switches before the row is refreshed.
     let current = state
@@ -1665,21 +1897,36 @@ pub async fn send_message(
             return Err("已归档的对话不能继续；请先取消归档".to_owned());
         }
     }
+    // A turn belongs to its conversation: another conversation may still be
+    // running when this one starts.
     let token = {
-        let mut cancel = state
+        let mut cancel = conversation
             .cancel
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if cancel.is_some() {
-            return Err("当前回合还在运行".to_owned());
+            return Err("这个对话的回合还在运行".to_owned());
         }
         let token = CancelToken::new();
         *cancel = Some(token.clone());
         token
     };
     let seq = engine.next_turn_seq();
-    state.current_seq.store(seq, Ordering::Relaxed);
-    let _ = app.emit(
+    conversation.seq.store(seq, Ordering::Relaxed);
+    {
+        let mut running = conversation
+            .running
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *running = Some(RunningTurn {
+            seq,
+            input: input.clone(),
+        });
+    }
+    // Every event this turn emits names the conversation, so a window showing
+    // another one drops it.
+    let session_app = SessionApp::new(app.clone(), conversation.id.clone());
+    session_app.emit(
         EV_TURN_STARTED,
         TurnStarted {
             seq,
@@ -1687,7 +1934,48 @@ pub async fn send_message(
         },
     );
     let checkpoint_session = current.clone();
+    // Where this turn's records go (ADR 0063): the setting decides, and the
+    // turn's workspace decides which project owns them.
+    let config = state
+        .config
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let records_base = current.as_ref().and_then(|current| {
+        let mode = records::Mode::parse(&config.journal_mode);
+        if mode == records::Mode::Project {
+            let _ = records::ignore_in_project(&current.workspace);
+        }
+        records::base(
+            mode,
+            &config.journal_path,
+            &current.workspace,
+            &current.state_dir,
+        )
+    });
+    // The turn's header, kept for the log's row and the document's block.
+    let log_meta = records::TurnMeta {
+        session: conversation.id.clone(),
+        turn: seq,
+        model: config.model.clone(),
+        provider: config.provider.clone(),
+        rig: engine.rig_name().to_owned(),
+        workspace: current
+            .as_ref()
+            .map(|current| current.workspace.display().to_string())
+            .unwrap_or_default(),
+        input: input.clone(),
+    };
     tauri::async_runtime::spawn(async move {
+        let step_log = records_base
+            .as_ref()
+            .and_then(|base| records::StepLog::open(base, &log_meta.session, log_meta.turn).ok())
+            .map(|log| {
+                // The row exists before the first step, so the log never starts
+                // with steps that belong to nothing.
+                let _ = log.meta(&log_meta);
+                Arc::new(Mutex::new(log))
+            });
         let before = match checkpoint_session.as_ref() {
             Some(current) => take_snapshot(current).await,
             None => None,
@@ -1698,7 +1986,7 @@ pub async fn send_message(
         // it starts and finishes. Sequence numbers stay monotonic across the
         // per-turn clear, so `live_last` filters out the previous turn.
         let live_events = engine.events().clone();
-        let live_app = app.clone();
+        let live_app = session_app.clone();
         let live_done = Arc::new(AtomicBool::new(false));
         let live_done_flag = live_done.clone();
         let live_last = Arc::new(std::sync::atomic::AtomicU64::new(
@@ -1710,13 +1998,22 @@ pub async fn send_message(
         ));
         let poller = {
             let live_last = live_last.clone();
+            let step_log = step_log.clone();
+            let live_poll = live_events.clone();
             tauri::async_runtime::spawn(async move {
                 while !live_done_flag.load(Ordering::Relaxed) {
                     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
                     // Only the new tail: cloning the whole turn's event log
                     // every 120 ms costs more as a tool-heavy turn grows.
-                    for record in live_events.since(live_last.load(Ordering::Relaxed)) {
+                    for record in live_poll.since(live_last.load(Ordering::Relaxed)) {
                         live_last.store(record.seq, Ordering::Relaxed);
+                        // Every step lands in the log before the view sees it:
+                        // a UI can drop an event, a committed row cannot be
+                        // unmade.
+                        if let Some(log) = step_log.as_ref() {
+                            let log = log.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                            let _ = log.step(record.seq, &record.event);
+                        }
                         match record.event {
                             Event::ToolStarted {
                                 call_id,
@@ -1724,7 +2021,7 @@ pub async fn send_message(
                                 args_preview,
                                 ..
                             } => {
-                                let _ = live_app.emit(
+                                live_app.emit(
                                     EV_TOOL_STARTED,
                                     ToolStartedEvent {
                                         seq,
@@ -1741,9 +2038,10 @@ pub async fn send_message(
                                 error,
                                 duration_ms,
                                 output_preview,
+                                reused,
                                 ..
                             } => {
-                                let _ = live_app.emit(
+                                live_app.emit(
                                     EV_TOOL_FINISHED,
                                     ToolFinishedEvent {
                                         seq,
@@ -1753,13 +2051,14 @@ pub async fn send_message(
                                         duration_ms,
                                         error: error.map(|code| code.as_str().to_owned()),
                                         output: output_preview,
+                                        reused,
                                     },
                                 );
                             }
                             Event::BackgroundStarted {
                                 id, program, pid, ..
                             } => {
-                                let _ = live_app.emit(
+                                live_app.emit(
                                     EV_BACKGROUND_STARTED,
                                     BackgroundStartedEvent {
                                         seq,
@@ -1775,9 +2074,10 @@ pub async fn send_message(
                                 output_path,
                                 exit_code,
                                 duration_ms,
+                                stopped,
                                 ..
                             } => {
-                                let _ = live_app.emit(
+                                live_app.emit(
                                     EV_BACKGROUND_FINISHED,
                                     BackgroundFinishedEvent {
                                         seq,
@@ -1786,11 +2086,12 @@ pub async fn send_message(
                                         exit_code,
                                         duration_ms,
                                         output_path,
+                                        stopped,
                                     },
                                 );
                             }
                             Event::ModelFinished { usage, .. } => {
-                                let _ = live_app.emit(
+                                live_app.emit(
                                     EV_MODEL_FINISHED,
                                     ModelFinishedEvent {
                                         seq,
@@ -1801,7 +2102,7 @@ pub async fn send_message(
                                 );
                             }
                             Event::VerificationStarted { checks, .. } => {
-                                let _ = live_app
+                                live_app
                                     .emit(EV_TURN_VERIFYING, TurnVerifyingEvent { seq, checks });
                             }
                             _ => {}
@@ -1815,15 +2116,41 @@ pub async fn send_message(
         live_done.store(true, Ordering::Relaxed);
         poller.abort();
 
+        // The poller can stop between two ticks; whatever it did not reach is
+        // still in the kernel's log, and the step log must be whole.
+        if let Some(log) = step_log.as_ref() {
+            let log = log.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            for record in live_events.since(live_last.load(Ordering::Relaxed)) {
+                live_last.store(record.seq, Ordering::Relaxed);
+                let _ = log.step(record.seq, &record.event);
+            }
+            let turn = engine.turn(seq);
+            let _ = log.end(&records::TurnEnd {
+                ok: result.is_ok(),
+                error: result.as_ref().err().map(|error| error.to_string()),
+                state: turn.as_ref().map(|turn| turn.state.clone()),
+                model_calls: turn.as_ref().map(|turn| u64::from(turn.model_calls)),
+                tools: turn.as_ref().map(|turn| turn.tools.len()),
+                duration_ms: turn.as_ref().map(|turn| turn.duration_ms),
+            });
+        }
+
         // The persisted turn is ready now. Show it and release the composer
         // before the checkpoint snapshot: that git commit can take seconds on
         // a large project and must not hold the raw streaming view.
         {
-            let mut cancel = state
+            let mut cancel = conversation
                 .cancel
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             *cancel = None;
+        }
+        {
+            let mut running = conversation
+                .running
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *running = None;
         }
         match &result {
             Ok(_) => {
@@ -1836,15 +2163,15 @@ pub async fn send_message(
                         sessions::touch(&current.state_dir, &current.workspace, &current.id)
                     };
                     if let Some(meta) = meta {
-                        let _ = app.emit(EV_SESSION_UPDATED, SessionUpdated { meta });
+                        session_app.emit(EV_SESSION_UPDATED, SessionUpdated { meta });
                     }
                 }
                 match engine.turn(seq) {
                     Some(turn) => {
-                        let _ = app.emit(EV_TURN_FINISHED, TurnFinished { turn });
+                        session_app.emit(EV_TURN_FINISHED, TurnFinished { turn });
                     }
                     None => {
-                        let _ = app.emit(
+                        session_app.emit(
                             EV_TURN_FAILED,
                             TurnFailed {
                                 seq,
@@ -1855,7 +2182,7 @@ pub async fn send_message(
                 }
             }
             Err(error) => {
-                let _ = app.emit(
+                session_app.emit(
                     EV_TURN_FAILED,
                     TurnFailed {
                         seq,
@@ -1871,9 +2198,38 @@ pub async fn send_message(
             if let Some(after) = take_snapshot(current).await {
                 record_checkpoint(current, seq, &before, &after).await;
                 if result.is_ok() {
-                    let _ = app.emit(EV_TURN_CHANGES, TurnChanges { seq });
+                    session_app.emit(EV_TURN_CHANGES, TurnChanges { seq });
                 }
             }
+        }
+
+        // The task document (ADR 0064): what this task left behind and where
+        // git stands now. Written after the checkpoint, so the change list is
+        // already recorded and reading it back is exact.
+        if let (Some(base), Some(current)) = (records_base.as_ref(), current.as_ref()) {
+            let changes =
+                checkpoints::changes(&current.state_dir, &current.workspace, &current.id, seq)
+                    .unwrap_or_default();
+            let git = taskdoc::git_state(&current.workspace);
+            let failure = result.as_ref().err().map(|error| error.to_string());
+            let turn = engine.turn(seq);
+            let entry = taskdoc::Entry {
+                at_ms: sessions::now_ms(),
+                session: &log_meta.session,
+                turn: seq,
+                input: &log_meta.input,
+                rig: &log_meta.rig,
+                model: &log_meta.model,
+                provider: &log_meta.provider,
+                ok: result.is_ok(),
+                error: failure.as_deref(),
+                model_calls: turn.as_ref().map(|turn| u64::from(turn.model_calls)),
+                tools: turn.as_ref().map(|turn| turn.tools.len()),
+                duration_ms: turn.as_ref().map(|turn| turn.duration_ms),
+                changes: &changes,
+                git: &git,
+            };
+            let _ = taskdoc::write_task(&records::progress_dir(base), &entry);
         }
     });
     Ok(())
@@ -1882,7 +2238,10 @@ pub async fn send_message(
 #[tauri::command]
 pub fn cancel_turn(state: State<'_, SharedState>) -> bool {
     let state = state.inner();
-    let token = state
+    let Ok(conversation) = state.current_open() else {
+        return false;
+    };
+    let token = conversation
         .cancel
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1905,12 +2264,7 @@ pub async fn undo_last_turn(state: State<'_, SharedState>) -> Result<(), String>
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone()
         .ok_or_else(|| "还没有打开会话".to_owned())?;
-    let engine = state
-        .engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "还没有打开会话".to_owned())?;
+    let engine = state.current_open()?.engine.clone();
     let seq = engine
         .history(None, 1)
         .turns
@@ -1937,14 +2291,10 @@ pub async fn turn_changes(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    let engine = state
-        .engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    let (Some(current), Some(engine)) = (current, engine) else {
+    let (Some(current), Ok(conversation)) = (current, state.current_open()) else {
         return Ok(Vec::new());
     };
+    let engine = conversation.engine.clone();
     let Some(seq) = seq.or_else(|| engine.history(None, 1).turns.first().map(|turn| turn.seq))
     else {
         return Ok(Vec::new());
@@ -1959,45 +2309,43 @@ pub async fn turn_changes(
 }
 
 #[tauri::command]
-pub fn load_turns(
+pub async fn load_turns(
     state: State<'_, SharedState>,
     before: Option<u32>,
     limit: Option<usize>,
 ) -> Result<TurnPageWithChanges, String> {
-    let engine = state
-        .inner()
-        .engine
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone()
-        .ok_or_else(|| "还没有打开会话".to_owned())?;
-    let current = state
-        .inner()
-        .current
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
-    let page = engine.history(before, limit.unwrap_or(30));
-    let turns = match current {
-        Some(current) => with_changes(
-            &current.state_dir,
-            &current.workspace,
-            &current.id,
-            page.turns,
-        ),
-        None => page
-            .turns
-            .into_iter()
-            .map(|turn| TurnWithChanges {
-                turn,
-                changes: Vec::new(),
-            })
-            .collect(),
-    };
-    Ok(TurnPageWithChanges {
-        turns,
-        next_before: page.next_before,
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = state.current_open()?.engine.clone();
+        let current = state
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        let page = engine.history(before, limit.unwrap_or(30));
+        let turns = match current {
+            Some(current) => with_changes(
+                &current.state_dir,
+                &current.workspace,
+                &current.id,
+                page.turns,
+            ),
+            None => page
+                .turns
+                .into_iter()
+                .map(|turn| TurnWithChanges {
+                    turn,
+                    changes: Vec::new(),
+                })
+                .collect(),
+        };
+        Ok(TurnPageWithChanges {
+            turns,
+            next_before: page.next_before,
+        })
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
