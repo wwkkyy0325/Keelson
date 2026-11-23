@@ -242,6 +242,56 @@ describe("session reducer", () => {
     expect(state.lastError).toBeNull();
   });
 
+  it("keeps the message and the work of a turn that failed", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 7,
+      input: "修一下按钮",
+    });
+    state = reduce(state, {
+      type: "tool-started",
+      seq: 7,
+      callId: 1,
+      name: "shell",
+      args: "cargo test",
+    });
+    state = reduce(state, {
+      type: "tool-finished",
+      seq: 7,
+      callId: 1,
+      name: "shell",
+      ok: true,
+      durationMs: 12,
+      error: null,
+      output: "ok",
+    });
+    state = reduce(state, {
+      type: "turn-failed",
+      seq: 7,
+      message: "provider down",
+    });
+
+    // The question is still in the transcript, with what ran before it stopped.
+    expect(state.turns.map((item) => item.input)).toEqual(["修一下按钮"]);
+    expect(state.turns[0].error).toBe("provider down");
+    expect(state.turns[0].state).toBe("Error");
+    expect(state.turns[0].tools.map((tool) => tool.name)).toEqual(["shell"]);
+    expect(state.running).toBeNull();
+  });
+
+  it("does not turn another conversation's failure into a turn", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 4,
+      input: "still running",
+    });
+
+    state = reduce(state, { type: "turn-failed", seq: 9, message: "elsewhere" });
+
+    expect(state.turns).toHaveLength(0);
+    expect(state.running?.seq).toBe(4);
+  });
+
   it("keeps one pending interaction and resolves it by id", () => {
     const interaction = {
       id: "i-1",
@@ -318,6 +368,33 @@ describe("session reducer", () => {
 
     expect(state.sessions.map((item) => item.id)).toEqual(["b", "a"]);
     expect(state.projects.map((item) => item.name)).toEqual(["w"]);
+  });
+
+  it("adds a conversation the list did not have yet", () => {
+    // A new conversation is named the moment its first message is sent, so its
+    // row arrives before any turn exists. The list has to take it, not wait for
+    // a reload of the whole page.
+    let state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "old",
+        running: null,
+        sessions: [meta("old", 1, "yesterday")],
+        projects: [],
+        turns: [],
+        nextBefore: null,
+      },
+    });
+
+    state = reduce(state, {
+      type: "session-updated",
+      meta: meta("fresh", 9, "刚发出去的话"),
+    });
+
+    expect(state.sessions.map((item) => item.id)).toEqual(["fresh", "old"]);
+    expect(state.sessions[0].turns).toBe(0);
   });
 
   it("moves an updated conversation to the front with its new title", () => {

@@ -175,6 +175,38 @@ function liveTurn(seq: number, input: string): RunningTurn {
   };
 }
 
+/// The turn the engine could not finish, as the transcript keeps it.
+///
+/// A failed turn still happened: the message was sent and its work ran. Clearing
+/// the live card on `turn-failed` threw both away — the question disappeared
+/// with the answer and only an error line was left, and a first turn that failed
+/// left an empty conversation titled after a question it no longer showed. The
+/// card becomes a failed turn with what it gathered (ADR 0079). The engine's own
+/// document agrees: a failed turn is stored with its input and its error.
+function failedTurn(running: RunningTurn, message: string): Turn {
+  return {
+    seq: running.seq,
+    input: running.input,
+    answer: running.text,
+    thinking: running.thinking,
+    state: "Error",
+    error: message,
+    durationMs: Math.max(0, Date.now() - running.startedAt),
+    usage: running.usage,
+    modelCalls: running.modelCalls,
+    verificationPassed: null,
+    verification: null,
+    tools: running.tools.map((tool) => ({
+      name: tool.name,
+      ok: tool.ok,
+      durationMs: tool.durationMs,
+      args: tool.args,
+      output: tool.output,
+      reused: tool.reused,
+    })),
+  };
+}
+
 export function reduce(state: SessionState, action: Action): SessionState {
   switch (action.type) {
     case "session-opened":
@@ -437,8 +469,15 @@ export function reduce(state: SessionState, action: Action): SessionState {
       };
 
     case "turn-failed":
+      // The turn is over and it failed. Its card becomes a failed turn instead
+      // of vanishing: what was asked, what ran before the failure, and why it
+      // stopped (ADR 0079).
       return {
         ...state,
+        turns:
+          state.running?.seq === action.seq
+            ? normalize([...state.turns, failedTurn(state.running, action.message)])
+            : state.turns,
         running:
           state.running?.seq === action.seq ? null : state.running,
         pendingInteraction: null,
