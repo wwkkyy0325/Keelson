@@ -1004,6 +1004,7 @@ fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
                     duration_ms: 0,
                     args: args_preview.clone(),
                     output: None,
+                    reused: false,
                 });
             }
             Event::ToolFinished {
@@ -1011,6 +1012,7 @@ fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
                 ok,
                 duration_ms,
                 output_preview,
+                reused,
                 ..
             } => {
                 if let Some(index) = pending.remove(call_id) {
@@ -1018,6 +1020,7 @@ fn tool_lines(records: &[EventRecord]) -> Vec<ToolLine> {
                         line.ok = Some(*ok);
                         line.duration_ms = *duration_ms;
                         line.output = output_preview.clone();
+                        line.reused = *reused;
                     }
                 }
             }
@@ -2320,6 +2323,7 @@ system = "prompt.md"
                     ok: true,
                     error: None,
                     duration_ms: 2,
+                    reused: false,
                     output_preview: Some("second output".to_owned()),
                 },
             },
@@ -2332,6 +2336,7 @@ system = "prompt.md"
                     ok: false,
                     error: None,
                     duration_ms: 1,
+                    reused: false,
                     output_preview: Some("first output".to_owned()),
                 },
             },
@@ -3762,6 +3767,7 @@ system = "prompt.md"
             duration_ms: 5,
             args: None,
             output: Some("x".repeat(1024 * 1024)),
+            reused: false,
         }];
 
         cap_tool_lines(&mut lines);

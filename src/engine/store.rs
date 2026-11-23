@@ -78,6 +78,10 @@ pub struct ToolLine {
     pub args: Option<String>,
     /// Bounded, redacted output.
     pub output: Option<String>,
+    /// True when an identical call earlier in the same turn answered this one
+    /// (ADR 0070). Absent in sessions written before the field.
+    #[serde(default)]
+    pub reused: bool,
 }
 
 /// One acceptance item that did not pass, kept for the transcript.
