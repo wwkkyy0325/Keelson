@@ -96,12 +96,13 @@ The memory the model reads is bounded where the archive is not:
 
 - The memo is capped at `working_set / 10`, clamped to 256..4096 tokens, and
   rewritten every third seal (`keel-runtime/src/summarizer.rs`).
-- The facts block stops at a quarter of the stage allowance, and it fills
-  oldest first, so the newest facts are the first to fall out and nothing says
-  they did. The largest conversation carries 197 facts, 39 KB, about 9.8 k
-  tokens against a quarter of what the stages ahead of it leave, 16 k at most
-  in a 64 k working set; this conversation carries 125, about 6 k
-  (measured 2026-11-23). This is the one memory item that grows with the
+- The facts block stops at a quarter of the stage allowance; since Keel ADR
+  0071 it keeps the newest facts, and any confirmed or user-explicit one, ahead
+  of the rest, and reports what it left out. Re-measured 2026-11-23: the largest
+  conversation carries 197 facts, 39 KB, about 9.8 k tokens against a quarter of
+  what the stages ahead of it leave, 16 k at most in a 64 k working set, and
+  across all 16 snapshots the largest block is 3 178 tokens against a 5 952
+  budget — nothing clips yet. This is the one memory item that grows with the
   conversation.
 - Turn rows never enter a prompt. The kernel rebuilds history from segments and
   clears the entries of a segment once a summary covers it; after that the row
@@ -134,12 +135,24 @@ has absorbed. The numbers that would reopen them are a conversation past about
 segments recorded before the term cap (ADR 0069 in the Keel repository) stay as
 history.
 
+Landed (2026-11-23), the half that loses no row: the step log now clips a call's
+`args` and `output` to `ROW_PREVIEW_CHARS` = 1 024 characters and says so in the
+file (`desktop/src-tauri/src/records.rs`, ADR 0074). Measured over the 368 turn
+files here — 31 699 calls, 39.5 M output characters, 58.2 MB — that keeps 47.8%
+of the output characters against 75.1% at 2 048 and 28.2% at 512; the median call
+is 665 characters and is stored unchanged. The live stream still shows the full
+`UI_PREVIEW_BYTES` = 4 096. Rows keep their own retention question, still
+wanted: no.
+
 Reopened (2026-11-23): the facts block is bounded already at a quarter of the
 stage allowance, so the fix is not a cap but the order and the report — keep
 the newest facts and any confirmed or user-explicit one ahead of the rest, and
 say on the transcript how many were left out. Dropping them from the snapshot
 would trade something unrecoverable for a number that is not hurting;
 truncating the block needs no such trade.
+
+Done (2026-11-23): the order and the report are in Keel ADR 0071, and the count
+reaches the conversation in ADR 0075 here.
 
 ## The trash keeps every version forever
 
@@ -160,4 +173,15 @@ limit for the rest, printed the way the screenshot limit is. A version and its
 `meta/` sidecar have to go together, or the listing starts naming backups that
 are already gone. It is a deletion
 of a deletion's safety net, so the number belongs where the user can see it.
+
+Done (2026-11-23): Keel grew `TrashStore::prune(&Retention)` and this host picks
+`TRASH_VERSIONS` = 5 and `TRASH_MAX_AGE` = 30 days beside the store it applies
+to (Keel ADR 0073, ADR 0073 here). Measured over the 11 projects in this state
+directory: 4 446 versions, 122.3 MB, 937 distinct originals, median 2 versions
+per path and one path with 196. Five keeps 51% of the files and 42.6 MB, and the
+first start after it lands removes 2 179 files and about 79.7 MB — once, and not
+recoverably. Thirty days removes nothing today (the oldest version is ten days
+old); it is there for the path written once and never touched again. The prune
+runs once per process, spawned, and its report is not logged yet — that is the
+next thing to watch with telemetry, together with the two numbers above.
 
