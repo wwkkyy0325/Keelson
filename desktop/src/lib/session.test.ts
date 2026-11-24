@@ -333,6 +333,86 @@ describe("session reducer", () => {
     expect(state.pendingInteraction).toBeNull();
   });
 
+  it("reopens onto a running turn with the answer it had already shown", () => {
+    // A card rebuilt from a view used to start empty, so the text that streamed
+    // before the window came back was replaced by whatever arrived after it
+    // (ADR 0083).
+    const state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "s",
+        running: { seq: 4, input: "go on", partial: "The sweep " },
+        pending: null,
+        sessions: [],
+        projects: [],
+        turns: [],
+        nextBefore: null,
+      },
+    });
+
+    expect(state.running?.seq).toBe(4);
+    expect(state.running?.text).toBe("The sweep ");
+  });
+
+  it("keeps the text the store holds over a view's older tail", () => {
+    // ADR 0080 outranks the partial: what the window already relayed is newer
+    // than the tail the host wrote to disk half a second ago.
+    let state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "s",
+        running: { seq: 4, input: "go on", partial: "The sweep " },
+        pending: null,
+        sessions: [],
+        projects: [],
+        turns: [],
+        nextBefore: null,
+      },
+    });
+    state = reduce(state, { type: "text-delta", seq: 4, text: "and the sidecars" });
+
+    state = reduce(state, {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "s",
+        running: { seq: 4, input: "go on", partial: "The sweep " },
+        pending: null,
+        sessions: [],
+        projects: [],
+        turns: [],
+        nextBefore: null,
+      },
+    });
+
+    expect(state.running?.text).toBe("The sweep and the sidecars");
+  });
+
+  it("carries the answer into the card a restart offers", () => {
+    const state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "s",
+        running: null,
+        pending: { seq: 4, input: "go on", startedAt: 1, partial: "The sweep " },
+        sessions: [],
+        projects: [],
+        turns: [],
+        nextBefore: null,
+      },
+    });
+
+    expect(state.running).toBeNull();
+    expect(state.pending?.partial).toBe("The sweep ");
+  });
+
   it("does not resurrect a persisted turn from a late start", () => {
     let state = reduce(initialSession(), {
       type: "session-opened",

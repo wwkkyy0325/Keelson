@@ -45,6 +45,40 @@ pub struct CurrentSession {
 pub struct RunningTurn {
     pub seq: u32,
     pub input: String,
+    /// The answer as far as it has streamed.
+    ///
+    /// It is what a window that comes back to this conversation still holds,
+    /// and what the note on disk keeps for the next process (ADR 0083).
+    pub partial: String,
+}
+
+/// How much of a streaming answer the host keeps.
+///
+/// The beginning is what the reader has already read, so that is the part worth
+/// keeping when an answer runs past the bound. Eight thousand bytes matches the
+/// document's cap on a tool output; what the number buys here is that rewriting
+/// the note while a turn streams for minutes stays cheap.
+pub const PARTIAL_BYTES: usize = 8_000;
+
+impl RunningTurn {
+    /// Keeps the head of the answer, up to the bound.
+    pub fn push_partial(&mut self, text: &str) {
+        let room = PARTIAL_BYTES.saturating_sub(self.partial.len());
+        if room == 0 {
+            return;
+        }
+        if text.len() <= room {
+            self.partial.push_str(text);
+            return;
+        }
+        // A bound in bytes must not cut a character in half: the note is JSON
+        // and a lone continuation byte would make it unreadable.
+        let mut cut = room;
+        while cut > 0 && !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        self.partial.push_str(&text[..cut]);
+    }
 }
 
 /// The connection a conversation's engine was built with.
@@ -404,5 +438,58 @@ fn response_for(request: &InteractionRequest, option: &str) -> InteractionRespon
     }
     InteractionResponse::Selected {
         option: option.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn turn() -> RunningTurn {
+        RunningTurn {
+            seq: 1,
+            input: "go".to_owned(),
+            partial: String::new(),
+        }
+    }
+
+    /// The buffer keeps the head of the answer and stops at the bound, on a
+    /// character boundary: the note it feeds is JSON, so half a character would
+    /// make it unreadable (ADR 0083).
+    #[test]
+    fn the_partial_answer_starts_at_the_beginning_and_stops_at_the_bound() {
+        let mut turn = turn();
+        turn.push_partial("hello ");
+        assert_eq!(turn.partial, "hello ");
+
+        // Far more than the bound in one push.
+        turn.push_partial(&"é".repeat(PARTIAL_BYTES));
+        assert_eq!(turn.partial.len(), PARTIAL_BYTES);
+        assert!(turn.partial.starts_with("hello "));
+        assert!(turn.partial.is_char_boundary(turn.partial.len()));
+
+        // A full buffer takes nothing more.
+        let full = turn.partial.clone();
+        turn.push_partial("more");
+        assert_eq!(turn.partial, full);
+    }
+
+    /// A push that would cross the bound keeps its fitting prefix and stops on a
+    /// character boundary — never half a character, and never past the bound.
+    #[test]
+    fn a_push_that_crosses_the_bound_stops_on_a_character_boundary() {
+        let mut one = turn();
+        one.partial = "x".repeat(PARTIAL_BYTES - 1);
+        one.push_partial("日本語");
+        // One byte of room fits no whole character, so nothing is kept.
+        assert_eq!(one.partial.len(), PARTIAL_BYTES - 1);
+
+        let mut four = turn();
+        four.partial = "x".repeat(PARTIAL_BYTES - 4);
+        four.push_partial("日本語");
+        // Four bytes of room hold the first character (three bytes) and no more.
+        assert_eq!(four.partial.len(), PARTIAL_BYTES - 1);
+        assert!(four.partial.ends_with('日'));
+        assert!(four.partial.is_char_boundary(four.partial.len()));
     }
 }

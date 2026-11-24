@@ -1312,6 +1312,19 @@ header .title {
   white-space: pre-wrap;
 }
 
+/* The answer an interrupted turn had already shown, kept beside the question so
+   a restart does not look as if nothing had been answered (ADR 0083). Plain
+   text: it is what the model said, not a finished answer to mark up. */
+.interrupted-answer {
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+  color: var(--text);
+  opacity: 0.85;
+  max-height: 16rem;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+
 /* A question no turn answers: the send was kept, the answer never came. The
    row stays quiet so it reads as part of the thread, not as an alarm. */
 .interrupted-row {

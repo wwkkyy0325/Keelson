@@ -163,17 +163,18 @@ function sameBackground(
 }
 
 /// A turn that started and has not finished. The live card is rebuilt from
-/// `seq` and `input` when the window switches back to a running conversation,
-/// so elapsed time counts from the switch and the streamed text resumes from
-/// the next delta on.
-function liveTurn(seq: number, input: string): RunningTurn {
+/// `seq`, `input` and the answer that had already streamed when the window comes
+/// back to a running conversation, so the streamed text resumes where it stopped
+/// instead of at the beginning; only the elapsed time counts from the switch
+/// (ADR 0083).
+function liveTurn(seq: number, input: string, partial = ""): RunningTurn {
   return {
     seq,
     input,
     startedAt: Date.now(),
     usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
     modelCalls: 0,
-    text: "",
+    text: partial,
     thinking: "",
     process: [],
     tools: [],
@@ -217,14 +218,18 @@ export function reduce(state: SessionState, action: Action): SessionState {
   switch (action.type) {
     case "session-opened": {
       // Re-reading a conversation the window already holds must not throw away
-      // what streamed while it was away: the view carries the question and the
-      // sequence, the store carries the text, thinking and tool rows gathered
-      // so far. Only a view that reports a different turn — or none — rebuilds
-      // the live card (ADR 0080).
+      // what streamed while it was away: the view carries the question, the
+      // sequence and the answer so far, the store carries the text, thinking and
+      // tool rows gathered so far. Only a view that reports a different turn —
+      // or none — rebuilds the live card (ADR 0080, ADR 0083).
       const running = action.view.running
         ? state.running && state.running.seq === action.view.running.seq
           ? { ...state.running, input: action.view.running.input }
-          : liveTurn(action.view.running.seq, action.view.running.input)
+          : liveTurn(
+              action.view.running.seq,
+              action.view.running.input,
+              action.view.running.partial ?? "",
+            )
         : null;
       return {
         ...initialSession(),

@@ -129,6 +129,9 @@ export type PendingTurn = {
   input: string;
   /// When the send was seen, so the card can say how long ago.
   startedAt: number;
+  /// The answer as far as it had streamed when the process stopped (ADR 0083).
+  /// Absent from a view of a host that kept none.
+  partial?: string;
 };
 
 export type SessionView = {
@@ -136,8 +139,10 @@ export type SessionView = {
   workspace: string;
   sessionId: string;
   /// The turn this conversation is running right now, so switching back to it
-  /// shows the live card instead of an empty transcript.
-  running: { seq: number; input: string } | null;
+  /// shows the live card instead of an empty transcript. `partial` is the answer
+  /// as far as it has streamed, so a card rebuilt from a view starts where the
+  /// stream is instead of empty (ADR 0083).
+  running: { seq: number; input: string; partial?: string } | null;
   /// A question no turn answers: the app or the turn did not survive it.
   pending: PendingTurn | null;
   turns: Turn[];

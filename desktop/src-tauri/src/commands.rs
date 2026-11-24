@@ -5,7 +5,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use keel_core::{CancelToken, Event, PermissionLevel};
 use keelson::engine::{
@@ -156,6 +156,9 @@ pub struct SessionView {
 pub struct RunningTurnView {
     pub seq: u32,
     pub input: String,
+    /// The answer as far as it has streamed, so a window that reopens onto this
+    /// turn shows the text instead of an empty card (ADR 0083).
+    pub partial: String,
 }
 
 fn with_changes(
@@ -262,7 +265,13 @@ async fn drain_deltas(
 }
 
 /// Sends what the batch holds and empties it.
-fn emit_batch(app: &SessionApp, current_seq: &AtomicU32, batch: &mut DeltaBatch) {
+fn emit_batch(
+    app: &SessionApp,
+    current_seq: &AtomicU32,
+    conversation: &Weak<OpenConversation>,
+    partial: &mut PartialNote,
+    batch: &mut DeltaBatch,
+) {
     let text = std::mem::take(&mut batch.text);
     let thinking = std::mem::take(&mut batch.thinking);
     if text.is_empty() && thinking.is_empty() {
@@ -275,6 +284,11 @@ fn emit_batch(app: &SessionApp, current_seq: &AtomicU32, batch: &mut DeltaBatch)
         return;
     }
     if !text.is_empty() {
+        // Kept before it is sent: a window looking at another conversation
+        // drops this event, and the note is what a restart reads (ADR 0083).
+        if let Some(conversation) = conversation.upgrade() {
+            partial.note(&conversation, seq, &text);
+        }
         app.emit(EV_TEXT_DELTA, TextDelta { seq, text });
     }
     if !thinking.is_empty() {
@@ -285,6 +299,80 @@ fn emit_batch(app: &SessionApp, current_seq: &AtomicU32, batch: &mut DeltaBatch)
                 text: thinking,
             },
         );
+    }
+}
+
+/// How often the streamed answer reaches the note on disk. A turn streams for
+/// minutes and a delta arrives per frame; rewriting a small file per frame would
+/// cost more than the turn it is recording.
+const PARTIAL_WRITE: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Keeps the note's copy of a streaming answer in step with the conversation.
+///
+/// The text lives in `RunningTurn.partial`, which is bounded; this only decides
+/// when to write it, so the disk sees at most one small write per window and
+/// none at all while the answer has not grown (ADR 0083).
+///
+/// The write is synchronous because the delta relay is: a few kilobytes into a
+/// file that is replaced atomically, at most twice a second.
+#[derive(Default)]
+struct PartialNote {
+    /// The turn this writer follows. A new sequence starts a new note.
+    seq: u32,
+    /// Bytes of the answer already written.
+    written: usize,
+    last: Option<std::time::Instant>,
+}
+
+impl PartialNote {
+    fn note(&mut self, conversation: &OpenConversation, seq: u32, text: &str) {
+        let partial = {
+            let mut slot = conversation
+                .running
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            self.step(slot.as_mut(), seq, text)
+        };
+        let Some(partial) = partial else {
+            return;
+        };
+        sessions::note_partial(
+            &conversation.state_dir,
+            &conversation.workspace,
+            &conversation.id,
+            seq,
+            &partial,
+        );
+    }
+
+    /// Adds `text` to the buffer and says what the note should hold now, or
+    /// nothing when the window has not elapsed or the answer has not grown.
+    ///
+    /// Separate from the write so the two decisions — when to write, and what
+    /// a turn's buffer is — can be tested without a conversation.
+    fn step(&mut self, running: Option<&mut RunningTurn>, seq: u32, text: &str) -> Option<String> {
+        if self.seq != seq {
+            self.seq = seq;
+            self.written = 0;
+            self.last = None;
+        }
+        let running = running?;
+        // A delta naming another turn is the tail of a turn that already ended;
+        // the buffer is not its any more.
+        if running.seq != seq {
+            return None;
+        }
+        running.push_partial(text);
+        let due = self
+            .last
+            .map(|last| last.elapsed() >= PARTIAL_WRITE)
+            .unwrap_or(true);
+        if !due || running.partial.len() == self.written {
+            return None;
+        }
+        self.written = running.partial.len();
+        self.last = Some(std::time::Instant::now());
+        Some(running.partial.clone())
     }
 }
 
@@ -1359,8 +1447,15 @@ async fn open_inner(
     show_conversation(&state, &open, Some(archived));
     let session_app = SessionApp::new(app.clone(), session_id.clone());
     let seq = open.seq.clone();
+    // A weak handle: the relay must not keep an evicted conversation — and the
+    // engine feeding it — alive.
+    let conversation = Arc::downgrade(&open);
     tauri::async_runtime::spawn(async move {
-        drain_deltas(&mut delta_rx, |batch| emit_batch(&session_app, &seq, batch)).await;
+        let mut partial = PartialNote::default();
+        drain_deltas(&mut delta_rx, |batch| {
+            emit_batch(&session_app, &seq, &conversation, &mut partial, batch)
+        })
+        .await;
     });
 
     Ok(open_view(
@@ -1403,6 +1498,7 @@ fn open_view(
         .map(|running| RunningTurnView {
             seq: running.seq,
             input: running.input.clone(),
+            partial: running.partial.clone(),
         });
     // A question nobody answered. It is news only when the engine has no turn
     // running and the document holds no turn with that sequence; otherwise the
@@ -2125,6 +2221,7 @@ pub async fn send_message(
         *running = Some(RunningTurn {
             seq,
             input: input.clone(),
+            partial: String::new(),
         });
     }
     // Every event this turn emits names the conversation, so a window showing
@@ -2994,11 +3091,60 @@ mod tests {
         assert_eq!(flushes, vec![(7, 2)]);
     }
 
+    /// The note is written when the window has elapsed and the answer grew —
+    /// not once per frame, and not twice for the same text (ADR 0083).
+    #[test]
+    fn a_streaming_answer_reaches_the_note_at_most_once_per_window() {
+        let mut writer = super::PartialNote::default();
+        let mut live = Some(crate::state::RunningTurn {
+            seq: 4,
+            input: "go".to_owned(),
+            partial: String::new(),
+        });
+
+        assert_eq!(
+            writer.step(live.as_mut(), 4, "one ").as_deref(),
+            Some("one ")
+        );
+
+        // Same window: the buffer grows, the disk waits for the next one.
+        assert!(writer.step(live.as_mut(), 4, "two ").is_none());
+        assert_eq!(live.as_ref().expect("a turn").partial, "one two ");
+
+        // The window elapsed.
+        writer.last = None;
+        assert_eq!(
+            writer.step(live.as_mut(), 4, "three").as_deref(),
+            Some("one two three")
+        );
+
+        // With the window elapsed but nothing new, there is still no write.
+        writer.last = None;
+        assert!(writer.step(live.as_mut(), 4, "").is_none());
+
+        // A delta that names another turn is the tail of a finished turn.
+        let mut next = Some(crate::state::RunningTurn {
+            seq: 5,
+            input: "next".to_owned(),
+            partial: String::new(),
+        });
+        writer.last = None;
+        assert!(writer.step(next.as_mut(), 4, "late").is_none());
+        assert_eq!(next.as_ref().expect("a turn").partial, "");
+
+        // A new sequence starts the note over.
+        assert_eq!(writer.step(next.as_mut(), 5, "next").as_deref(), Some("next"));
+
+        // No turn running: nothing is kept.
+        assert!(writer.step(None, 6, "orphan").is_none());
+    }
+
     fn note(seq: u32) -> crate::sessions::PendingTurn {
         crate::sessions::PendingTurn {
             seq,
             input: "run the tests".to_owned(),
             started_at: 0,
+            partial: String::new(),
         }
     }
 

@@ -570,6 +570,12 @@
          is not replayed, because the tools it already ran had side effects. -->
     <article class="turn interrupted">
       <div class="user">{note.input}</div>
+      {#if note.partial}
+        <!-- What the answer had already said before the process stopped. Kept
+             so a restart does not look as if nothing came back; the card still
+             offers to ask again, because a half-run turn had side effects. -->
+        <div class="interrupted-answer">{note.partial}</div>
+      {/if}
       <div class="interrupted-row">
         <span class="interrupted-note">{$t("turn.interrupted")}</span>
         <button class="interrupted-resume" onclick={() => onResume(note.input)}>

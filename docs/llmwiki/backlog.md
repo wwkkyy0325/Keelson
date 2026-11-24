@@ -189,7 +189,7 @@ next thing to watch with telemetry, together with the two numbers above.
 
 ADR 0080 keeps the in-flight turn across a switch, and ADR 0081 keeps the
 question across a restart. The text of an answer that was streaming when the
-process died is still gone: it lives in the window's memory only, because the
+process died was gone with it: it lived in the window's memory only, because the
 engine writes a turn when it ends and keeps no live copy any host could read.
 
 Two shapes, both small: the host could keep a bounded tail of the deltas it
@@ -198,6 +198,16 @@ already relays in its own `RunningTurn` and hand it back through
 turn runs. The first is host-only and bounded; the second is a kernel change and
 needs a contract test. Not scheduled: the retry card (ADR 0081) already covers
 the case where it matters, and the case where it does not has not come up yet.
+
+Done (2026-11-24): the host keeps the answer and the note carries it (ADR 0083).
+`RunningTurn.partial` holds the head of the text, bounded at 8 000 bytes and cut
+on a character boundary; `PendingTurn.partial` rides in `<id>.pending.json` with
+`#[serde(default)]`; `PartialNote` rewrites that file at most twice a second and
+only when the text grew; `SessionView.running.partial` feeds `liveTurn`, so a card
+rebuilt after a switch starts where the stream stopped, and the retry card shows
+the kept text above 再问一次. The tail was not what to keep: the beginning is
+what the reader already read. The kernel was not touched — it still writes a turn
+only when the turn ends, and a retry is still a new turn (ADR 0081).
 
 ## The desktop's settings are one file for every project
 

@@ -264,6 +264,15 @@ pub struct PendingTurn {
     pub seq: u32,
     pub input: String,
     pub started_at: u64,
+    /// The answer as far as it had streamed when the note was last written.
+    ///
+    /// A turn reaches the document only when it ends, so a process that died
+    /// mid-answer left the question and nothing else. The note carries what had
+    /// already been shown, bounded and rewritten at most a few times a second
+    /// (ADR 0083). Empty while the first model call has said nothing yet, and
+    /// absent in a note written before this field existed.
+    #[serde(default)]
+    pub partial: String,
 }
 
 fn pending_path(dir: &Path, id: &str) -> PathBuf {
@@ -287,6 +296,7 @@ pub fn mark_pending(
         seq,
         input: input.to_owned(),
         started_at: now_ms(),
+        partial: String::new(),
     };
     let text = serde_json::to_vec(&pending).ok()?;
     // Beside the document and moved into place: a reader never sees half a
@@ -304,6 +314,37 @@ pub fn clear_pending(state_dir: &Path, workspace: &Path, id: &str) {
         return;
     }
     let _ = fs::remove_file(pending_path(&project_dir(state_dir, workspace), id));
+}
+
+/// Records how far the answer had got, so a restart shows the text as well as
+/// the question (ADR 0083).
+///
+/// A read-modify-write of a small file: the other fields are the ones
+/// `mark_pending` wrote, and this may be the last thing the process does. A note
+/// that names another turn is left alone — a note belongs to exactly one turn,
+/// and the tail of an older answer must never land on a newer question.
+pub fn note_partial(
+    state_dir: &Path,
+    workspace: &Path,
+    id: &str,
+    seq: u32,
+    partial: &str,
+) -> Option<()> {
+    if !valid_id(id) {
+        return None;
+    }
+    let dir = project_dir(state_dir, workspace);
+    let path = pending_path(&dir, id);
+    let mut note: PendingTurn = serde_json::from_str(&fs::read_to_string(&path).ok()?).ok()?;
+    if note.seq != seq || note.partial == partial {
+        return None;
+    }
+    note.partial = partial.to_owned();
+    let text = serde_json::to_vec(&note).ok()?;
+    let temporary = dir.join(format!("{id}.pending.json.tmp"));
+    fs::write(&temporary, text).ok()?;
+    fs::rename(&temporary, path).ok()?;
+    Some(())
 }
 
 /// The question a conversation was left asking, if no turn answers it.
@@ -776,6 +817,62 @@ mod tests {
 
         assert!(mark_pending(&state, &workspace, &id, 1, "   ").is_none());
         assert!(pending(&state, &workspace, &id).is_none());
+    }
+
+    /// The answer that was streaming when the process stopped is kept beside the
+    /// question, so a restart shows how far it got (ADR 0083).
+    #[test]
+    fn the_note_keeps_the_answer_that_had_streamed() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let id = fresh_id();
+
+        mark_pending(&state, &workspace, &id, 7, "explain the sweep").expect("a note");
+        assert_eq!(pending(&state, &workspace, &id).expect("the note").partial, "");
+
+        note_partial(&state, &workspace, &id, 7, "The sweep ").expect("the first part");
+        let note = pending(&state, &workspace, &id).expect("the note");
+        // The question and the sequence it belongs to are the ones that were
+        // written; only the answer was added.
+        assert_eq!(note.seq, 7);
+        assert_eq!(note.input, "explain the sweep");
+        assert_eq!(note.partial, "The sweep ");
+
+        // A note that names another turn is not this turn's to change, and
+        // writing what it already holds is not a write.
+        assert!(note_partial(&state, &workspace, &id, 8, "no").is_none());
+        assert!(note_partial(&state, &workspace, &id, 7, "The sweep ").is_none());
+        assert_eq!(
+            pending(&state, &workspace, &id).expect("the note").partial,
+            "The sweep "
+        );
+    }
+
+    /// A note written before the field existed still reads, and can be given an
+    /// answer: the file outlives the build that wrote it.
+    #[test]
+    fn a_note_from_before_the_field_existed_still_reads() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let id = fresh_id();
+        let project = project_dir(&state, &workspace);
+        fs::create_dir_all(&project).expect("the project dir");
+        fs::write(
+            pending_path(&project, &id),
+            r#"{"seq":4,"input":"earlier","startedAt":1}"#,
+        )
+        .expect("an old note");
+
+        let note = pending(&state, &workspace, &id).expect("the note");
+        assert_eq!(note.seq, 4);
+        assert_eq!(note.partial, "");
+
+        note_partial(&state, &workspace, &id, 4, "half an answer").expect("the answer");
+        let note = pending(&state, &workspace, &id).expect("the note");
+        assert_eq!(note.partial, "half an answer");
+        assert_eq!(note.input, "earlier");
     }
 
     #[test]
