@@ -16,6 +16,8 @@
     undoable = false,
     onUndo = () => {},
     onBranch = () => {},
+    onRetry = () => {},
+    retryable = false,
     scrollRoot = null,
     density = INITIAL_DENSITY,
     onMeasured = () => {},
@@ -29,6 +31,12 @@
     undoable?: boolean;
     onUndo?: () => void;
     onBranch?: () => void;
+    /// A turn that failed on the model hands its question back to the composer.
+    /// Offered for the newest turn only: an older question sent again now lands
+    /// at the end of the thread, with a conversation that has moved on (ADR 0085).
+    onRetry?: (input: string) => void;
+    /// False while another turn is running, so a click cannot queue a second send.
+    retryable?: boolean;
     /// The scrolling transcript. A turn far above it is not visible, so its
     /// body waits until it comes near (lib/cull.ts).
     scrollRoot?: HTMLElement | null;
@@ -446,6 +454,17 @@ let thinkingOpen = $state(false);
   {/if}
 
   {#if turn.error}
-    <div class="error">{turn.error}</div>
+    <div class="error-row">
+      <div class="error">{turn.error}</div>
+      {#if retryable}
+        <button
+          class="error-retry"
+          title={$t("turn.retryHint")}
+          onclick={() => onRetry(turn.input)}
+        >
+          {$t("turn.retry")}
+        </button>
+      {/if}
+    </div>
   {/if}
 </article>

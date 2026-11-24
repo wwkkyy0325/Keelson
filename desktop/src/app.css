@@ -1706,6 +1706,32 @@ header .title {
   white-space: pre-wrap;
 }
 
+/* A failed turn keeps its error line and adds the one thing that gets the
+   answer back: the question, sent again (ADR 0085). The button sits beside the
+   text rather than under it, so the pair reads as one line of the thread. */
+.error-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.error-retry {
+  flex: none;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.error-retry:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .verification {
   display: flex;
   align-items: center;

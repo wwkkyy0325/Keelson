@@ -438,6 +438,8 @@
       {undoable}
       {onUndo}
       onBranch={() => onBranch(turn)}
+      onRetry={() => onResume(turn.input)}
+      retryable={index === $session.turns.length - 1 && !$session.running}
     />
   {/each}
 

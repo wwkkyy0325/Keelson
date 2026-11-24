@@ -2960,3 +2960,37 @@ spill names were referenced by more than one of them, and eight spill files a
 turn row points at were gone. An old "read the full output" marker opened
 another conversation's text or failed outright.
 
+## 2026-11-24 — a model failure says why, and one click sends the question again
+
+- The error line of a failed turn now carries the reason. The kernel walks the
+  transport error's source chain into its message (Keel ADR 0074), so a turn
+  that could not reach the provider reads
+  `error sending request for url (…): client error (SendRequest): connection
+  closed before message completed` where it used to stop at the first clause.
+  Nothing in the host had to change to show it; the host had simply never been
+  told.
+- `MODEL_RETRIES` (4) replaces the two attempts both providers were configured
+  with, and the kernel's backoff is second-scale (Keel ADR 0075): five attempts
+  spread over 7.5 s of waiting, inside the 300 s one model call may stay silent.
+- A stream the provider cut before it said anything is asked again by the
+  driver. One that had already put words on the card is not: the answer the
+  user read is not spent twice, and the recovery for it is the button below.
+- A turn that ended in an error offers its question again (ADR 0085). `重试` /
+  `Retry` sits in the same row as the error text and is offered on the newest
+  turn only, while no other turn is running. It sends that turn's question as a
+  new turn — the same route the ADR 0081 note's 再问一次 button already used —
+  so no command, engine call or state was added.
+
+### Why
+
+Two turns in one conversation stopped on
+`model failure: model_provider: error sending request for url
+(https://api.deepseek.com/chat/completions) (model_provider)` — a sentence that
+names nothing a reader can act on. Both model adapters wrote
+`error.to_string()`, and reqwest keeps the reason in the error's source chain;
+the host's own web tools had been given a chain-walking formatter on 2026-11-10
+and the model path was missed. The retry window was 600 ms in total, which suits
+a proxy hiccup and not a reset connection, and the only recovery was to retype
+the question — the user typed 继续, which tells the model nothing about what to
+continue.
+
