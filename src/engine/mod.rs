@@ -1850,6 +1850,14 @@ fn access_kind(access: rig::Access) -> AccessKind {
     }
 }
 
+/// Retries one model call may make before the turn gives up (ADR 0075). A
+/// request over a public network fails on a reset connection or a stale DNS
+/// entry more often than a proxy does, and those clear in seconds, so the host
+/// asks five times rather than three. The adapter waits 0.5/1/2/4 s between
+/// them: 7.5 s of waiting, inside the five minutes the driver already grants a
+/// silent call.
+const MODEL_RETRIES: u32 = 4;
+
 fn build_model(
     config: &RuntimeConfig,
     over: Option<&ModelOverride>,
@@ -1881,7 +1889,7 @@ fn build_model(
                 api_key: key("OPENAI_API_KEY", &[])?,
                 model,
                 supports_reasoning: config.supports_reasoning,
-                max_retries: 2,
+                max_retries: MODEL_RETRIES,
             })
             .map_err(model_error)?;
             Ok(HostModel::OpenAi(provider))
@@ -1891,7 +1899,7 @@ fn build_model(
                 base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".to_owned()),
                 api_key: key("ANTHROPIC_API_KEY", &["ANTHROPIC_AUTH_TOKEN"])?,
                 model,
-                max_retries: 2,
+                max_retries: MODEL_RETRIES,
             })
             .map_err(model_error)?;
             Ok(HostModel::Anthropic(provider))
