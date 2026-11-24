@@ -19,6 +19,7 @@ function view(id: string, extra: Partial<SessionView> = {}): SessionView {
     workspace: "/w",
     sessionId: id,
     running: null,
+    pending: null,
     turns: [],
     nextBefore: null,
     sessions: [],

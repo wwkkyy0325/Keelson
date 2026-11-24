@@ -249,6 +249,72 @@ pub fn sync(state_dir: &Path, workspace: &Path, id: &str) -> Option<SessionMeta>
     Some(meta)
 }
 
+/// The question a conversation was asked and has not answered with a turn.
+///
+/// The engine writes a turn when it ends, so a turn the app did not survive left
+/// nothing behind: the question survived only as the title of an otherwise empty
+/// conversation, and asking it again meant retyping it. The host notes the
+/// question here from the moment it is sent and drops the note when the turn
+/// lands in the document. It is a note, not a queue: a half-run turn is never
+/// replayed, because the tool calls it already made had side effects. Resuming
+/// means asking again (ADR 0081).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingTurn {
+    pub seq: u32,
+    pub input: String,
+    pub started_at: u64,
+}
+
+fn pending_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.pending.json"))
+}
+
+/// Notes the question before the first model call, so a quit cannot lose it.
+pub fn mark_pending(
+    state_dir: &Path,
+    workspace: &Path,
+    id: &str,
+    seq: u32,
+    input: &str,
+) -> Option<()> {
+    if !valid_id(id) || input.trim().is_empty() {
+        return None;
+    }
+    let dir = project_dir(state_dir, workspace);
+    fs::create_dir_all(&dir).ok()?;
+    let pending = PendingTurn {
+        seq,
+        input: input.to_owned(),
+        started_at: now_ms(),
+    };
+    let text = serde_json::to_vec(&pending).ok()?;
+    // Beside the document and moved into place: a reader never sees half a
+    // question, and the name fails `valid_id`, so listing cannot mistake it for
+    // a conversation of its own.
+    let temporary = dir.join(format!("{id}.pending.json.tmp"));
+    fs::write(&temporary, text).ok()?;
+    fs::rename(&temporary, pending_path(&dir, id)).ok()?;
+    Some(())
+}
+
+/// Drops the note: the turn it named is in the document now.
+pub fn clear_pending(state_dir: &Path, workspace: &Path, id: &str) {
+    if !valid_id(id) {
+        return;
+    }
+    let _ = fs::remove_file(pending_path(&project_dir(state_dir, workspace), id));
+}
+
+/// The question a conversation was left asking, if no turn answers it.
+pub fn pending(state_dir: &Path, workspace: &Path, id: &str) -> Option<PendingTurn> {
+    if !valid_id(id) {
+        return None;
+    }
+    let text = fs::read_to_string(pending_path(&project_dir(state_dir, workspace), id)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
 /// Makes a conversation part of the project's history when its first message is
 /// sent, instead of when the turn that message started ends.
 ///
@@ -678,6 +744,38 @@ mod tests {
         assert!(begin(&state, &workspace, &id, "coding", "   \n ").is_none());
         assert!(list(&state, &workspace).is_empty());
         assert!(!session_path(&state, &workspace, &id).is_file());
+    }
+
+    #[test]
+    fn a_question_is_noted_until_its_turn_is_written() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let id = fresh_id();
+
+        mark_pending(&state, &workspace, &id, 1, "  sweep the sidecars  ").expect("a note");
+        let note = pending(&state, &workspace, &id).expect("the question");
+        assert_eq!(note.seq, 1);
+        assert_eq!(note.input, "  sweep the sidecars  ");
+
+        // The note is not a conversation of its own: its name must fail the id
+        // check, and listing must not adopt it.
+        assert!(!valid_id(&format!("{id}.pending")));
+        assert!(list(&state, &workspace).is_empty());
+
+        clear_pending(&state, &workspace, &id);
+        assert!(pending(&state, &workspace, &id).is_none());
+    }
+
+    #[test]
+    fn an_empty_question_is_not_noted() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let id = fresh_id();
+
+        assert!(mark_pending(&state, &workspace, &id, 1, "   ").is_none());
+        assert!(pending(&state, &workspace, &id).is_none());
     }
 
     #[test]

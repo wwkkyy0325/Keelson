@@ -40,6 +40,7 @@ describe("session reducer", () => {
         workspace: "/w",
         sessionId: "s",
         running: null,
+        pending: null,
         sessions: [],
         projects: [],
         turns: [turn(3), turn(1), turn(2)],
@@ -203,6 +204,7 @@ describe("session reducer", () => {
         workspace: "/w",
         sessionId: "s",
         running: null,
+        pending: null,
         sessions: [],
         projects: [],
         turns: [turn(4), turn(5)],
@@ -339,6 +341,7 @@ describe("session reducer", () => {
         workspace: "/w",
         sessionId: "s",
         running: null,
+        pending: null,
         sessions: [],
         projects: [],
         turns: [turn(1)],
@@ -359,6 +362,7 @@ describe("session reducer", () => {
         workspace: "/w",
         sessionId: "a",
         running: null,
+        pending: null,
         sessions: [meta("a", 1), meta("b", 2)],
         projects: [{ path: "/w", name: "w", openedAt: 1 }],
         turns: [],
@@ -381,6 +385,7 @@ describe("session reducer", () => {
         workspace: "/w",
         sessionId: "old",
         running: null,
+        pending: null,
         sessions: [meta("old", 1, "yesterday")],
         projects: [],
         turns: [],
@@ -405,6 +410,7 @@ describe("session reducer", () => {
         workspace: "/w",
         sessionId: "a",
         running: null,
+        pending: null,
         sessions: [meta("a", 1), meta("b", 2)],
         projects: [],
         turns: [],
@@ -471,6 +477,7 @@ describe("session reducer", () => {
         workspace: "/w",
         sessionId: "a",
         running: null,
+        pending: null,
         sessions: [meta("a", 1)],
         projects: [],
         turns: [],
@@ -495,6 +502,7 @@ describe("session reducer", () => {
         workspace: "/w",
         sessionId: "a",
         running: null,
+        pending: null,
         sessions: [meta("a", 1)],
         projects: [],
         turns: [turn(1)],
@@ -656,9 +664,111 @@ describe("session reducer", () => {
         projects: [],
         turns: [],
         running: null,
+        pending: null,
         nextBefore: null,
       },
     });
     expect(reopened.epoch).toBe(state.epoch + 1);
+  });
+
+  it("keeps the answer that streamed while the view was away", () => {
+    let state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "s",
+        running: { seq: 2, input: "do the thing" },
+        pending: null,
+        sessions: [],
+        projects: [],
+        turns: [turn(1)],
+        nextBefore: null,
+      },
+    });
+    state = reduce(state, {
+      type: "tool-started",
+      seq: 2,
+      callId: 7,
+      name: "shell",
+      args: "ls",
+    });
+    state = reduce(state, { type: "text-delta", seq: 2, text: "half an ans" });
+
+    // Switching away and back re-reads the same conversation. The view carries
+    // the question and the sequence, not the text: rebuilding the card from it
+    // threw away everything that had streamed (ADR 0080).
+    const reopened = reduce(state, {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "s",
+        running: { seq: 2, input: "do the thing" },
+        pending: null,
+        sessions: [],
+        projects: [],
+        turns: [turn(1)],
+        nextBefore: null,
+      },
+    });
+
+    expect(reopened.running?.text).toBe("half an ans");
+    expect(reopened.running?.tools.map((tool) => tool.name)).toEqual([
+      "shell",
+    ]);
+    expect(reopened.running?.seq).toBe(2);
+  });
+
+  it("drops the live card when the engine reports no running turn", () => {
+    let state = reduce(initialSession(), {
+      type: "turn-started",
+      seq: 1,
+      input: "hi",
+    });
+    state = reduce(state, { type: "text-delta", seq: 1, text: "part" });
+
+    const reopened = reduce(state, {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "s",
+        running: null,
+        pending: null,
+        sessions: [],
+        projects: [],
+        turns: [turn(1)],
+        nextBefore: null,
+      },
+    });
+
+    expect(reopened.running).toBeNull();
+    expect(reopened.turns.map((item) => item.seq)).toEqual([1]);
+  });
+
+  it("offers an unanswered question until a turn is started for it", () => {
+    const note = { seq: 3, input: "sweep the sidecars", startedAt: 1 };
+    let state = reduce(initialSession(), {
+      type: "session-opened",
+      view: {
+        rig: "r",
+        workspace: "/w",
+        sessionId: "s",
+        running: null,
+        pending: note,
+        sessions: [],
+        projects: [],
+        turns: [turn(1), turn(2)],
+        nextBefore: null,
+      },
+    });
+
+    expect(state.pending).toEqual(note);
+
+    // Asking again writes the note anew; the card must not sit beside the live
+    // turn it belongs to.
+    state = reduce(state, { type: "turn-started", seq: 3, input: note.input });
+    expect(state.pending).toBeNull();
   });
 });

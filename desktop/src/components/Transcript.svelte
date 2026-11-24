@@ -27,6 +27,7 @@
     undoable = false,
     onUndo = () => {},
     onBranch = () => {},
+    onResume = () => {},
   }: {
     onError: (message: string) => void;
     /// A failed action belongs to the conversation, not to a notice bar over
@@ -38,6 +39,9 @@
     undoable?: boolean;
     onUndo?: () => void;
     onBranch?: (turn: TurnData) => void;
+    /// Asks the question of an unfinished turn again. Never called on its own:
+    /// the turn may have run tools with side effects (ADR 0081).
+    onResume?: (input: string) => void;
   } = $props();
 
   let scroller = $state<HTMLDivElement | null>(null);
@@ -555,6 +559,22 @@
             {$t("turn.cacheShare", { percent: cacheShare })}
           </span>
         {/if}
+      </div>
+    </article>
+  {/if}
+
+  {#if !$session.running && $session.pending}
+    {@const note = $session.pending}
+    <!-- A question no turn answers: the app or the turn did not survive it.
+         The card keeps what was asked and offers to ask it again; the old turn
+         is not replayed, because the tools it already ran had side effects. -->
+    <article class="turn interrupted">
+      <div class="user">{note.input}</div>
+      <div class="interrupted-row">
+        <span class="interrupted-note">{$t("turn.interrupted")}</span>
+        <button class="interrupted-resume" onclick={() => onResume(note.input)}>
+          {$t("turn.resume")}
+        </button>
       </div>
     </article>
   {/if}

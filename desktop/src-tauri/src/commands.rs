@@ -143,6 +143,10 @@ pub struct SessionView {
     /// Every conversation in the project, newest first.
     pub sessions: Vec<SessionMeta>,
     pub projects: Vec<ProjectEntry>,
+    /// The question the conversation was left asking, when no turn answers it:
+    /// the window or a turn did not survive. The card is drawn from this and
+    /// nothing is replayed (ADR 0081).
+    pub pending: Option<sessions::PendingTurn>,
 }
 
 /// A turn that has started and has not finished. The input is what the user
@@ -1368,6 +1372,19 @@ async fn open_inner(
     ))
 }
 
+/// Whether a note about a question is still news. A running turn, or a turn with
+/// that sequence already in the document, means the question was answered and
+/// the note is what is left over — a turn that finished before its note was even
+/// written, or one that landed before the app could clear it (ADR 0081).
+fn unanswered(
+    note: Option<sessions::PendingTurn>,
+    running: bool,
+    stored: impl Fn(u32) -> bool,
+) -> Option<sessions::PendingTurn> {
+    let note = note?;
+    (!running && !stored(note.seq)).then_some(note)
+}
+
 fn open_view(
     state: &DesktopState,
     conversation: &OpenConversation,
@@ -1378,19 +1395,29 @@ fn open_view(
     let state_dir = state_dir_for(workspace);
     let engine = &conversation.engine;
     let page = engine.history(None, 30);
+    let running = conversation
+        .running
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|running| RunningTurnView {
+            seq: running.seq,
+            input: running.input.clone(),
+        });
+    // A question nobody answered. It is news only when the engine has no turn
+    // running and the document holds no turn with that sequence; otherwise the
+    // answer is already in the transcript and the note is left over.
+    let note = match &running {
+        Some(_) => None,
+        None => sessions::pending(&state_dir, workspace, session_id),
+    };
+    let pending = unanswered(note, running.is_some(), |seq| engine.turn(seq).is_some());
     SessionView {
         rig: engine.rig_name().to_owned(),
         workspace: display_path(engine.workspace()),
         session_id: session_id.to_owned(),
-        running: conversation
-            .running
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .as_ref()
-            .map(|running| RunningTurnView {
-                seq: running.seq,
-                input: running.input.clone(),
-            }),
+        running,
+        pending,
         turns: with_changes(&state_dir, workspace, session_id, page.turns),
         next_before: page.next_before,
         sessions: session_list.to_vec(),
@@ -2129,6 +2156,11 @@ pub async fn send_message(
                     .session_io
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
+                // The question is noted before the first model call, so quitting
+                // in the middle leaves it where the next open can offer it again
+                // (ADR 0081). `begin` puts the conversation in the list; the note
+                // keeps what was asked.
+                sessions::mark_pending(&state_dir, &workspace, &id, seq, &first);
                 sessions::begin(&state_dir, &workspace, &id, &rig, &first)
             };
             if let Some(meta) = meta {
@@ -2391,6 +2423,20 @@ pub async fn send_message(
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             *running = None;
+        }
+        // The turn is in the document (or the engine refused it and said so in
+        // the row); either way the question is answered, so the note goes
+        // (ADR 0081).
+        {
+            let _guard = state
+                .session_io
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            sessions::clear_pending(
+                &conversation.state_dir,
+                &conversation.workspace,
+                &conversation.id,
+            );
         }
         match &result {
             Ok(_) => {
@@ -2946,5 +2992,32 @@ mod tests {
         sender.await.expect("the sender finished");
 
         assert_eq!(flushes, vec![(7, 2)]);
+    }
+
+    fn note(seq: u32) -> crate::sessions::PendingTurn {
+        crate::sessions::PendingTurn {
+            seq,
+            input: "run the tests".to_owned(),
+            started_at: 0,
+        }
+    }
+
+    /// A note about a question is news only while nobody has answered it. Each
+    /// branch is one way the open path was wrong before ADR 0081: a question
+    /// whose answer is already in the document was offered to be asked again, a
+    /// question being answered right now was offered beside its own live card,
+    /// and a question that was never answered was dropped because a turn with
+    /// that sequence did not exist yet.
+    #[test]
+    fn a_note_is_news_only_until_its_sequence_is_answered() {
+        let kept = super::unanswered(Some(note(3)), false, |seq| seq == 1);
+        assert_eq!(kept.expect("the question is still unanswered").seq, 3);
+
+        // The turn landed under the note's sequence, so the note is left over.
+        assert!(super::unanswered(Some(note(3)), false, |seq| seq == 3).is_none());
+        // A turn is streaming right now: the live card already holds it.
+        assert!(super::unanswered(Some(note(3)), true, |_| false).is_none());
+        // No note at all is not a missed question.
+        assert!(super::unanswered(None, false, |_| false).is_none());
     }
 }

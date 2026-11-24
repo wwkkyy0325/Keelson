@@ -185,3 +185,25 @@ old); it is there for the path written once and never touched again. The prune
 runs once per process, spawned, and its report is not logged yet — that is the
 next thing to watch with telemetry, together with the two numbers above.
 
+## A restart still loses the answer that was streaming
+
+ADR 0080 keeps the in-flight turn across a switch, and ADR 0081 keeps the
+question across a restart. The text of an answer that was streaming when the
+process died is still gone: it lives in the window's memory only, because the
+engine writes a turn when it ends and keeps no live copy any host could read.
+
+Two shapes, both small: the host could keep a bounded tail of the deltas it
+already relays in its own `RunningTurn` and hand it back through
+`SessionView.running`, or the engine could expose the buffer it holds while the
+turn runs. The first is host-only and bounded; the second is a kernel change and
+needs a contract test. Not scheduled: the retry card (ADR 0081) already covers
+the case where it matters, and the case where it does not has not come up yet.
+
+## The desktop's settings are one file for every project
+
+`DesktopConfig` holds provider, model, permission and rig for the whole app, so
+two projects cannot run different models at once. Conversations already keep the
+connection they were built with (`Connection`, ADR 0076 here), so the read path
+is ready; what is missing is a per-project section in the config and a decision
+about which one a reopened window starts from.
+

@@ -3,6 +3,7 @@ import type {
   Interaction,
   LiveBackground,
   LiveTool,
+  PendingTurn,
   ProjectEntry,
   SessionMeta,
   SessionView,
@@ -45,6 +46,10 @@ export type SessionState = {
   /** Finished turns, ascending by seq. */
   turns: Turn[];
   running: RunningTurn | null;
+  /// The question the conversation was left asking when no turn answers it —
+  /// the window or the turn did not survive. The card that shows it offers to
+  /// ask again; nothing is replayed (ADR 0081).
+  pending: PendingTurn | null;
   /// Background commands of the session. They outlive the turn that started
   /// them; the engine drops one when it hands the result to the model.
   background: LiveBackground[];
@@ -74,6 +79,7 @@ export function initialSession(): SessionState {
     projects: [],
     turns: [],
     running: null,
+    pending: null,
     background: [],
     pendingInteraction: null,
     nextBefore: null,
@@ -209,7 +215,17 @@ function failedTurn(running: RunningTurn, message: string): Turn {
 
 export function reduce(state: SessionState, action: Action): SessionState {
   switch (action.type) {
-    case "session-opened":
+    case "session-opened": {
+      // Re-reading a conversation the window already holds must not throw away
+      // what streamed while it was away: the view carries the question and the
+      // sequence, the store carries the text, thinking and tool rows gathered
+      // so far. Only a view that reports a different turn — or none — rebuilds
+      // the live card (ADR 0080).
+      const running = action.view.running
+        ? state.running && state.running.seq === action.view.running.seq
+          ? { ...state.running, input: action.view.running.input }
+          : liveTurn(action.view.running.seq, action.view.running.input)
+        : null;
       return {
         ...initialSession(),
         epoch: state.epoch + 1,
@@ -218,15 +234,12 @@ export function reduce(state: SessionState, action: Action): SessionState {
         sessionId: action.view.sessionId,
         sessions: sortSessions(action.view.sessions),
         projects: action.view.projects,
-        // A conversation can still be running when the window comes back to
-        // it. The stream resumes on the next delta, and the input is what the
-        // user sent, so the live card is rebuilt from the engine's view.
-        running: action.view.running
-          ? liveTurn(action.view.running.seq, action.view.running.input)
-          : null,
+        running,
+        pending: action.view.pending,
         turns: normalize(action.view.turns),
         nextBefore: action.view.nextBefore,
       };
+    }
 
     case "sessions-loaded":
       return { ...state, sessions: sortSessions(action.sessions) };
@@ -259,6 +272,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
       return {
         ...state,
         running: liveTurn(action.seq, action.input),
+        pending: null,
         pendingInteraction: null,
         lastError: null,
       };
@@ -464,6 +478,8 @@ export function reduce(state: SessionState, action: Action): SessionState {
         ]),
         running:
           state.running?.seq === action.turn.seq ? null : state.running,
+        pending:
+          state.pending?.seq === action.turn.seq ? null : state.pending,
         pendingInteraction: null,
         lastError: null,
       };
@@ -480,6 +496,7 @@ export function reduce(state: SessionState, action: Action): SessionState {
             : state.turns,
         running:
           state.running?.seq === action.seq ? null : state.running,
+        pending: state.pending?.seq === action.seq ? null : state.pending,
         pendingInteraction: null,
         lastError: action.message,
       };

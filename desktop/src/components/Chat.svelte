@@ -605,6 +605,7 @@
       {undoable}
       onUndo={() => (confirmUndo = true)}
       onBranch={branchFrom}
+      onResume={(text) => void send(text)}
     />
 
     <footer>

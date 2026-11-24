@@ -1312,6 +1312,32 @@ header .title {
   white-space: pre-wrap;
 }
 
+/* A question no turn answers: the send was kept, the answer never came. The
+   row stays quiet so it reads as part of the thread, not as an alarm. */
+.interrupted-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.interrupted-resume {
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.interrupted-resume:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .turn {
   display: flex;
   flex-direction: column;

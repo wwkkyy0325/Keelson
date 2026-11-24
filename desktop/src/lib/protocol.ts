@@ -122,6 +122,15 @@ export type Attachment = {
   size: number;
 };
 
+export type PendingTurn = {
+  /// The sequence the turn would have taken.
+  seq: number;
+  /// What the user sent.
+  input: string;
+  /// When the send was seen, so the card can say how long ago.
+  startedAt: number;
+};
+
 export type SessionView = {
   rig: string;
   workspace: string;
@@ -129,6 +138,8 @@ export type SessionView = {
   /// The turn this conversation is running right now, so switching back to it
   /// shows the live card instead of an empty transcript.
   running: { seq: number; input: string } | null;
+  /// A question no turn answers: the app or the turn did not survive it.
+  pending: PendingTurn | null;
   turns: Turn[];
   nextBefore: number | null;
   sessions: SessionMeta[];
