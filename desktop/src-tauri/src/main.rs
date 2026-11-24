@@ -126,6 +126,7 @@ fn main() {
             commands::save_journal,
             commands::record_paths,
             commands::perf_report,
+            commands::build_id,
             commands::load_turns,
             commands::respond_interaction,
             commands::dismiss_interaction,

@@ -55,6 +55,10 @@ was built from rather than which number it carries.
    kernel events in the kernel's persisted shape; a reader that pairs a row with
    an event needs `EVENT_FORMAT_VERSION`, which the kernel bumps on its own
    schedule, not the commit that happened to link it.
+6. **The running process can be asked.** `build_id` returns the same stamp
+   without a turn behind it: a record names the build only after a turn has
+   written one, and a window that has just launched has written nothing. The
+   command is read-only, so the settings panel asks on open.
 
 What is *not* stamped, deliberately: the engine's turn documents under
 `sessions/*.turns/` belong to the kernel's format (a host field there would be a
@@ -74,6 +78,8 @@ host branch in a kernel file), and the progress documents under
   of 2026-11-24 differ by ten minutes and a `shasum` nobody wrote down.
 - A `turns` row from an older log stays `NULL` forever. That is the intended
   reading: the log has no way to know, and a guess would defeat the field.
+- The settings panel shows the stamp in Diagnostics, so the process in front of
+  the user can be named even when it is too early (or too stuck) for a record.
 - Watching the app's source trees makes the build script re-run on every source
   change, which recompiles the crate the change would have recompiled anyway.
   The extra work is two `git` calls.

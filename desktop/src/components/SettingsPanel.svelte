@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import {
     applyPreset,
+    buildId,
     deletePreset,
     modelCatalog,
     recordPaths,
@@ -76,6 +77,8 @@
   let phase = $state<"idle" | "saving" | "reconnecting">("idle");
   let loading = $state(true);
   let error = $state<string | null>(null);
+  /// The build this process runs, asked once on open (ADR 0084).
+  let build = $state("");
   /// What the window spent its time on. Read on open and on demand: after a
   /// freeze the only useful evidence is what was counted while it happened.
   let diagnostics = $state<PerfReport | null>(null);
@@ -181,6 +184,11 @@
 
   onMount(async () => {
     refreshDiagnostics();
+    // The records say which build wrote them, but only once a turn has written
+    // one; the process itself cannot be asked from outside.
+    buildId()
+      .then((value) => (build = value))
+      .catch(() => {});
     // The model list does not depend on the setup state, so it starts first;
     // a slow or restarting backend cannot hold the picker hostage.
     const catalogTask = loadCatalog(false);
@@ -734,6 +742,12 @@
 
       <section>
         <h3>{$t("settings.diagnostics")}</h3>
+        <dl class="meta">
+          <div>
+            <dt>{$t("settings.diagnosticsBuild")}</dt>
+            <dd title={build}>{build || "—"}</dd>
+          </div>
+        </dl>
         {#if diagnostics}
           <dl class="meta">
             <div>

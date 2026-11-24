@@ -90,6 +90,7 @@ const zh = {
   "settings.diagnosticsEmpty": "还没有计数。",
   "settings.diagnosticsUptime": "运行时长",
   "settings.diagnosticsStalls": "掉帧",
+  "settings.diagnosticsBuild": "构建",
   "settings.diagnosticsRefresh": "刷新",
   "settings.diagnosticsReset": "清零",
   "settings.keyOther": "当前密钥属于另一个提供方，请重新填写。",
@@ -314,6 +315,7 @@ const en: Record<Key, string> = {
   "settings.diagnosticsEmpty": "Nothing counted yet.",
   "settings.diagnosticsUptime": "Uptime",
   "settings.diagnosticsStalls": "Frame stalls",
+  "settings.diagnosticsBuild": "Build",
   "settings.diagnosticsRefresh": "Refresh",
   "settings.diagnosticsReset": "Reset",
   "settings.keyOther":

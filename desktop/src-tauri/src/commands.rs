@@ -2023,6 +2023,17 @@ pub async fn perf_report(
     .map_err(|error| error.to_string())?
 }
 
+/// The code this process runs (ADR 0084).
+///
+/// The records answer the same question, but only once a turn has written one:
+/// right after a launch, before any turn, the build is exactly what a bug report
+/// needs and the process cannot be asked from outside. Read-only, so a window
+/// may ask on open.
+#[tauri::command]
+pub fn build_id() -> String {
+    crate::build::ID.to_owned()
+}
+
 #[tauri::command]
 pub async fn record_paths(state: State<'_, SharedState>) -> Result<RecordPaths, String> {
     let state = state.inner().clone();
@@ -2885,6 +2896,15 @@ mod tests {
             updated_at: 0,
             turns: 0,
         }
+    }
+
+    #[test]
+    fn the_window_can_name_the_build_it_runs() {
+        // Without a turn behind it, the stamp is the only thing a report of a
+        // misbehaving window can name (ADR 0084).
+        let stamp = super::build_id();
+        assert!(stamp.starts_with("keelson "), "{stamp}");
+        assert_eq!(stamp, crate::build::ID);
     }
 
     #[test]

@@ -36,6 +36,12 @@ export function setupState(): Promise<SetupState> {
   return invoke("setup_state");
 }
 
+/// The build this process runs, stamped at compile time (ADR 0084). Read on
+/// open so a report can name the program without waiting for a turn's records.
+export function buildId(): Promise<string> {
+  return invoke("build_id");
+}
+
 export function modelCatalog(refresh = false): Promise<ModelCatalog> {
   return invoke("model_catalog", { refresh });
 }
