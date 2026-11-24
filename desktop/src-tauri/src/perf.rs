@@ -15,6 +15,8 @@
 
 use std::path::{Path, PathBuf};
 
+use serde_json::{json, Value};
+
 /// Accounts kept. One report is a few kilobytes, and what matters is the turn
 /// that just misbehaved, not a history of the session.
 pub const FILES_KEPT: usize = 40;
@@ -45,9 +47,27 @@ pub fn write(
         safe_session(session),
         safe_phase(phase)
     ));
-    std::fs::write(&path, report)?;
+    std::fs::write(&path, stamped(report))?;
     prune(dir);
     Ok(path)
+}
+
+/// Names the build in the account on its way to disk.
+///
+/// The window cannot say which binary it is: it ships inside the app, its
+/// version string is the same in every build, and the account outlives the
+/// process that wrote it. The host knows its own stamp, so it adds one, and an
+/// account written by an older build stays distinguishable from the one written
+/// now (ADR 0084).
+///
+/// A report that is not a JSON object is written as it arrived. The account is
+/// evidence, and losing it to a stamp would be worse than an unstamped one.
+fn stamped(report: &str) -> String {
+    let Ok(Value::Object(mut fields)) = serde_json::from_str::<Value>(report) else {
+        return report.to_owned();
+    };
+    fields.insert("build".to_owned(), json!(crate::build::ID));
+    Value::Object(fields).to_string()
 }
 
 /// A conversation id is chosen by the host, and it still becomes part of a file
@@ -147,8 +167,42 @@ mod tests {
         let first = write(&dir, "s-1", 7, "during", r#"{"a":1}"#).unwrap();
         let second = write(&dir, "s-1", 7, "during", r#"{"a":2}"#).unwrap();
         assert_eq!(first, second);
-        assert_eq!(std::fs::read_to_string(&first).unwrap(), r#"{"a":2}"#);
+        let text = std::fs::read_to_string(&first).unwrap();
+        assert!(text.contains(r#""a":2"#), "{text}");
+        assert!(!text.contains(r#""a":1"#), "{text}");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_account_names_the_build_that_wrote_it() {
+        let dir = scratch("stamp");
+        let path = write(
+            &dir,
+            "s-1",
+            3,
+            "end",
+            r#"{"seq":3,"phase":"end","counters":{}}"#,
+        )
+        .unwrap();
+        let account: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // The window's own account survives and gains the host's stamp.
+        assert_eq!(account["seq"], json!(3));
+        assert_eq!(account["build"], json!(crate::build::ID));
+        assert!(
+            crate::build::ID.contains("keelson "),
+            "{}",
+            crate::build::ID
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_report_that_is_not_an_account_is_kept_as_it_arrived() {
+        let dir = scratch("raw");
+        let path = write(&dir, "s-1", 4, "end", "not json").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "not json");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

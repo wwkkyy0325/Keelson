@@ -192,6 +192,8 @@ impl StepLog {
                  model_calls INTEGER,
                  tools      INTEGER,
                  duration_ms INTEGER,
+                 build      TEXT,
+                 event_format INTEGER,
                  PRIMARY KEY (session, turn)
              );
              CREATE TABLE IF NOT EXISTS steps (
@@ -205,6 +207,11 @@ impl StepLog {
              CREATE INDEX IF NOT EXISTS steps_of_turn ON steps (session, turn, step);
              CREATE INDEX IF NOT EXISTS steps_by_time ON steps (at_ms);",
         )?;
+        // A log created before ADR 0084 has a `turns` table without the build.
+        // Adding the columns keeps every row, and a row written by an older
+        // build reads as `NULL` instead of as a guess.
+        add_column(&conn, "build", "TEXT")?;
+        add_column(&conn, "event_format", "INTEGER")?;
         Ok(Self {
             conn,
             session: session.to_owned(),
@@ -217,15 +224,17 @@ impl StepLog {
     pub fn meta(&self, meta: &TurnMeta) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO turns
-                 (session, turn, started_ms, model, provider, rig, workspace, input)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 (session, turn, started_ms, model, provider, rig, workspace, input, build, event_format)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(session, turn) DO UPDATE SET
                  started_ms = excluded.started_ms,
                  model      = excluded.model,
                  provider   = excluded.provider,
                  rig        = excluded.rig,
                  workspace  = excluded.workspace,
-                 input      = excluded.input",
+                 input      = excluded.input,
+                 build      = excluded.build,
+                 event_format = excluded.event_format",
             params![
                 meta.session,
                 i64::from(meta.turn),
@@ -235,6 +244,11 @@ impl StepLog {
                 meta.rig,
                 meta.workspace,
                 meta.input,
+                // The log outlives the build: a row that cannot name the
+                // program that wrote it cannot be compared with a later one
+                // (ADR 0084).
+                crate::build::ID,
+                i64::from(keel_core::EVENT_FORMAT_VERSION),
             ],
         )?;
         Ok(())
@@ -285,6 +299,26 @@ impl StepLog {
         )?;
         Ok(())
     }
+}
+
+/// Adds a column to `turns` when the table was created without it.
+///
+/// Both halves are constants chosen by this module, never a value from outside,
+/// so the statement cannot be steered. `ALTER TABLE ... ADD COLUMN` keeps the
+/// rows already written, which is the point: a log from an older build is still
+/// worth reading (ADR 0084).
+fn add_column(conn: &Connection, name: &str, kind: &str) -> rusqlite::Result<()> {
+    let exists = {
+        let mut stmt = conn.prepare("PRAGMA table_info(turns)")?;
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        names.iter().any(|column| column == name)
+    };
+    if !exists {
+        conn.execute_batch(&format!("ALTER TABLE turns ADD COLUMN {name} {kind}"))?;
+    }
+    Ok(())
 }
 
 /// How much of a call's arguments and output the step log keeps.
@@ -515,6 +549,102 @@ mod tests {
             .query_row("SELECT count(*) FROM turns", [], |row| row.get(0))
             .unwrap();
         assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn a_turn_row_names_the_build_that_wrote_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = StepLog::open(dir.path(), "s-1", 1).unwrap();
+        log.meta(&TurnMeta {
+            session: "s-1".to_owned(),
+            turn: 1,
+            model: "m".to_owned(),
+            provider: "p".to_owned(),
+            rig: "coding".to_owned(),
+            workspace: "/work/app".to_owned(),
+            input: "hello".to_owned(),
+        })
+        .unwrap();
+
+        let conn = Connection::open(dir.path().join(LOG_FILE)).unwrap();
+        let (build, format): (String, i64) = conn
+            .query_row("SELECT build, event_format FROM turns", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(build, crate::build::ID);
+        assert_eq!(format, i64::from(keel_core::EVENT_FORMAT_VERSION));
+        // The stamp has to say something a reader can match to a checkout.
+        assert!(build.starts_with("keelson "), "{build}");
+    }
+
+    #[test]
+    fn a_log_from_an_older_build_gains_the_stamp_and_keeps_its_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(LOG_FILE);
+        {
+            // The schema as a binary from before ADR 0084 left it, with a turn
+            // already in it.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE turns (
+                     session    TEXT    NOT NULL,
+                     turn       INTEGER NOT NULL,
+                     started_ms INTEGER NOT NULL,
+                     ended_ms   INTEGER,
+                     ok         INTEGER,
+                     error      TEXT,
+                     state      TEXT,
+                     model      TEXT,
+                     provider   TEXT,
+                     rig        TEXT,
+                     workspace  TEXT,
+                     input      TEXT,
+                     model_calls INTEGER,
+                     tools      INTEGER,
+                     duration_ms INTEGER,
+                     PRIMARY KEY (session, turn)
+                 );
+                 INSERT INTO turns (session, turn, started_ms, input)
+                 VALUES ('s-1', 1, 1, 'an older turn');",
+            )
+            .unwrap();
+        }
+
+        // Opening twice must not try to add the column twice.
+        StepLog::open(dir.path(), "s-2", 2).unwrap();
+        let log = StepLog::open(dir.path(), "s-2", 2).unwrap();
+        log.meta(&TurnMeta {
+            session: "s-2".to_owned(),
+            turn: 2,
+            model: "m".to_owned(),
+            provider: "p".to_owned(),
+            rig: "coding".to_owned(),
+            workspace: "/work/app".to_owned(),
+            input: "a newer turn".to_owned(),
+        })
+        .unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        let older: Option<String> = conn
+            .query_row("SELECT build FROM turns WHERE turn = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        // Nothing is inferred for a row that predates the stamp.
+        assert_eq!(older, None);
+        let kept: String = conn
+            .query_row("SELECT input FROM turns WHERE turn = 1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(kept, "an older turn");
+        let newer: String = conn
+            .query_row("SELECT build FROM turns WHERE turn = 2", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(newer, crate::build::ID);
     }
 
     #[test]
