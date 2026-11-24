@@ -162,6 +162,10 @@ pub fn remove(state_dir: &Path, workspace: &Path, id: &str) -> Result<(), String
     let dir = project_dir(state_dir, workspace);
     let store = Store::open(dir.join(format!("{id}.json")));
     store.delete().map_err(|error| error.to_string())?;
+    // The note belongs to the conversation as much as the document does: a turn
+    // that was killed mid-answer leaves one, and nothing would ever read it
+    // again once the document is gone (ADR 0083).
+    let _ = fs::remove_file(pending_path(&dir, id));
     let mut index = load_index(&dir);
     index.sessions.retain(|meta| meta.id != id);
     save_index(&dir, &index)
@@ -336,7 +340,10 @@ pub fn note_partial(
     let dir = project_dir(state_dir, workspace);
     let path = pending_path(&dir, id);
     let mut note: PendingTurn = serde_json::from_str(&fs::read_to_string(&path).ok()?).ok()?;
-    if note.seq != seq || note.partial == partial {
+    // The kept text is a head that only grows, so a buffer no longer than what
+    // the note already holds is an older copy of it: a slower writer must not
+    // put the shorter text back (ADR 0083).
+    if note.seq != seq || note.partial.len() >= partial.len() {
         return None;
     }
     note.partial = partial.to_owned();
@@ -829,7 +836,10 @@ mod tests {
         let id = fresh_id();
 
         mark_pending(&state, &workspace, &id, 7, "explain the sweep").expect("a note");
-        assert_eq!(pending(&state, &workspace, &id).expect("the note").partial, "");
+        assert_eq!(
+            pending(&state, &workspace, &id).expect("the note").partial,
+            ""
+        );
 
         note_partial(&state, &workspace, &id, 7, "The sweep ").expect("the first part");
         let note = pending(&state, &workspace, &id).expect("the note");
@@ -873,6 +883,20 @@ mod tests {
         let note = pending(&state, &workspace, &id).expect("the note");
         assert_eq!(note.partial, "half an answer");
         assert_eq!(note.input, "earlier");
+    }
+
+    #[test]
+    fn a_deleted_conversation_leaves_no_note_behind() {
+        let dir = tempfile::TempDir::new().expect("a temp dir");
+        let workspace = workspace(&dir);
+        let state = dir.path().join("state");
+        let meta = create(&state, &workspace, "coding").expect("create");
+        mark_pending(&state, &workspace, &meta.id, 1, "sweep the sidecars").expect("a note");
+
+        remove(&state, &workspace, &meta.id).expect("remove");
+
+        assert!(pending(&state, &workspace, &meta.id).is_none());
+        assert!(!session_path(&state, &workspace, &meta.id).is_file());
     }
 
     #[test]

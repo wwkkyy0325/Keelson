@@ -376,6 +376,61 @@ impl PartialNote {
     }
 }
 
+/// How often the note's tail is checked. `PartialNote` writes when a delta
+/// arrives, so a burst of text that ends in a tool call keeps its last frames in
+/// memory until the next frame — a minute later, while the tool runs. A process
+/// killed then would keep less than the window had already shown (ADR 0083).
+const PARTIAL_TICK: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// What the tail writer has already put on disk for the running turn.
+#[derive(Default)]
+struct TailNote {
+    seen: Option<(u32, usize)>,
+}
+
+impl TailNote {
+    /// Whether this buffer is newer than the last one written. A turn is known
+    /// by its sequence; within one turn the kept head only grows, so a buffer no
+    /// longer than the last is an older copy and is skipped.
+    fn due(&mut self, seq: u32, bytes: usize) -> bool {
+        let due = match self.seen {
+            Some((last_seq, written)) => last_seq != seq || bytes > written,
+            None => true,
+        };
+        if due {
+            self.seen = Some((seq, bytes));
+        }
+        due
+    }
+}
+
+/// Gives the note whatever the running turn's answer has grown by since the last
+/// check, so a pause in the stream does not hold the text back (ADR 0083).
+fn note_tail(conversation: &OpenConversation, tail: &mut TailNote) {
+    let live = {
+        let running = conversation
+            .running
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        running
+            .as_ref()
+            .map(|turn| (turn.seq, turn.partial.clone()))
+    };
+    let Some((seq, partial)) = live else {
+        return;
+    };
+    if !tail.due(seq, partial.len()) {
+        return;
+    }
+    sessions::note_partial(
+        &conversation.state_dir,
+        &conversation.workspace,
+        &conversation.id,
+        seq,
+        &partial,
+    );
+}
+
 /// A tool call the running turn just started. The previews are bounded and
 /// redacted by the kernel.
 #[derive(Clone, Serialize)]
@@ -1456,6 +1511,20 @@ async fn open_inner(
             emit_batch(&session_app, &seq, &conversation, &mut partial, batch)
         })
         .await;
+    });
+    // The answer's tail still reaches the note when the stream pauses there: a
+    // model call that ends in a tool call leaves the last frames of its text
+    // unwritten until the next one arrives (ADR 0083).
+    let tail = Arc::downgrade(&open);
+    tauri::async_runtime::spawn(async move {
+        let mut note = TailNote::default();
+        loop {
+            tokio::time::sleep(PARTIAL_TICK).await;
+            let Some(conversation) = tail.upgrade() else {
+                return;
+            };
+            note_tail(&conversation, &mut note);
+        }
     });
 
     Ok(open_view(
@@ -3133,10 +3202,33 @@ mod tests {
         assert_eq!(next.as_ref().expect("a turn").partial, "");
 
         // A new sequence starts the note over.
-        assert_eq!(writer.step(next.as_mut(), 5, "next").as_deref(), Some("next"));
+        assert_eq!(
+            writer.step(next.as_mut(), 5, "next").as_deref(),
+            Some("next")
+        );
 
         // No turn running: nothing is kept.
         assert!(writer.step(None, 6, "orphan").is_none());
+    }
+
+    /// The tail writer catches what the throttle held back: a burst of text that
+    /// ends before the window closes leaves the note's last frames unwritten,
+    /// and the model then thinks or calls a tool for a minute (ADR 0083).
+    #[test]
+    fn the_tail_is_written_once_a_turn_and_once_per_growth() {
+        let mut tail = super::TailNote::default();
+
+        // A turn began; the note holds the question and no answer yet.
+        assert!(tail.due(3, 0));
+        // Nothing new since: no read, no write.
+        assert!(!tail.due(3, 0));
+        // The head grew.
+        assert!(tail.due(3, 5));
+        assert!(!tail.due(3, 5));
+        // A shorter buffer is an older copy, not news.
+        assert!(!tail.due(3, 4));
+        // Another turn: its note starts empty, so even a short head is news.
+        assert!(tail.due(4, 2));
     }
 
     fn note(seq: u32) -> crate::sessions::PendingTurn {

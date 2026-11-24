@@ -61,6 +61,21 @@ Keep a bounded head of the answer, in the host, where the turn is already kept.
    `.interrupted-answer`, faded at the bottom by a mask. It is what the model said,
    not a finished answer: no markup, no tool rows, and the card still offers one
    action, 再问一次. Nothing is replayed (ADR 0081 stands).
+10. **The throttle alone loses the tail, so a tick writes it.** `PartialNote` only
+    runs when a delta arrives, and rule 6 makes it skip the deltas inside the
+    window. A burst of text that ends in a tool call therefore leaves its last
+    frames in memory until the next frame — and the model then thinks or runs a
+    tool for a minute. Measured on 2026-11-24 against the shipped build: a 41
+    character message was on screen and the note held 3 characters of it. A
+    conversation-sized task holds a `Weak<OpenConversation>` and calls
+    `note_tail` every `PARTIAL_TICK` = 250 ms while a turn is running, writing
+    whatever the buffer has grown by. `TailNote::due` keeps it one write per turn
+    and one per growth; `note_partial` refuses a buffer no longer than the one the
+    note holds, so the immediate writer and the tick cannot undo each other with
+    an older copy.
+11. **Deleting a conversation deletes its note.** `sessions::remove` drops
+    `<id>.pending.json` beside the document. A turn killed mid-answer leaves a
+    note, and once the document is gone nothing would ever read or remove it.
 
 ## Consequences
 
@@ -72,7 +87,13 @@ Keep a bounded head of the answer, in the host, where the turn is already kept.
 - No new file type and no new lifecycle: the field rides in the note that already
   exists, and the bound bounds the file. No queue, no reconciliation, no watchdog.
 - A turn that streams for a minute rewrites one small file about 120 times, each
-  atomic. A turn that dies before the first model call writes nothing, and the
-  note is exactly what ADR 0081 wrote.
+  atomic, plus one lock-and-compare of the buffer every 250 ms while the
+  conversation is open; it writes only while a turn is running and the head has
+  grown. A turn that dies before the first model call writes nothing, and the note
+  is exactly what ADR 0081 wrote.
+- A note whose turn did land, written by a process that died between the document
+  and `clear_pending`, is never read: `unanswered` drops it because the engine has
+  the sequence. It is left on disk rather than removed by a view — a view that
+  reads the store may not write it (ADR 0072) — and the next send replaces it.
 - The kept text is not resumable. A retry is a new turn with its own `seq`, its own
   tool calls and its own cost, because the half-run turn already had side effects.
